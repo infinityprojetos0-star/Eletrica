@@ -1,19 +1,16 @@
 /**
- * Store VoltES — sync otimizado para Firebase Spark (grátis)
+ * Store VoltES — cache + sync multi-dispositivo (plano Spark)
  *
- * Estratégia:
- * - Catálogo base (SEED) fica no código / localStorage (não sobe o catálogo inteiro)
- * - Nuvem guarda só dados do usuário + patches de preço/itens alterados
- * - Escrita por diff (update em paths) em vez de set() da árvore inteira
- * - Sem listener na raiz (evita re-download gigante a cada save)
- * - Listener leve só em meta/rev para sync entre abas/dispositivos
- * - Debounce longo + goOffline com aba oculta
+ * - Cache: memória → localStorage → IndexedDB
+ * - Firebase: só diffs por path (item A e item B não se sobrescrevem)
+ * - Conflito no MESMO item: last-write-wins por updatedAt (+ deviceId)
+ * - Listeners child_* (não puxa a árvore inteira a cada mudança)
+ * - Fila de patches pendentes (offline / falha de rede)
  */
 const Store = (() => {
-  const KEY = "voltes-data-v2";
   const OLD_KEYS = ["voltes-data-v1"];
   const ROOT = "voltes";
-  const DEBOUNCE_MS = 1500;
+  const FLUSH_MS = 500;
 
   const USER_LIST_KEYS = ["clientes", "orcamentos", "contratos", "lancamentos", "despesasFixas"];
   const CATALOG_KEYS = ["servicos", "produtos"];
@@ -35,7 +32,7 @@ const Store = (() => {
     version: 2,
     catalogVersion: 3,
     precoModo: "medio",
-    empresa: { ...SEED_EMPRESA },
+    empresa: { ...SEED_EMPRESA, updatedAt: 0 },
     clientes: [
       {
         id: "cli-demo-1",
@@ -46,7 +43,8 @@ const Store = (() => {
         email: "maria@email.com",
         endereco: "Praia do Canto, Vitória - ES",
         status: "ativo",
-        criadoEm: todayISO()
+        criadoEm: todayISO(),
+        updatedAt: 0
       },
       {
         id: "cli-demo-2",
@@ -57,20 +55,30 @@ const Store = (() => {
         email: "contato@capixaba.com",
         endereco: "Centro, Vila Velha - ES",
         status: "ativo",
-        criadoEm: todayISO()
+        criadoEm: todayISO(),
+        updatedAt: 0
       }
     ],
-    servicos: SEED_SERVICOS.map((s) => ({ ...s })),
-    produtos: SEED_PRODUTOS.map((p) => ({ ...p })),
+    servicos: SEED_SERVICOS.map((s) => ({ ...s, updatedAt: 0 })),
+    produtos: SEED_PRODUTOS.map((p) => ({ ...p, updatedAt: 0 })),
     orcamentos: [],
     contratos: [],
     lancamentos: [],
     despesasFixas: [
-      { id: "df-1", nome: "Internet", categoria: "Internet", valor: 99.9 },
-      { id: "df-2", nome: "Combustível", categoria: "Transporte", valor: 280 },
-      { id: "df-3", nome: "Consumíveis / ferramentas", categoria: "Material", valor: 60 }
+      { id: "df-1", nome: "Internet", categoria: "Internet", valor: 99.9, updatedAt: 0 },
+      { id: "df-2", nome: "Combustível", categoria: "Transporte", valor: 280, updatedAt: 0 },
+      { id: "df-3", nome: "Consumíveis / ferramentas", categoria: "Material", valor: 60, updatedAt: 0 }
     ]
   });
+
+  let DEVICE_ID = "dev-unknown";
+  let state = defaultState();
+  let cloudStatus = "local";
+  let flushTimer = null;
+  let flushing = false;
+  let listeners = [];
+  let cloudReady = false;
+  let applyingRemote = false;
 
   function listToMap(arr) {
     const map = {};
@@ -95,13 +103,22 @@ const Store = (() => {
     return JSON.stringify(a) === JSON.stringify(b);
   }
 
+  function now() {
+    return Date.now();
+  }
+
+  function contentOf(item) {
+    if (!item || typeof item !== "object") return item;
+    const { updatedAt, deviceId, ...rest } = item;
+    return rest;
+  }
+
   function slimItem(item) {
     if (!item || typeof item !== "object") return item;
     const out = {};
     Object.keys(item).forEach((k) => {
       const v = item[k];
       if (v == null) return;
-      // Nunca enviar base64/data-URI (estoura banda/storage do plano free)
       if (typeof v === "string" && v.startsWith("data:")) return;
       if (typeof v === "string" && v.length > 4000) return;
       out[k] = v;
@@ -109,181 +126,70 @@ const Store = (() => {
     return out;
   }
 
+  function stamp(item, ts = now()) {
+    return { ...item, updatedAt: ts, deviceId: DEVICE_ID };
+  }
+
+  function isNewer(remote, local) {
+    const r = remote?.updatedAt || 0;
+    const l = local?.updatedAt || 0;
+    if (r !== l) return r > l;
+    // empate: prioriza o outro dispositivo só se for diferente (evita eco local)
+    if (remote?.deviceId && local?.deviceId && remote.deviceId !== local.deviceId) {
+      return String(remote.deviceId) > String(local.deviceId);
+    }
+    return false;
+  }
+
   function seedFor(key) {
     return key === "servicos" ? SEED_SERVICOS : SEED_PRODUTOS;
   }
 
-  /** Só o que difere do catálogo seed (ou itens novos / removidos) */
+  function buildCatalogPatchEntry(item, seedMap) {
+    const base = seedMap[item.id];
+    if (!base) return slimItem(stamp(item));
+    const diff = { id: item.id, updatedAt: item.updatedAt || now(), deviceId: item.deviceId || DEVICE_ID };
+    let changed = false;
+    CATALOG_FIELDS.forEach((f) => {
+      if (item[f] !== undefined && !same(item[f], base[f])) {
+        diff[f] = item[f];
+        changed = true;
+      }
+    });
+    return changed ? slimItem(diff) : null;
+  }
+
   function buildCatalogPatch(items, seed) {
     const seedMap = listToMap(seed);
     const itemMap = listToMap(items);
     const patch = {};
-
     Object.values(itemMap).forEach((item) => {
-      const base = seedMap[item.id];
-      if (!base) {
-        patch[item.id] = slimItem(item);
-        return;
-      }
-      const diff = { id: item.id };
-      let changed = false;
-      CATALOG_FIELDS.forEach((f) => {
-        if (item[f] !== undefined && !same(item[f], base[f])) {
-          diff[f] = item[f];
-          changed = true;
-        }
-      });
-      if (changed) patch[item.id] = slimItem(diff);
+      const entry = buildCatalogPatchEntry(item, seedMap);
+      if (entry) patch[item.id] = entry;
     });
-
     Object.keys(seedMap).forEach((id) => {
-      if (!itemMap[id]) patch[id] = { id, _deleted: true };
+      if (!itemMap[id]) {
+        patch[id] = { id, _deleted: true, updatedAt: now(), deviceId: DEVICE_ID };
+      }
     });
-
     return patch;
   }
 
   function applyCatalogPatch(seed, patchMap) {
     const patch = patchMap || {};
-    const deleted = new Set();
-    Object.values(patch).forEach((p) => {
-      if (p && p._deleted) deleted.add(p.id);
-    });
-
     const map = {};
     seed.forEach((s) => {
-      if (!deleted.has(s.id)) map[s.id] = { ...s };
+      map[s.id] = { ...s, updatedAt: 0 };
     });
-
     Object.entries(patch).forEach(([id, val]) => {
-      if (!val || val._deleted) return;
+      if (!val) return;
+      if (val._deleted) {
+        delete map[id];
+        return;
+      }
       map[id] = map[id] ? { ...map[id], ...val, id } : { ...val, id };
     });
-
     return Object.values(map);
-  }
-
-  function migrateLegacyCatalog(raw) {
-    // Formato antigo: catálogo completo em servicos/produtos — usa 1x e depois só patches
-    const next = { ...raw };
-    if (raw.servicos && !raw.servicosPatch) {
-      const list = mapToList(raw.servicos);
-      next.servicosPatch = buildCatalogPatch(list, SEED_SERVICOS);
-    }
-    if (raw.produtos && !raw.produtosPatch) {
-      const list = mapToList(raw.produtos);
-      next.produtosPatch = buildCatalogPatch(list, SEED_PRODUTOS);
-    }
-    return next;
-  }
-
-  function remoteToState(raw) {
-    const base = defaultState();
-    if (!raw || typeof raw !== "object") return base;
-
-    const data = migrateLegacyCatalog(raw);
-    const meta = data.meta || {};
-
-    const next = {
-      ...base,
-      version: meta.version ?? data.version ?? base.version,
-      catalogVersion: meta.catalogVersion ?? data.catalogVersion ?? base.catalogVersion,
-      precoModo: meta.precoModo || data.precoModo || base.precoModo,
-      empresa: { ...base.empresa, ...(data.empresa || {}) }
-    };
-
-    USER_LIST_KEYS.forEach((key) => {
-      if (data[key] != null) next[key] = mapToList(data[key]).map(slimItem);
-    });
-
-    next.servicos = applyCatalogPatch(SEED_SERVICOS, data.servicosPatch || {});
-    next.produtos = applyCatalogPatch(SEED_PRODUTOS, data.produtosPatch || {});
-
-    // Legacy full lists (se ainda existirem e patch vazio)
-    if ((!data.servicosPatch || !Object.keys(data.servicosPatch).length) && data.servicos) {
-      next.servicos = mapToList(data.servicos);
-    }
-    if ((!data.produtosPatch || !Object.keys(data.produtosPatch).length) && data.produtos) {
-      next.produtos = mapToList(data.produtos);
-    }
-
-    if ((next.catalogVersion || 0) < 3) {
-      next.servicos = applyCatalogPatch(SEED_SERVICOS, data.servicosPatch || {});
-      next.produtos = applyCatalogPatch(SEED_PRODUTOS, data.produtosPatch || {});
-      next.catalogVersion = 3;
-    }
-
-    return next;
-  }
-
-  function listDiffPaths(path, prevList, nextList) {
-    const prev = listToMap(prevList);
-    const next = listToMap(nextList);
-    const updates = {};
-
-    Object.keys(next).forEach((id) => {
-      const slim = slimItem(next[id]);
-      if (!same(prev[id], slim)) updates[`${path}/${id}`] = slim;
-    });
-    Object.keys(prev).forEach((id) => {
-      if (!next[id]) updates[`${path}/${id}`] = null;
-    });
-    return updates;
-  }
-
-  function patchDiffPaths(path, prevPatch, nextPatch) {
-    const prev = prevPatch || {};
-    const next = nextPatch || {};
-    const updates = {};
-    const ids = new Set([...Object.keys(prev), ...Object.keys(next)]);
-    ids.forEach((id) => {
-      if (!same(prev[id], next[id])) {
-        updates[`${path}/${id}`] = next[id] == null ? null : next[id];
-      }
-    });
-    return updates;
-  }
-
-  function buildCloudUpdates(prevState, nextState) {
-    const updates = {};
-    const prev = prevState || {};
-
-    if (!same(prev.empresa, nextState.empresa)) {
-      updates.empresa = nextState.empresa || {};
-    }
-
-    USER_LIST_KEYS.forEach((key) => {
-      Object.assign(updates, listDiffPaths(key, prev[key], nextState[key]));
-    });
-
-    CATALOG_KEYS.forEach((key) => {
-      const patchKey = key === "servicos" ? "servicosPatch" : "produtosPatch";
-      const prevPatch = buildCatalogPatch(prev[key] || seedFor(key), seedFor(key));
-      const nextPatch = buildCatalogPatch(nextState[key], seedFor(key));
-      Object.assign(updates, patchDiffPaths(patchKey, prevPatch, nextPatch));
-    });
-
-    const meta = {
-      version: nextState.version,
-      catalogVersion: nextState.catalogVersion,
-      precoModo: nextState.precoModo,
-      updatedAt: new Date().toISOString()
-    };
-
-    const prevMeta = {
-      version: prev.version,
-      catalogVersion: prev.catalogVersion,
-      precoModo: prev.precoModo
-    };
-
-    if (!same(prevMeta, { version: meta.version, catalogVersion: meta.catalogVersion, precoModo: meta.precoModo })) {
-      updates["meta/version"] = meta.version;
-      updates["meta/catalogVersion"] = meta.catalogVersion;
-      updates["meta/precoModo"] = meta.precoModo;
-    }
-    updates["meta/updatedAt"] = meta.updatedAt;
-
-    return updates;
   }
 
   function migrateFromOld() {
@@ -299,8 +205,6 @@ const Store = (() => {
         next.contratos = old.contratos || [];
         next.lancamentos = old.lancamentos || [];
         next.despesasFixas = old.despesasFixas || next.despesasFixas;
-        next.servicos = SEED_SERVICOS.map((s) => ({ ...s }));
-        next.produtos = SEED_PRODUTOS.map((p) => ({ ...p }));
         localStorage.removeItem(k);
         return next;
       } catch {
@@ -309,38 +213,6 @@ const Store = (() => {
     }
     return null;
   }
-
-  function loadLocal() {
-    try {
-      const raw = localStorage.getItem(KEY);
-      if (!raw) {
-        const migrated = migrateFromOld();
-        return migrated || defaultState();
-      }
-      const parsed = JSON.parse(raw);
-      if ((parsed.catalogVersion || 0) < 3) {
-        parsed.servicos = SEED_SERVICOS.map((s) => ({ ...s }));
-        parsed.produtos = SEED_PRODUTOS.map((p) => ({ ...p }));
-        parsed.catalogVersion = 3;
-      }
-      return { ...defaultState(), ...parsed };
-    } catch {
-      return defaultState();
-    }
-  }
-
-  function saveLocal(data) {
-    localStorage.setItem(KEY, JSON.stringify(data));
-  }
-
-  let state = loadLocal();
-  let cloudMirror = null; // último estado conhecido na nuvem (para diff)
-  let cloudStatus = "local";
-  let localWrite = false;
-  let unsubscribe = null;
-  let writeTimer = null;
-  let lastRev = null;
-  let pulling = false;
 
   function emit() {
     window.dispatchEvent(
@@ -351,8 +223,13 @@ const Store = (() => {
   }
 
   function setStatus(status) {
+    if (cloudStatus === status) return;
     cloudStatus = status;
     emit();
+  }
+
+  function persistCache() {
+    DataCache.setState(state);
   }
 
   function get() {
@@ -363,61 +240,468 @@ const Store = (() => {
     return cloudStatus;
   }
 
-  function applyRemoteState(remoteState) {
-    state = remoteState;
-    cloudMirror = clone(remoteState);
-    saveLocal(state);
-    setStatus("online");
-    emit();
+  /** Marca só entidades que mudaram de conteúdo */
+  function stampDiff(prev, next) {
+    const ts = now();
+    const out = { ...next };
+
+    if (!same(contentOf(prev.empresa), contentOf(next.empresa))) {
+      out.empresa = stamp({ ...next.empresa }, ts);
+    }
+
+    if (prev.precoModo !== next.precoModo) {
+      out._precoModoTs = ts;
+    }
+
+    USER_LIST_KEYS.forEach((key) => {
+      if (prev[key] === next[key]) return;
+      const prevMap = listToMap(prev[key]);
+      const nextMap = listToMap(next[key]);
+      out[key] = Object.values(nextMap).map((item) => {
+        const old = prevMap[item.id];
+        if (!old || !same(contentOf(old), contentOf(item))) return stamp(item, ts);
+        return item;
+      });
+      out[`_deleted_${key}`] = Object.keys(prevMap).filter((id) => !nextMap[id]);
+    });
+
+    CATALOG_KEYS.forEach((key) => {
+      if (prev[key] === next[key]) return;
+      const prevMap = listToMap(prev[key]);
+      const nextMap = listToMap(next[key]);
+      out[key] = Object.values(nextMap).map((item) => {
+        const old = prevMap[item.id];
+        if (!old || !same(contentOf(old), contentOf(item))) return stamp(item, ts);
+        return item;
+      });
+      out[`_deleted_${key}`] = Object.keys(prevMap).filter((id) => !nextMap[id]);
+    });
+
+    return out;
   }
 
-  async function pullAll() {
-    const root = FirebaseApp.ref(ROOT);
-    if (!root) return null;
-    const snap = await root.once("value");
-    return snap.val();
+  function enqueueFromDiff(prev, next) {
+    if (next.empresa && !same(contentOf(prev.empresa), contentOf(next.empresa))) {
+      DataCache.queuePatch("empresa", slimItem(next.empresa));
+    }
+
+    if (prev.precoModo !== next.precoModo) {
+      DataCache.queuePatch("meta/precoModo", next.precoModo);
+      DataCache.queuePatch("meta/precoModoTs", next._precoModoTs || now());
+      DataCache.queuePatch("meta/precoModoDevice", DEVICE_ID);
+    }
+
+    if (prev.version !== next.version) DataCache.queuePatch("meta/version", next.version);
+    if (prev.catalogVersion !== next.catalogVersion) {
+      DataCache.queuePatch("meta/catalogVersion", next.catalogVersion);
+    }
+
+    USER_LIST_KEYS.forEach((key) => {
+      const prevMap = listToMap(prev[key]);
+      const nextMap = listToMap(next[key]);
+      Object.keys(nextMap).forEach((id) => {
+        if (!same(contentOf(prevMap[id]), contentOf(nextMap[id])) || !prevMap[id]) {
+          DataCache.queuePatch(`${key}/${id}`, slimItem(nextMap[id]));
+        }
+      });
+      (next[`_deleted_${key}`] || []).forEach((id) => {
+        DataCache.queuePatch(`${key}/${id}`, null);
+      });
+    });
+
+    CATALOG_KEYS.forEach((key) => {
+      const patchKey = key === "servicos" ? "servicosPatch" : "produtosPatch";
+      const seedMap = listToMap(seedFor(key));
+      const prevMap = listToMap(prev[key]);
+      const nextMap = listToMap(next[key]);
+
+      Object.keys(nextMap).forEach((id) => {
+        if (!same(contentOf(prevMap[id]), contentOf(nextMap[id])) || !prevMap[id]) {
+          const entry = buildCatalogPatchEntry(nextMap[id], seedMap);
+          if (entry) DataCache.queuePatch(`${patchKey}/${id}`, entry);
+          else DataCache.queuePatch(`${patchKey}/${id}`, null);
+        }
+      });
+      (next[`_deleted_${key}`] || []).forEach((id) => {
+        if (seedMap[id]) {
+          DataCache.queuePatch(`${patchKey}/${id}`, {
+            id,
+            _deleted: true,
+            updatedAt: now(),
+            deviceId: DEVICE_ID
+          });
+        } else {
+          DataCache.queuePatch(`${patchKey}/${id}`, null);
+        }
+      });
+    });
   }
 
-  async function persistCloud(data) {
-    if (!FirebaseApp.isReady()) return;
+  function stripInternal(next) {
+    const out = { ...next };
+    Object.keys(out).forEach((k) => {
+      if (k.startsWith("_deleted_") || k === "_precoModoTs") delete out[k];
+    });
+    return out;
+  }
+
+  function scheduleFlush() {
+    if (flushTimer) clearTimeout(flushTimer);
+    flushTimer = setTimeout(() => {
+      flushPending();
+    }, FLUSH_MS);
+  }
+
+  async function flushPending() {
+    if (!cloudReady || !FirebaseApp.isReady() || flushing) return;
+    const pending = DataCache.getPending();
+    const paths = Object.keys(pending);
+    if (!paths.length) {
+      setStatus("online");
+      return;
+    }
+
     const root = FirebaseApp.ref(ROOT);
     if (!root) return;
 
-    const updates = buildCloudUpdates(cloudMirror || {}, data);
-    // Sempre que há write de conteúdo, bump rev (exceto se só updatedAt)
-    const contentKeys = Object.keys(updates).filter((k) => k !== "meta/updatedAt");
-    if (!contentKeys.length) return;
-
-    const rev = Date.now();
-    updates["meta/rev"] = rev;
-    lastRev = rev;
-    localWrite = true;
+    flushing = true;
     setStatus("syncing");
+
+    const updates = {};
+    paths.forEach((path) => {
+      updates[path] = pending[path].value;
+    });
+    updates["meta/updatedAt"] = new Date().toISOString();
+    updates["meta/rev"] = now();
 
     try {
       await root.update(updates);
-      cloudMirror = clone(data);
-      setStatus("online");
+      DataCache.clearPatches(paths);
+      setStatus(Object.keys(DataCache.getPending()).length ? "syncing" : "online");
     } catch (err) {
-      console.error("Firebase save:", err);
+      console.error("Firebase flush:", err);
       setStatus("error");
     } finally {
-      setTimeout(() => {
-        localWrite = false;
-      }, 400);
+      flushing = false;
+      if (Object.keys(DataCache.getPending()).length) scheduleFlush();
     }
   }
 
-  function scheduleCloudSave(data) {
-    if (writeTimer) clearTimeout(writeTimer);
-    writeTimer = setTimeout(() => persistCloud(data), DEBOUNCE_MS);
+  function upsertListItem(key, item) {
+    if (!item || !item.id) return;
+    const list = state[key] || [];
+    const idx = list.findIndex((x) => x.id === item.id);
+    const local = idx >= 0 ? list[idx] : null;
+    const pending = DataCache.getPending()[`${key}/${item.id}`];
+
+    // Se temos escrita local pendente mais nova, mantém local
+    if (pending && (pending.ts || 0) >= (item.updatedAt || 0)) return;
+
+    if (local && !isNewer(item, local)) return;
+
+    const nextList = list.slice();
+    if (idx >= 0) nextList[idx] = item;
+    else nextList.push(item);
+
+    applyingRemote = true;
+    state = { ...state, [key]: nextList };
+    persistCache();
+    applyingRemote = false;
+    emit();
+  }
+
+  function removeListItem(key, id) {
+    const pending = DataCache.getPending()[`${key}/${id}`];
+    // Pendência de recriação/edição: não remove
+    if (pending && pending.value != null) return;
+
+    const list = state[key] || [];
+    if (!list.some((x) => x.id === id)) return;
+
+    applyingRemote = true;
+    state = { ...state, [key]: list.filter((x) => x.id !== id) };
+    persistCache();
+    applyingRemote = false;
+    emit();
+  }
+
+  function upsertCatalogPatch(catalogKey, patchEntry) {
+    if (!patchEntry || !patchEntry.id) return;
+    const id = patchEntry.id;
+    const patchPath = catalogKey === "servicos" ? "servicosPatch" : "produtosPatch";
+    const pending = DataCache.getPending()[`${patchPath}/${id}`];
+    if (pending && (pending.ts || 0) >= (patchEntry.updatedAt || 0)) return;
+
+    const seed = seedFor(catalogKey);
+    const seedMap = listToMap(seed);
+    let list = (state[catalogKey] || []).slice();
+    const idx = list.findIndex((x) => x.id === id);
+    const local = idx >= 0 ? list[idx] : null;
+
+    if (patchEntry._deleted) {
+      if (pending && pending.value && !pending.value._deleted) return;
+      if (local && !isNewer(patchEntry, local)) return;
+      list = list.filter((x) => x.id !== id);
+    } else {
+      const merged = local
+        ? { ...local, ...patchEntry, id }
+        : { ...(seedMap[id] || {}), ...patchEntry, id };
+      if (local && !isNewer(merged, local) && same(contentOf(local), contentOf(merged))) return;
+      if (local && !isNewer(patchEntry, local) && (local.updatedAt || 0) > 0) return;
+      if (idx >= 0) list[idx] = merged;
+      else list.push(merged);
+    }
+
+    applyingRemote = true;
+    state = { ...state, [catalogKey]: list };
+    persistCache();
+    applyingRemote = false;
+    emit();
+  }
+
+  function applyEmpresaRemote(remote) {
+    if (!remote) return;
+    const pending = DataCache.getPending().empresa;
+    if (pending && (pending.ts || 0) >= (remote.updatedAt || 0)) return;
+    if (!isNewer(remote, state.empresa) && same(contentOf(remote), contentOf(state.empresa))) return;
+    if (state.empresa && !isNewer(remote, state.empresa) && (state.empresa.updatedAt || 0) > 0) return;
+
+    applyingRemote = true;
+    state = { ...state, empresa: { ...state.empresa, ...remote } };
+    persistCache();
+    applyingRemote = false;
+    emit();
+  }
+
+  function applyMetaRemote(meta) {
+    if (!meta) return;
+    let changed = false;
+    const next = { ...state };
+
+    const pendingModo = DataCache.getPending()["meta/precoModo"];
+    const remoteTs = meta.precoModoTs || 0;
+    if (meta.precoModo && meta.precoModo !== state.precoModo) {
+      if (!pendingModo || remoteTs > (pendingModo.ts || 0)) {
+        next.precoModo = meta.precoModo;
+        changed = true;
+      }
+    }
+    if (meta.version != null && meta.version !== state.version) {
+      next.version = meta.version;
+      changed = true;
+    }
+    if (meta.catalogVersion != null && meta.catalogVersion !== state.catalogVersion) {
+      next.catalogVersion = meta.catalogVersion;
+      changed = true;
+    }
+
+    if (!changed) return;
+    applyingRemote = true;
+    state = next;
+    persistCache();
+    applyingRemote = false;
+    emit();
+  }
+
+  function mergeInitialRemote(raw) {
+    if (!raw) return state;
+
+    // Migra legado: catálogo completo → patches + apaga nós pesados
+    const cleanup = {};
+    if (raw.servicos && !raw.servicosPatch) {
+      cleanup.servicosPatch = buildCatalogPatch(mapToList(raw.servicos), SEED_SERVICOS);
+    }
+    if (raw.produtos && !raw.produtosPatch) {
+      cleanup.produtosPatch = buildCatalogPatch(mapToList(raw.produtos), SEED_PRODUTOS);
+    }
+    if (raw.servicos) cleanup.servicos = null;
+    if (raw.produtos) cleanup.produtos = null;
+
+    const data = { ...raw, ...cleanup };
+    if (cleanup.servicosPatch) data.servicosPatch = cleanup.servicosPatch;
+    if (cleanup.produtosPatch) data.produtosPatch = cleanup.produtosPatch;
+
+    const remoteState = {
+      ...state,
+      version: data.meta?.version ?? data.version ?? state.version,
+      catalogVersion: data.meta?.catalogVersion ?? data.catalogVersion ?? state.catalogVersion,
+      precoModo: data.meta?.precoModo || data.precoModo || state.precoModo,
+      empresa: mergeEntity(state.empresa, data.empresa),
+      servicos: mergeCatalog(state.servicos, SEED_SERVICOS, data.servicosPatch, data.servicos),
+      produtos: mergeCatalog(state.produtos, SEED_PRODUTOS, data.produtosPatch, data.produtos)
+    };
+
+    USER_LIST_KEYS.forEach((key) => {
+      remoteState[key] = mergeLists(state[key], mapToList(data[key]));
+    });
+
+    // Reaplica pendências locais por cima (não perde edição offline)
+    const pending = DataCache.getPending();
+    Object.entries(pending).forEach(([path, op]) => {
+      applyPendingOnto(remoteState, path, op.value);
+    });
+
+    if (Object.keys(cleanup).length && FirebaseApp.ref(ROOT)) {
+      FirebaseApp.ref(ROOT).update(cleanup).catch(() => {});
+    }
+
+    return remoteState;
+  }
+
+  function mergeEntity(local, remote) {
+    if (!remote) return local || {};
+    if (!local) return remote;
+    return isNewer(remote, local) ? { ...local, ...remote } : local;
+  }
+
+  function mergeLists(localList, remoteList) {
+    const map = listToMap(localList);
+    (remoteList || []).forEach((item) => {
+      if (!item?.id) return;
+      const local = map[item.id];
+      if (!local) map[item.id] = item;
+      else if (isNewer(item, local)) map[item.id] = { ...local, ...item };
+    });
+    // Itens só locais (ainda não na nuvem) permanecem
+    return Object.values(map);
+  }
+
+  function mergeCatalog(localList, seed, patchMap, legacyMap) {
+    let base = applyCatalogPatch(seed, patchMap || {});
+    if ((!patchMap || !Object.keys(patchMap).length) && legacyMap) {
+      base = mapToList(legacyMap);
+    }
+    return mergeLists(localList, base);
+  }
+
+  function applyPendingOnto(target, path, value) {
+    if (path === "empresa" && value) {
+      target.empresa = { ...target.empresa, ...value };
+      return;
+    }
+    if (path === "meta/precoModo" && value != null) {
+      target.precoModo = value;
+      return;
+    }
+    const m = path.match(/^(clientes|orcamentos|contratos|lancamentos|despesasFixas)\/(.+)$/);
+    if (m) {
+      const [, key, id] = m;
+      if (value == null) target[key] = (target[key] || []).filter((x) => x.id !== id);
+      else {
+        const list = (target[key] || []).slice();
+        const idx = list.findIndex((x) => x.id === id);
+        if (idx >= 0) list[idx] = value;
+        else list.push(value);
+        target[key] = list;
+      }
+      return;
+    }
+    const c = path.match(/^(servicosPatch|produtosPatch)\/(.+)$/);
+    if (c) {
+      const catalogKey = c[1] === "servicosPatch" ? "servicos" : "produtos";
+      const id = c[2];
+      if (value && value._deleted) {
+        target[catalogKey] = (target[catalogKey] || []).filter((x) => x.id !== id);
+      } else if (value) {
+        const seedMap = listToMap(seedFor(catalogKey));
+        const list = (target[catalogKey] || []).slice();
+        const idx = list.findIndex((x) => x.id === id);
+        const merged = { ...(seedMap[id] || {}), ...(idx >= 0 ? list[idx] : {}), ...value, id };
+        if (idx >= 0) list[idx] = merged;
+        else list.push(merged);
+        target[catalogKey] = list;
+      }
+    }
+  }
+
+  function bindChildList(key) {
+    const ref = FirebaseApp.ref(`${ROOT}/${key}`);
+    if (!ref) return;
+
+    const onAdd = ref.on("child_added", (snap) => {
+      if (applyingRemote) return;
+      upsertListItem(key, snap.val());
+    });
+    const onChange = ref.on("child_changed", (snap) => {
+      upsertListItem(key, snap.val());
+    });
+    const onRemove = ref.on("child_removed", (snap) => {
+      removeListItem(key, snap.key);
+    });
+
+    listeners.push(() => {
+      ref.off("child_added", onAdd);
+      ref.off("child_changed", onChange);
+      ref.off("child_removed", onRemove);
+    });
+  }
+
+  function bindCatalogPatches(catalogKey) {
+    const patchKey = catalogKey === "servicos" ? "servicosPatch" : "produtosPatch";
+    const ref = FirebaseApp.ref(`${ROOT}/${patchKey}`);
+    if (!ref) return;
+
+    const handler = (snap) => upsertCatalogPatch(catalogKey, snap.val());
+    const onAdd = ref.on("child_added", handler);
+    const onChange = ref.on("child_changed", handler);
+    const onRemove = ref.on("child_removed", (snap) => {
+      // remoção do patch: volta ao seed se existir
+      const id = snap.key;
+      const pending = DataCache.getPending()[`${patchKey}/${id}`];
+      if (pending) return;
+      const seedMap = listToMap(seedFor(catalogKey));
+      applyingRemote = true;
+      if (seedMap[id]) {
+        const list = (state[catalogKey] || []).slice();
+        const idx = list.findIndex((x) => x.id === id);
+        if (idx >= 0) list[idx] = { ...seedMap[id], updatedAt: 0 };
+        else list.push({ ...seedMap[id], updatedAt: 0 });
+        state = { ...state, [catalogKey]: list };
+      } else {
+        state = { ...state, [catalogKey]: (state[catalogKey] || []).filter((x) => x.id !== id) };
+      }
+      persistCache();
+      applyingRemote = false;
+      emit();
+    });
+
+    listeners.push(() => {
+      ref.off("child_added", onAdd);
+      ref.off("child_changed", onChange);
+      ref.off("child_removed", onRemove);
+    });
+  }
+
+  function bindEmpresa() {
+    const ref = FirebaseApp.ref(`${ROOT}/empresa`);
+    if (!ref) return;
+    const cb = ref.on("value", (snap) => applyEmpresaRemote(snap.val()));
+    listeners.push(() => ref.off("value", cb));
+  }
+
+  function bindMeta() {
+    const ref = FirebaseApp.ref(`${ROOT}/meta`);
+    if (!ref) return;
+    const cb = ref.on("value", (snap) => applyMetaRemote(snap.val()));
+    listeners.push(() => ref.off("value", cb));
   }
 
   function set(next) {
-    state = typeof next === "function" ? next(state) : next;
-    saveLocal(state);
-    scheduleCloudSave(state);
+    if (applyingRemote) {
+      state = typeof next === "function" ? next(state) : next;
+      persistCache();
+      emit();
+      return state;
+    }
+
+    const prev = state;
+    let incoming = typeof next === "function" ? next(state) : next;
+    incoming = stampDiff(prev, incoming);
+    enqueueFromDiff(prev, incoming);
+    state = stripInternal(incoming);
+    persistCache();
     emit();
+    scheduleFlush();
     return state;
   }
 
@@ -426,41 +710,47 @@ const Store = (() => {
   }
 
   function reset() {
-    state = defaultState();
-    saveLocal(state);
-    scheduleCloudSave(state);
+    const prev = state;
+    const next = stampDiff(prev, defaultState());
+    enqueueFromDiff(prev, next);
+    // força reenvio de listas (reset completo)
+    USER_LIST_KEYS.forEach((key) => {
+      listToMap(prev[key]).forEach((_, id) => {
+        if (!listToMap(next[key])[id]) DataCache.queuePatch(`${key}/${id}`, null);
+      });
+    });
+    state = stripInternal(next);
+    persistCache();
     emit();
+    scheduleFlush();
     return state;
   }
 
   function refreshCatalog() {
     return update({
-      servicos: SEED_SERVICOS.map((s) => ({ ...s })),
-      produtos: SEED_PRODUTOS.map((p) => ({ ...p })),
+      servicos: SEED_SERVICOS.map((s) => ({ ...s, updatedAt: now(), deviceId: DEVICE_ID })),
+      produtos: SEED_PRODUTOS.map((p) => ({ ...p, updatedAt: now(), deviceId: DEVICE_ID })),
       catalogVersion: 3
     });
   }
 
-  async function bootstrapEmpty(root) {
-    const seed = clone(state);
-    const updates = buildCloudUpdates({}, seed);
-    const rev = Date.now();
-    updates["meta/rev"] = rev;
-    updates["meta/version"] = seed.version;
-    updates["meta/catalogVersion"] = seed.catalogVersion;
-    updates["meta/precoModo"] = seed.precoModo;
-    updates["meta/updatedAt"] = new Date().toISOString();
-    // Remove legado pesado se alguém já tiver criado
-    updates.servicos = null;
-    updates.produtos = null;
-    lastRev = rev;
-    localWrite = true;
-    await root.update(updates);
-    cloudMirror = seed;
-    localWrite = false;
-  }
-
   async function initCloud() {
+    const hydrated = await DataCache.hydrate(migrateFromOld() || defaultState());
+    DEVICE_ID = hydrated.deviceId;
+    state = hydrated.state || defaultState();
+
+    if ((state.catalogVersion || 0) < 3) {
+      state = {
+        ...state,
+        servicos: SEED_SERVICOS.map((s) => ({ ...s, updatedAt: 0 })),
+        produtos: SEED_PRODUTOS.map((p) => ({ ...p, updatedAt: 0 })),
+        catalogVersion: 3
+      };
+      persistCache();
+    }
+
+    emit();
+
     FirebaseApp.init();
     if (!FirebaseApp.isReady()) {
       setStatus("offline");
@@ -476,73 +766,52 @@ const Store = (() => {
     setStatus("syncing");
 
     try {
-      const remote = await pullAll();
+      const snap = await root.once("value");
+      const remote = snap.val();
 
       if (!remote) {
-        await bootstrapEmpty(root);
-        setStatus("online");
+        // Primeira carga: envia estado local por paths (sem catálogo completo)
+        USER_LIST_KEYS.forEach((key) => {
+          (state[key] || []).forEach((item) => {
+            DataCache.queuePatch(`${key}/${item.id}`, slimItem(stamp(item)));
+          });
+        });
+        DataCache.queuePatch("empresa", slimItem(stamp(state.empresa || {})));
+        DataCache.queuePatch("meta/precoModo", state.precoModo);
+        DataCache.queuePatch("meta/precoModoTs", now());
+        DataCache.queuePatch("meta/precoModoDevice", DEVICE_ID);
+        DataCache.queuePatch("meta/version", state.version);
+        DataCache.queuePatch("meta/catalogVersion", state.catalogVersion);
       } else {
-        // Limpa catálogo legado completo (1x) para economizar storage
-        if (remote.servicos || remote.produtos) {
-          const cleanup = {};
-          if (remote.servicos) cleanup.servicos = null;
-          if (remote.produtos) cleanup.produtos = null;
-          if (!remote.servicosPatch && remote.servicos) {
-            cleanup.servicosPatch = buildCatalogPatch(mapToList(remote.servicos), SEED_SERVICOS);
-          }
-          if (!remote.produtosPatch && remote.produtos) {
-            cleanup.produtosPatch = buildCatalogPatch(mapToList(remote.produtos), SEED_PRODUTOS);
-          }
-          if (Object.keys(cleanup).length) {
-            await root.update(cleanup);
-            Object.assign(remote, cleanup);
-            if (cleanup.servicos === null) delete remote.servicos;
-            if (cleanup.produtos === null) delete remote.produtos;
-          }
-        }
-
-        const remoteState = remoteToState(remote);
-        lastRev = remote.meta?.rev || null;
-        applyRemoteState(remoteState);
+        applyingRemote = true;
+        state = mergeInitialRemote(remote);
+        persistCache();
+        applyingRemote = false;
+        emit();
       }
 
-      if (unsubscribe) unsubscribe();
-      const metaRef = root.child("meta/rev");
-      const onRev = metaRef.on(
-        "value",
-        async (snap) => {
-          const rev = snap.val();
-          if (rev == null) return;
-          if (rev === lastRev) return;
-          if (localWrite) {
-            lastRev = rev;
-            return;
-          }
-          if (pulling) return;
-          pulling = true;
-          lastRev = rev;
-          try {
-            setStatus("syncing");
-            const fresh = await pullAll();
-            if (fresh) applyRemoteState(remoteToState(fresh));
-            else setStatus("online");
-          } catch (err) {
-            console.error("Firebase pull:", err);
-            setStatus("error");
-          } finally {
-            pulling = false;
-          }
-        },
-        (err) => {
-          console.error("Firebase meta listener:", err);
-          setStatus("error");
-        }
-      );
-      unsubscribe = () => metaRef.off("value", onRev);
+      listeners.forEach((off) => off());
+      listeners = [];
+      USER_LIST_KEYS.forEach(bindChildList);
+      CATALOG_KEYS.forEach(bindCatalogPatches);
+      bindEmpresa();
+      bindMeta();
+
+      cloudReady = true;
+      await flushPending();
+      setStatus(Object.keys(DataCache.getPending()).length ? "syncing" : "online");
     } catch (err) {
       console.error("Firebase load:", err);
       setStatus("offline");
+      // tenta flush depois se voltar
+      cloudReady = FirebaseApp.isReady();
+      scheduleFlush();
     }
+
+    window.addEventListener("online", () => {
+      setStatus("syncing");
+      flushPending();
+    });
 
     return state;
   }

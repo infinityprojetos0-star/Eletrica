@@ -1,5 +1,5 @@
 /* VoltES Service Worker — cache estático + fallback offline */
-const CACHE_VERSION = "voltes-v1";
+const CACHE_VERSION = "voltes-v2";
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 
 const PRECACHE_URLS = [
@@ -13,6 +13,7 @@ const PRECACHE_URLS = [
   "./assets/icons/apple-touch-icon.png",
   "./src/data.js",
   "./src/firebase.js",
+  "./src/cache.js",
   "./src/store.js",
   "./src/pdf.js",
   "./src/pwa.js",
