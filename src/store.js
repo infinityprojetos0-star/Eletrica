@@ -121,9 +121,14 @@ const Store = (() => {
       if (v == null) return;
       if (typeof v === "string" && v.startsWith("data:")) return;
       if (typeof v === "string" && v.length > 4000) return;
+      if (typeof v === "object") {
+        const nested = slimItem(v);
+        if (nested && (Array.isArray(nested) || Object.keys(nested).length)) out[k] = nested;
+        return;
+      }
       out[k] = v;
     });
-    return out;
+    return DataCache.sanitizeFirebase(out);
   }
 
   function stamp(item, ts = now()) {
@@ -214,10 +219,10 @@ const Store = (() => {
     return null;
   }
 
-  function emit() {
+  function emit(stateChanged = true) {
     window.dispatchEvent(
       new CustomEvent("voltes:store", {
-        detail: { status: cloudStatus, state }
+        detail: { status: cloudStatus, state, stateChanged }
       })
     );
   }
@@ -225,7 +230,8 @@ const Store = (() => {
   function setStatus(status) {
     if (cloudStatus === status) return;
     cloudStatus = status;
-    emit();
+    // Só atualiza o chip — evita re-render da página a cada sync
+    emit(false);
   }
 
   function persistCache() {
@@ -286,13 +292,18 @@ const Store = (() => {
     }
 
     if (prev.precoModo !== next.precoModo) {
-      DataCache.queuePatch("meta/precoModo", next.precoModo);
+      const modo = ["minimo", "medio", "maximo"].includes(next.precoModo)
+        ? next.precoModo
+        : "medio";
+      DataCache.queuePatch("meta/precoModo", modo);
       DataCache.queuePatch("meta/precoModoTs", next._precoModoTs || now());
-      DataCache.queuePatch("meta/precoModoDevice", DEVICE_ID);
+      DataCache.queuePatch("meta/precoModoDevice", DEVICE_ID || "unknown");
     }
 
-    if (prev.version !== next.version) DataCache.queuePatch("meta/version", next.version);
-    if (prev.catalogVersion !== next.catalogVersion) {
+    if (prev.version !== next.version && next.version != null) {
+      DataCache.queuePatch("meta/version", next.version);
+    }
+    if (prev.catalogVersion !== next.catalogVersion && next.catalogVersion != null) {
       DataCache.queuePatch("meta/catalogVersion", next.catalogVersion);
     }
 
@@ -352,11 +363,15 @@ const Store = (() => {
     }, FLUSH_MS);
   }
 
+  let flushFailures = 0;
+
   async function flushPending() {
     if (!cloudReady || !FirebaseApp.isReady() || flushing) return;
+    DataCache.scrubPending();
     const pending = DataCache.getPending();
     const paths = Object.keys(pending);
     if (!paths.length) {
+      flushFailures = 0;
       setStatus("online");
       return;
     }
@@ -368,22 +383,61 @@ const Store = (() => {
     setStatus("syncing");
 
     const updates = {};
+    const validPaths = [];
     paths.forEach((path) => {
-      updates[path] = pending[path].value;
+      const raw = pending[path]?.value;
+      if (raw === undefined) return;
+      const clean = raw === null ? null : DataCache.sanitizeFirebase(raw);
+      if (clean === undefined) return;
+      updates[path] = clean;
+      validPaths.push(path);
     });
+
+    if (!validPaths.length) {
+      DataCache.clearPatches(paths);
+      flushing = false;
+      flushFailures = 0;
+      setStatus("online");
+      return;
+    }
+
     updates["meta/updatedAt"] = new Date().toISOString();
     updates["meta/rev"] = now();
 
+    // Garante meta/precoModo válido se estiver no pacote
+    if ("meta/precoModo" in updates) {
+      const modo = updates["meta/precoModo"];
+      if (!["minimo", "medio", "maximo"].includes(modo)) {
+        updates["meta/precoModo"] = state.precoModo || "medio";
+      }
+    }
+
     try {
       await root.update(updates);
-      DataCache.clearPatches(paths);
+      DataCache.clearPatches(validPaths);
+      flushFailures = 0;
       setStatus(Object.keys(DataCache.getPending()).length ? "syncing" : "online");
     } catch (err) {
       console.error("Firebase flush:", err);
+      flushFailures += 1;
+      // Remove patches inválidos que travam o loop (ex.: undefined antigo no cache)
+      if (String(err?.message || err).includes("undefined")) {
+        DataCache.scrubPending();
+        DataCache.clearPatches(validPaths.filter((p) => pending[p]?.value === undefined));
+        // descarta fila corrompida após várias falhas
+        if (flushFailures >= 3) {
+          console.warn("Firebase: limpando fila pendente corrompida");
+          DataCache.setPending({});
+          flushFailures = 0;
+        }
+      }
       setStatus("error");
     } finally {
       flushing = false;
-      if (Object.keys(DataCache.getPending()).length) scheduleFlush();
+      const left = Object.keys(DataCache.getPending()).length;
+      if (left && flushFailures < 5) {
+        flushTimer = setTimeout(() => flushPending(), Math.min(8000, 800 * 2 ** flushFailures));
+      }
     }
   }
 
@@ -777,11 +831,11 @@ const Store = (() => {
           });
         });
         DataCache.queuePatch("empresa", slimItem(stamp(state.empresa || {})));
-        DataCache.queuePatch("meta/precoModo", state.precoModo);
+        DataCache.queuePatch("meta/precoModo", state.precoModo || "medio");
         DataCache.queuePatch("meta/precoModoTs", now());
-        DataCache.queuePatch("meta/precoModoDevice", DEVICE_ID);
-        DataCache.queuePatch("meta/version", state.version);
-        DataCache.queuePatch("meta/catalogVersion", state.catalogVersion);
+        DataCache.queuePatch("meta/precoModoDevice", DEVICE_ID || "unknown");
+        DataCache.queuePatch("meta/version", state.version ?? 2);
+        DataCache.queuePatch("meta/catalogVersion", state.catalogVersion ?? 3);
       } else {
         applyingRemote = true;
         state = mergeInitialRemote(remote);

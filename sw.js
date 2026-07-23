@@ -1,5 +1,5 @@
 /* VoltES Service Worker — cache estático + fallback offline */
-const CACHE_VERSION = "voltes-v2";
+const CACHE_VERSION = "voltes-v3";
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 
 const PRECACHE_URLS = [

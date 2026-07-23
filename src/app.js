@@ -1371,9 +1371,13 @@
     label.textContent = map[status] || status;
   }
 
-  window.addEventListener("voltes:store", () => {
+  let storeRenderTimer = null;
+  window.addEventListener("voltes:store", (e) => {
     updateSyncChip();
-    render();
+    // Evita “reload” da tela a cada ping de sync/status
+    if (e.detail?.stateChanged === false) return;
+    clearTimeout(storeRenderTimer);
+    storeRenderTimer = setTimeout(() => render(), 60);
   });
 
   updateSyncChip();

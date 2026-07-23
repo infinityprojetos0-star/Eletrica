@@ -140,14 +140,64 @@ const DataCache = (() => {
     scheduleIdbFlush();
   }
 
+  /** Firebase rejeita undefined — limpa recursivamente (null = delete ok) */
+  function sanitizeFirebase(value) {
+    if (value === undefined) return undefined;
+    if (value === null || typeof value !== "object") return value;
+    if (Array.isArray(value)) {
+      return value
+        .map(sanitizeFirebase)
+        .filter((v) => v !== undefined);
+    }
+    const out = {};
+    Object.keys(value).forEach((k) => {
+      const v = sanitizeFirebase(value[k]);
+      if (v !== undefined) out[k] = v;
+    });
+    return out;
+  }
+
   function queuePatch(path, value) {
+    if (!path) return;
+    // undefined no valor = inválido (use null para apagar no RTDB)
+    if (value === undefined) {
+      delete memoryPending[path];
+      writeLs(LS_PENDING, memoryPending);
+      scheduleIdbFlush();
+      return;
+    }
+    const clean = value === null ? null : sanitizeFirebase(value);
+    if (clean === undefined) {
+      delete memoryPending[path];
+      writeLs(LS_PENDING, memoryPending);
+      scheduleIdbFlush();
+      return;
+    }
     memoryPending[path] = {
-      value,
+      value: clean,
       ts: Date.now(),
       deviceId: deviceId()
     };
     writeLs(LS_PENDING, memoryPending);
     scheduleIdbFlush();
+  }
+
+  function scrubPending() {
+    const next = {};
+    Object.entries(memoryPending || {}).forEach(([path, op]) => {
+      if (!op || op.value === undefined) return;
+      if (op.value === null) {
+        next[path] = op;
+        return;
+      }
+      const clean = sanitizeFirebase(op.value);
+      if (clean === undefined) return;
+      next[path] = { ...op, value: clean };
+    });
+    memoryPending = next;
+    writeLs(LS_PENDING, memoryPending);
+    scheduleIdbFlush();
+    return memoryPending;
   }
 
   function clearPatches(paths) {
@@ -200,6 +250,8 @@ const DataCache = (() => {
       writeLs(LS_PENDING, memoryPending);
     }
 
+    scrubPending();
+
     if (!lsState && memoryState) writeLs(LS_STATE, memoryState);
 
     return {
@@ -219,6 +271,8 @@ const DataCache = (() => {
     setPending,
     queuePatch,
     clearPatches,
+    scrubPending,
+    sanitizeFirebase,
     getMeta,
     setMeta
   };
