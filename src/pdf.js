@@ -160,11 +160,30 @@ const PDF = (() => {
     doc.text(`Saldo (entradas − saídas): ${money(resumo.saldo)}`, 14, y + 28);
 
     let startY = y + 40;
+    if (resumo.despesasGlobais?.length) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(30, 40, 55);
+      doc.text("Despesas globais (todos os serviços)", 14, startY);
+      doc.autoTable({
+        startY: startY + 4,
+        head: [["Despesa", "Escopo", "Valor", "Status"]],
+        body: resumo.despesasGlobais.map((d) => [
+          d.nome,
+          "Todos",
+          money(d.valor),
+          d.ativo === false ? "off" : "ativa"
+        ]),
+        styles: { fontSize: 8 },
+        headStyles: { fillColor: [47, 155, 255] }
+      });
+      startY = doc.lastAutoTable.finalY + 10;
+    }
     if (resumo.despesasServico?.length) {
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10);
       doc.setTextColor(30, 40, 55);
-      doc.text("Despesas por serviço (cadastro interno)", 14, startY);
+      doc.text("Despesas extras por serviço", 14, startY);
       doc.autoTable({
         startY: startY + 4,
         head: [["Serviço", "Despesa", "Valor embutido"]],

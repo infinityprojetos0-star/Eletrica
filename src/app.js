@@ -567,7 +567,7 @@
             ${PRECO_MODOS.map((m) => `<button type="button" data-modo="${m.id}" class="${modoLocal === m.id ? "active" : ""}">${m.label}</button>`).join("")}
           </div>
         </div>
-        <p style="color:var(--text-dim);font-size:.8rem;max-width:280px">Despesas por serviço entram no unitário e <strong>não aparecem</strong> no PDF do cliente.</p>
+        <p style="color:var(--text-dim);font-size:.8rem;max-width:280px">Deslocamento e alimentação (globais) + extras do serviço entram no unitário e <strong>não aparecem</strong> no PDF.</p>
       </div>
 
       <div style="margin:0 0 16px;display:flex;gap:8px;flex-wrap:wrap">
@@ -608,7 +608,12 @@
       if (!sv) return;
       const meta = enrichFromCatalog(sv);
       const base = getPrecoByModo(sv, modoLocal);
-      const ocultas = despesasDoServico(sv.id, s).map((d) => ({ id: d.id, nome: d.nome, valor: Number(d.valor) || 0 }));
+      const ocultas = despesasDoServico(sv.id, s).map((d) => ({
+        id: d.id,
+        nome: d.nome,
+        valor: Number(d.valor) || 0,
+        global: !!d.global
+      }));
       const custoOculto = ocultas.reduce((t, d) => t + d.valor, 0);
       itens.push({
         id: uid("item"),
@@ -923,7 +928,9 @@
     const entradas = doMes.filter((l) => l.tipo === "entrada").reduce((t, l) => t + l.valor, 0);
     const saidas = doMes.filter((l) => l.tipo === "saida").reduce((t, l) => t + l.valor, 0);
     const despesasServico = s.despesasServico || [];
-    const totalEmbutidoCadastro = despesasServico.reduce((t, d) => t + Number(d.valor || 0), 0);
+    const despesasGlobais = s.despesasGlobais || [];
+    const totalGlobal = custoOcultoGlobal(s);
+    const totalEmbutidoCadastro = totalGlobal + despesasServico.reduce((t, d) => t + Number(d.valor || 0), 0);
     const aprovadosMes = s.orcamentos.filter((o) => o.status === "aprovado" && (o.data || "").startsWith(mes));
     const ocultoEmOrcamentos = aprovadosMes.reduce((t, o) =>
       t + (o.itens || []).reduce((s2, i) => s2 + Number(i.custoOculto || 0) * Number(i.qtd || 0), 0), 0);
@@ -935,14 +942,14 @@
       <div class="view-enter">
       <div class="hero-note">
         <div>
-          <h3>Despesas por serviço (ocultas)</h3>
-          <p>Cadastre custos (deslocamento, consumíveis, etc.) ligados a cada serviço. Eles entram no preço do orçamento e <strong>não aparecem no PDF do cliente</strong>.</p>
+          <h3>Despesas embutidas (ocultas no PDF)</h3>
+          <p><strong>Deslocamento</strong> e <strong>alimentação</strong> valem para qualquer serviço. Você também pode vincular custos extras a um serviço específico.</p>
         </div>
       </div>
       <div class="grid grid-4" style="margin-bottom:16px">
         <div class="card stat-card success"><div class="stat-label">Entradas (mês)</div><div class="stat-value">${money(entradas)}</div></div>
         <div class="card stat-card danger"><div class="stat-label">Saídas (mês)</div><div class="stat-value">${money(saidas)}</div></div>
-        <div class="card stat-card warn"><div class="stat-label">Embutido (cadastro)</div><div class="stat-value">${money(totalEmbutidoCadastro)}</div></div>
+        <div class="card stat-card warn"><div class="stat-label">Global / serviço</div><div class="stat-value">${money(totalEmbutidoCadastro)}</div></div>
         <div class="card stat-card accent"><div class="stat-label">Embutido em aprovados</div><div class="stat-value">${money(ocultoEmOrcamentos)}</div></div>
       </div>
       <div class="toolbar">
@@ -950,6 +957,35 @@
         <button class="btn btn-secondary" id="btnDespServ">+ Despesa por serviço</button>
         <button class="btn btn-secondary" id="btnRel">Baixar relatório PDF</button>
       </div>
+
+      <div class="card" style="padding:0;margin-bottom:16px">
+        <div class="card-header" style="padding:16px 16px 0">
+          <div>
+            <h3>Despesas em todos os serviços</h3>
+            <p>Deslocamento e alimentação — somam no unitário de qualquer serviço · ocultas no PDF</p>
+          </div>
+          <button class="btn btn-sm btn-secondary" id="btnAddGlobal">+ Global</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Despesa</th><th>Escopo</th><th>Valor</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              ${despesasGlobais.map((d) => `
+                <tr>
+                  <td><strong>${d.nome}</strong></td>
+                  <td>Todos os serviços</td>
+                  <td>${money(d.valor)}</td>
+                  <td><span class="badge badge-${d.ativo === false ? "rejeitado" : "aprovado"}">${d.ativo === false ? "off" : "ativa"}</span></td>
+                  <td class="actions-cell">
+                    <button class="btn btn-sm btn-secondary" data-edit-dg="${d.id}">Editar</button>
+                    <button class="btn btn-sm btn-secondary" data-toggle-dg="${d.id}">${d.ativo === false ? "Ativar" : "Desativar"}</button>
+                  </td>
+                </tr>`).join("") || `<tr><td colspan="5"><div class="empty">Sem despesas globais</div></td></tr>`}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div class="grid grid-2">
         <div class="card" style="padding:0">
           <div class="card-header" style="padding:16px 16px 0"><div><h3>Lançamentos</h3><p>Entradas e saídas do mês · saldo ${money(saldo)}</p></div></div>
@@ -970,7 +1006,7 @@
           </div>
         </div>
         <div class="card" style="padding:0">
-          <div class="card-header" style="padding:16px 16px 0"><div><h3>Despesas por serviço</h3><p>Imbutidas no unitário · ocultas no PDF</p></div></div>
+          <div class="card-header" style="padding:16px 16px 0"><div><h3>Extras por serviço</h3><p>Além do global · ocultas no PDF</p></div></div>
           <div class="table-wrap">
             <table>
               <thead><tr><th>Serviço</th><th>Despesa</th><th>Valor</th><th></th></tr></thead>
@@ -981,7 +1017,7 @@
                     <td>${d.nome}</td>
                     <td>${money(d.valor)}</td>
                     <td><button class="btn btn-sm btn-danger" data-del-ds="${d.id}">✕</button></td>
-                  </tr>`).join("") : `<tr><td colspan="4"><div class="empty">Nenhuma despesa por serviço</div></td></tr>`}
+                  </tr>`).join("") : `<tr><td colspan="4"><div class="empty">Nenhuma despesa extra por serviço</div></td></tr>`}
               </tbody>
             </table>
           </div>
@@ -989,6 +1025,53 @@
       </div>
       </div>
     `;
+
+    const openGlobalForm = (despesa = null) => {
+      const d = despesa || { nome: "", valor: 0, ativo: true };
+      openModal(despesa ? "Editar despesa global" : "Nova despesa global", `
+        <div class="form-grid">
+          <div class="field full"><label>Nome</label><input id="dgNome" value="${d.nome || ""}" placeholder="Ex: Deslocamento, Alimentação…" /></div>
+          <div class="field"><label>Valor (R$)</label><input id="dgValor" type="number" step="0.01" value="${d.valor || 0}" /></div>
+          <div class="field full" style="color:var(--text-dim);font-size:.82rem">Aplica em <strong>todos</strong> os serviços do orçamento, somando no unitário (cliente não vê o detalhe).</div>
+        </div>
+      `, `<button class="btn btn-ghost" id="cancelModal">Cancelar</button><button class="btn btn-primary" id="saveDg">Salvar</button>`);
+      document.getElementById("cancelModal").onclick = closeModal;
+      document.getElementById("saveDg").onclick = () => {
+        const nome = document.getElementById("dgNome").value.trim();
+        const valor = Number(document.getElementById("dgValor").value);
+        if (!nome) return toast("Informe o nome");
+        if (!(valor >= 0)) return toast("Informe um valor válido");
+        const list = [...(getState().despesasGlobais || [])];
+        const data = {
+          id: d.id || uid("dg"),
+          nome,
+          valor,
+          ativo: d.ativo !== false,
+          escopo: "todos"
+        };
+        const idx = list.findIndex((x) => x.id === data.id);
+        if (idx >= 0) list[idx] = { ...list[idx], ...data };
+        else list.push(data);
+        Store.update({ despesasGlobais: list });
+        closeModal();
+        toast("Despesa global salva");
+        render();
+      };
+    };
+
+    document.getElementById("btnAddGlobal").onclick = () => openGlobalForm();
+    content.querySelectorAll("[data-edit-dg]").forEach((btn) => {
+      btn.onclick = () => openGlobalForm(despesasGlobais.find((x) => x.id === btn.dataset.editDg));
+    });
+    content.querySelectorAll("[data-toggle-dg]").forEach((btn) => {
+      btn.onclick = () => {
+        const list = (getState().despesasGlobais || []).map((d) =>
+          d.id === btn.dataset.toggleDg ? { ...d, ativo: d.ativo === false } : d
+        );
+        Store.update({ despesasGlobais: list });
+        render();
+      };
+    });
 
     document.getElementById("btnLan").onclick = () => {
       openModal("Novo lançamento", `
@@ -1031,9 +1114,9 @@
               ${s.servicos.map((sv) => `<option value="${sv.id}">${sv.nome}</option>`).join("")}
             </select>
           </div>
-          <div class="field full"><label>Nome da despesa (interno)</label><input id="dsNome" placeholder="Ex: Rateio deslocamento, consumíveis…" /></div>
+          <div class="field full"><label>Nome da despesa (interno)</label><input id="dsNome" placeholder="Ex: Consumíveis, EPI…" /></div>
           <div class="field"><label>Valor embutido (R$)</label><input id="dsValor" type="number" step="0.01" /></div>
-          <div class="field full" style="color:var(--text-dim);font-size:.82rem">Esse valor soma no unitário do orçamento. O cliente vê só o preço final, sem detalhar esta despesa.</div>
+          <div class="field full" style="color:var(--text-dim);font-size:.82rem">Extra além de deslocamento/alimentação. Soma no unitário; cliente não vê o detalhe.</div>
         </div>
       `, `<button class="btn btn-ghost" id="cancelModal">Cancelar</button><button class="btn btn-primary" id="saveDs">Salvar</button>`);
       document.getElementById("cancelModal").onclick = closeModal;
@@ -1067,6 +1150,7 @@
           labelFixas: "Custo oculto embutido (aprovados)",
           saldo,
           lancamentos: doMes,
+          despesasGlobais,
           despesasServico: despesasServico.map((d) => ({
             ...d,
             servicoNome: nomeServico(d.servicoId)

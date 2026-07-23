@@ -698,7 +698,7 @@ const PAGE_META = {
   orcamentos: { title: "Orçamentos", subtitle: "Monte propostas profissionais em minutos" },
   servicos: { title: "Serviços", subtitle: "Mão de obra média no Espírito Santo (2026)" },
   produtos: { title: "Materiais", subtitle: "Preços médios de varejo / internet" },
-  financeiro: { title: "Financeiro", subtitle: "Lançamentos e despesas ocultas por serviço" },
+  financeiro: { title: "Financeiro", subtitle: "Lançamentos, deslocamento, alimentação e extras por serviço" },
   calculadoras: { title: "Calculadoras", subtitle: "Cálculos rápidos para o dia a dia" },
   contratos: { title: "Contratos", subtitle: "Manutenção e contratos recorrentes" },
   empresa: { title: "Empresa", subtitle: "Dados que aparecem nos PDFs" }
@@ -751,14 +751,29 @@ function precoModoLabel(modo) {
   return PRECO_MODOS.find((m) => m.id === modo)?.label || "Médio";
 }
 
-/** Despesas vinculadas a um serviço (não aparecem no PDF do cliente) */
+/** Despesas globais — valem para QUALQUER serviço */
+function despesasGlobaisAtivas(state) {
+  return (state?.despesasGlobais || []).filter((d) => d && d.ativo !== false && !d._deleted);
+}
+
+/** Específicas de um serviço + globais (deslocamento, alimentação…) */
 function despesasDoServico(servicoId, state) {
-  if (!servicoId) return [];
-  return (state?.despesasServico || []).filter((d) => d.servicoId === servicoId && !d._deleted);
+  const especificas = servicoId
+    ? (state?.despesasServico || []).filter((d) => d.servicoId === servicoId && !d._deleted)
+    : [];
+  const globais = despesasGlobaisAtivas(state).map((d) => ({
+    ...d,
+    global: true
+  }));
+  return [...globais, ...especificas];
 }
 
 function custoOcultoServico(servicoId, state) {
   return despesasDoServico(servicoId, state).reduce((t, d) => t + Number(d.valor || 0), 0);
+}
+
+function custoOcultoGlobal(state) {
+  return despesasGlobaisAtivas(state).reduce((t, d) => t + Number(d.valor || 0), 0);
 }
 
 /** Preço base (mão de obra) + despesas embutidas = valor cobrado do cliente */
@@ -766,14 +781,28 @@ function precoClienteServico(servico, modo, state) {
   return getPrecoByModo(servico, modo) + custoOcultoServico(servico?.id, state);
 }
 
-/** Seed inicial de despesas ocultas por serviço (rateio operacional) */
+/** Globais padrão: deslocamento e alimentação (qualquer serviço) */
+const SEED_DESPESAS_GLOBAIS = [
+  {
+    id: "dg-deslocamento",
+    nome: "Deslocamento",
+    valor: 35,
+    ativo: true,
+    escopo: "todos"
+  },
+  {
+    id: "dg-alimentacao",
+    nome: "Alimentação",
+    valor: 25,
+    ativo: true,
+    escopo: "todos"
+  }
+];
+
+/** Seed de despesas extras por serviço (além das globais) */
 const SEED_DESPESAS_SERVICO = [
   { id: "ds-1", servicoId: "srv-1", nome: "Consumíveis", valor: 4 },
-  { id: "ds-2", servicoId: "srv-1", nome: "Rateio deslocamento", valor: 6 },
   { id: "ds-3", servicoId: "srv-2", nome: "Consumíveis", valor: 5 },
-  { id: "ds-4", servicoId: "srv-2", nome: "Rateio deslocamento", valor: 8 },
   { id: "ds-5", servicoId: "srv-4", nome: "Consumíveis", valor: 3 },
-  { id: "ds-6", servicoId: "srv-4", nome: "Rateio deslocamento", valor: 5 },
-  { id: "ds-7", servicoId: "srv-13", nome: "EPI / desgaste", valor: 15 },
-  { id: "ds-8", servicoId: "srv-13", nome: "Rateio deslocamento", valor: 25 }
+  { id: "ds-7", servicoId: "srv-13", nome: "EPI / desgaste", valor: 15 }
 ];

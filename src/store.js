@@ -12,7 +12,7 @@ const Store = (() => {
   const ROOT = "voltes";
   const FLUSH_MS = 500;
 
-  const USER_LIST_KEYS = ["clientes", "orcamentos", "contratos", "lancamentos", "despesasServico"];
+  const USER_LIST_KEYS = ["clientes", "orcamentos", "contratos", "lancamentos", "despesasServico", "despesasGlobais"];
   const CATALOG_KEYS = ["servicos", "produtos"];
   const CATALOG_FIELDS = [
     "nome",
@@ -65,6 +65,7 @@ const Store = (() => {
     contratos: [],
     lancamentos: [],
     despesasServico: SEED_DESPESAS_SERVICO.map((d) => ({ ...d, updatedAt: 0 })),
+    despesasGlobais: SEED_DESPESAS_GLOBAIS.map((d) => ({ ...d, updatedAt: 0 })),
     despesasFixas: [] // legado — não usar
   });
 
@@ -208,6 +209,7 @@ const Store = (() => {
         next.lancamentos = old.lancamentos || [];
         next.despesasFixas = [];
         next.despesasServico = SEED_DESPESAS_SERVICO.map((d) => ({ ...d }));
+        next.despesasGlobais = SEED_DESPESAS_GLOBAIS.map((d) => ({ ...d }));
         localStorage.removeItem(k);
         return next;
       } catch {
@@ -635,7 +637,7 @@ const Store = (() => {
       target.precoModo = value;
       return;
     }
-    const m = path.match(/^(clientes|orcamentos|contratos|lancamentos|despesasServico)\/(.+)$/);
+    const m = path.match(/^(clientes|orcamentos|contratos|lancamentos|despesasServico|despesasGlobais)\/(.+)$/);
     if (m) {
       const [, key, id] = m;
       if (value == null) target[key] = (target[key] || []).filter((x) => x.id !== id);
@@ -812,6 +814,28 @@ const Store = (() => {
     } else if (state.despesasFixas?.length) {
       state = { ...state, despesasFixas: [] };
       persistCache();
+    }
+
+    // Garante deslocamento + alimentação globais (qualquer serviço)
+    if (!Array.isArray(state.despesasGlobais) || !state.despesasGlobais.length) {
+      state = {
+        ...state,
+        despesasGlobais: SEED_DESPESAS_GLOBAIS.map((d) => ({ ...d, updatedAt: 0 }))
+      };
+      persistCache();
+    } else {
+      const map = listToMap(state.despesasGlobais);
+      let changed = false;
+      SEED_DESPESAS_GLOBAIS.forEach((seed) => {
+        if (!map[seed.id]) {
+          map[seed.id] = { ...seed, updatedAt: 0 };
+          changed = true;
+        }
+      });
+      if (changed) {
+        state = { ...state, despesasGlobais: Object.values(map) };
+        persistCache();
+      }
     }
 
     emit();
