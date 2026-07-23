@@ -12,7 +12,7 @@ const Store = (() => {
   const ROOT = "voltes";
   const FLUSH_MS = 500;
 
-  const USER_LIST_KEYS = ["clientes", "orcamentos", "contratos", "lancamentos", "despesasFixas"];
+  const USER_LIST_KEYS = ["clientes", "orcamentos", "contratos", "lancamentos", "despesasServico"];
   const CATALOG_KEYS = ["servicos", "produtos"];
   const CATALOG_FIELDS = [
     "nome",
@@ -64,11 +64,8 @@ const Store = (() => {
     orcamentos: [],
     contratos: [],
     lancamentos: [],
-    despesasFixas: [
-      { id: "df-1", nome: "Internet", categoria: "Internet", valor: 99.9, updatedAt: 0 },
-      { id: "df-2", nome: "Combustível", categoria: "Transporte", valor: 280, updatedAt: 0 },
-      { id: "df-3", nome: "Consumíveis / ferramentas", categoria: "Material", valor: 60, updatedAt: 0 }
-    ]
+    despesasServico: SEED_DESPESAS_SERVICO.map((d) => ({ ...d, updatedAt: 0 })),
+    despesasFixas: [] // legado — não usar
   });
 
   let DEVICE_ID = "dev-unknown";
@@ -209,7 +206,8 @@ const Store = (() => {
         next.orcamentos = old.orcamentos || [];
         next.contratos = old.contratos || [];
         next.lancamentos = old.lancamentos || [];
-        next.despesasFixas = old.despesasFixas || next.despesasFixas;
+        next.despesasFixas = [];
+        next.despesasServico = SEED_DESPESAS_SERVICO.map((d) => ({ ...d }));
         localStorage.removeItem(k);
         return next;
       } catch {
@@ -637,7 +635,7 @@ const Store = (() => {
       target.precoModo = value;
       return;
     }
-    const m = path.match(/^(clientes|orcamentos|contratos|lancamentos|despesasFixas)\/(.+)$/);
+    const m = path.match(/^(clientes|orcamentos|contratos|lancamentos|despesasServico)\/(.+)$/);
     if (m) {
       const [, key, id] = m;
       if (value == null) target[key] = (target[key] || []).filter((x) => x.id !== id);
@@ -800,6 +798,19 @@ const Store = (() => {
         produtos: SEED_PRODUTOS.map((p) => ({ ...p, updatedAt: 0 })),
         catalogVersion: 3
       };
+      persistCache();
+    }
+
+    // Migra modelo antigo (despesasFixas mensais) → despesasServico
+    if (!Array.isArray(state.despesasServico)) {
+      state = {
+        ...state,
+        despesasServico: SEED_DESPESAS_SERVICO.map((d) => ({ ...d, updatedAt: 0 })),
+        despesasFixas: []
+      };
+      persistCache();
+    } else if (state.despesasFixas?.length) {
+      state = { ...state, despesasFixas: [] };
       persistCache();
     }
 

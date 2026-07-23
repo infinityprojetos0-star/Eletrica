@@ -155,9 +155,29 @@ const PDF = (() => {
     doc.setFontSize(11);
     doc.text(`Entradas: ${money(resumo.entradas)}`, 14, y);
     doc.text(`Saídas: ${money(resumo.saidas)}`, 14, y + 8);
-    doc.text(`Despesas fixas: ${money(resumo.fixas)}`, 14, y + 16);
+    doc.text(`${resumo.labelFixas || "Custo oculto embutido"}: ${money(resumo.fixas)}`, 14, y + 16);
     doc.setFont("helvetica", "bold");
-    doc.text(`Saldo: ${money(resumo.saldo)}`, 14, y + 28);
+    doc.text(`Saldo (entradas − saídas): ${money(resumo.saldo)}`, 14, y + 28);
+
+    let startY = y + 40;
+    if (resumo.despesasServico?.length) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(30, 40, 55);
+      doc.text("Despesas por serviço (cadastro interno)", 14, startY);
+      doc.autoTable({
+        startY: startY + 4,
+        head: [["Serviço", "Despesa", "Valor embutido"]],
+        body: resumo.despesasServico.map((d) => [
+          d.servicoNome || d.servicoId,
+          d.nome,
+          money(d.valor)
+        ]),
+        styles: { fontSize: 8 },
+        headStyles: { fillColor: [47, 155, 255] }
+      });
+      startY = doc.lastAutoTable.finalY + 10;
+    }
 
     const rows = resumo.lancamentos.map((l) => [
       formatDate(l.data),
@@ -168,7 +188,7 @@ const PDF = (() => {
     ]);
 
     doc.autoTable({
-      startY: y + 40,
+      startY,
       head: [["Data", "Descrição", "Tipo", "Categoria", "Valor"]],
       body: rows,
       styles: { fontSize: 9 },

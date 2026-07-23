@@ -466,34 +466,38 @@
       const box = document.getElementById("itensBox");
       if (!box) return;
       const sub = itens.reduce((t, i) => t + i.qtd * i.preco, 0);
+      const ocultoTotal = itens.reduce((t, i) => t + i.qtd * Number(i.custoOculto || 0), 0);
       const desconto = Number(document.getElementById("oDesc")?.value || o.desconto || 0);
       box.innerHTML = `
         <div class="line-items">
           ${itens.map((item, idx) => {
+            const base = Number(item.precoBase ?? (item.preco - (item.custoOculto || 0)));
             const fake = {
-              precoMin: item.precoMin ?? item.preco,
-              preco: item.precoMed ?? item.preco,
-              precoMax: item.precoMax ?? item.preco
+              precoMin: item.precoMin ?? base,
+              preco: item.precoMed ?? base,
+              precoMax: item.precoMax ?? base
             };
+            const oculto = Number(item.custoOculto || 0);
             return `
             <div class="line-item">
               <div class="line-item-top">
                 <div class="line-item-info">
                   <strong>${item.nome}</strong>
-                  <div class="meta"><span class="badge badge-${item.tipo === "servico" ? "servico" : "produto"}">${item.tipo}</span> · ${precoModoLabel(item.precoModo || modoLocal)} · ${item.unidade || "un"}</div>
+                  <div class="meta"><span class="badge badge-${item.tipo === "servico" ? "servico" : "produto"}">${item.tipo}</span> · ${precoModoLabel(item.precoModo || modoLocal)} · ${item.unidade || "un"}${oculto > 0 ? ` · <span title="Não aparece no PDF">embutido ${money(oculto)}</span>` : ""}</div>
                 </div>
                 <input class="line-item-qty" type="number" min="1" step="1" value="${item.qtd}" data-qtd="${idx}" aria-label="Quantidade" />
                 <div class="line-item-total">${money(item.qtd * item.preco)}</div>
                 <button class="icon-btn" data-rm="${idx}" title="Remover">✕</button>
               </div>
-              ${tierPicksHtml(fake, item.precoModo || modoLocal, `data-item-tiers="${idx}"`)}
+              ${item.tipo === "servico" ? tierPicksHtml(fake, item.precoModo || modoLocal, `data-item-tiers="${idx}"`) : tierPicksHtml(fake, item.precoModo || modoLocal, `data-item-tiers="${idx}"`)}
             </div>`;
           }).join("") || `<div class="empty"><strong>Sem itens</strong>Adicione serviços ou materiais.</div>`}
         </div>
         <div class="totals-box">
-          <div class="row"><span>Subtotal</span><span>${money(sub)}</span></div>
+          <div class="row"><span>Subtotal (cliente)</span><span>${money(sub)}</span></div>
+          ${ocultoTotal > 0 ? `<div class="row" style="color:var(--text-dim)"><span>Custo oculto embutido (só você)</span><span>${money(ocultoTotal)}</span></div>` : ""}
           <div class="row"><span>Desconto</span><span>${money(desconto)}</span></div>
-          <div class="row total"><span>Total</span><span>${money(Math.max(0, sub - desconto))}</span></div>
+          <div class="row total"><span>Total no PDF</span><span>${money(Math.max(0, sub - desconto))}</span></div>
         </div>
       `;
       box.querySelectorAll("[data-qtd]").forEach((inp) => {
@@ -514,22 +518,29 @@
           btn.onclick = () => {
             const tier = btn.dataset.tier;
             const item = itens[idx];
+            const oculto = Number(item.custoOculto || 0);
             const fake = {
-              precoMin: item.precoMin ?? item.preco,
-              preco: item.precoMed ?? item.preco,
-              precoMax: item.precoMax ?? item.preco
+              precoMin: item.precoMin ?? item.precoBase ?? item.preco,
+              preco: item.precoMed ?? item.precoBase ?? item.preco,
+              precoMax: item.precoMax ?? item.precoBase ?? item.preco
             };
             item.precoModo = tier;
-            item.preco = getPrecoByModo(fake, tier);
+            item.precoBase = getPrecoByModo(fake, tier);
+            item.preco = item.precoBase + oculto;
             renderItens();
           };
         });
       });
     };
 
-    const optionsServico = () => s.servicos.map((sv) =>
-      `<option value="${sv.id}">${sv.nome} — ${money(getPrecoByModo(sv, modoLocal))}</option>`
-    ).join("");
+    const optionsServico = () => s.servicos.map((sv) => {
+      const oculto = custoOcultoServico(sv.id, s);
+      const base = getPrecoByModo(sv, modoLocal);
+      const label = oculto > 0
+        ? `${sv.nome} — ${money(base + oculto)} (base ${money(base)} + embutido)`
+        : `${sv.nome} — ${money(base)}`;
+      return `<option value="${sv.id}">${label}</option>`;
+    }).join("");
     const optionsProduto = () => s.produtos.map((p) =>
       `<option value="${p.id}">${p.nome} — ${money(getPrecoByModo(p, modoLocal))}</option>`
     ).join("");
@@ -556,7 +567,7 @@
             ${PRECO_MODOS.map((m) => `<button type="button" data-modo="${m.id}" class="${modoLocal === m.id ? "active" : ""}">${m.label}</button>`).join("")}
           </div>
         </div>
-        <p style="color:var(--text-dim);font-size:.8rem;max-width:280px">Depois de adicionar, você ainda pode trocar Mín/Méd/Máx em cada linha.</p>
+        <p style="color:var(--text-dim);font-size:.8rem;max-width:280px">Despesas por serviço entram no unitário e <strong>não aparecem</strong> no PDF do cliente.</p>
       </div>
 
       <div style="margin:0 0 16px;display:flex;gap:8px;flex-wrap:wrap">
@@ -596,12 +607,18 @@
       const sv = s.servicos.find((x) => x.id === e.target.value);
       if (!sv) return;
       const meta = enrichFromCatalog(sv);
+      const base = getPrecoByModo(sv, modoLocal);
+      const ocultas = despesasDoServico(sv.id, s).map((d) => ({ id: d.id, nome: d.nome, valor: Number(d.valor) || 0 }));
+      const custoOculto = ocultas.reduce((t, d) => t + d.valor, 0);
       itens.push({
         id: uid("item"),
         refId: sv.id,
         tipo: "servico",
         nome: sv.nome,
-        preco: getPrecoByModo(sv, modoLocal),
+        precoBase: base,
+        custoOculto,
+        despesasOcultas: ocultas,
+        preco: base + custoOculto,
         precoMin: meta.precoMin,
         precoMed: meta.precoMed,
         precoMax: meta.precoMax,
@@ -690,21 +707,25 @@
       <div class="card" style="padding:0">
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Serviço</th><th>Categoria</th><th>Tipo</th><th>Unidade</th><th>Mínimo · Médio · Máximo</th><th>Tempo</th><th>Ações</th></tr></thead>
+            <thead><tr><th>Serviço</th><th>Categoria</th><th>Tipo</th><th>Unidade</th><th>Mínimo · Médio · Máximo</th><th>Embutido</th><th>Tempo</th><th>Ações</th></tr></thead>
             <tbody>
-              ${list.map((sv) => `
+              ${list.map((sv) => {
+                const emb = custoOcultoServico(sv.id, s);
+                return `
                 <tr>
                   <td><strong>${sv.nome}</strong><div style="color:var(--text-dim);font-size:.8rem;max-width:320px">${sv.descricao || ""}</div></td>
                   <td>${sv.categoria}</td>
                   <td>${sv.tipo}</td>
                   <td>${sv.unidade}</td>
                   <td>${priceRangeHtml(sv)}</td>
+                  <td title="Soma no unitário · oculto no PDF">${emb > 0 ? money(emb) : "—"}</td>
                   <td>${sv.tempo || "—"}</td>
                   <td class="actions-cell">
                     <button class="btn btn-sm btn-secondary" data-edit="${sv.id}">Editar</button>
                     <button class="btn btn-sm btn-danger" data-del="${sv.id}">Excluir</button>
                   </td>
-                </tr>`).join("")}
+                </tr>`;
+              }).join("")}
             </tbody>
           </table>
         </div>
@@ -901,24 +922,37 @@
     const doMes = s.lancamentos.filter((l) => (l.data || "").startsWith(mes));
     const entradas = doMes.filter((l) => l.tipo === "entrada").reduce((t, l) => t + l.valor, 0);
     const saidas = doMes.filter((l) => l.tipo === "saida").reduce((t, l) => t + l.valor, 0);
-    const fixas = s.despesasFixas.reduce((t, d) => t + d.valor, 0);
-    const saldo = entradas - saidas - fixas;
+    const despesasServico = s.despesasServico || [];
+    const totalEmbutidoCadastro = despesasServico.reduce((t, d) => t + Number(d.valor || 0), 0);
+    const aprovadosMes = s.orcamentos.filter((o) => o.status === "aprovado" && (o.data || "").startsWith(mes));
+    const ocultoEmOrcamentos = aprovadosMes.reduce((t, o) =>
+      t + (o.itens || []).reduce((s2, i) => s2 + Number(i.custoOculto || 0) * Number(i.qtd || 0), 0), 0);
+    const saldo = entradas - saidas;
+
+    const nomeServico = (id) => s.servicos.find((sv) => sv.id === id)?.nome || "Serviço removido";
 
     content.innerHTML = `
+      <div class="view-enter">
+      <div class="hero-note">
+        <div>
+          <h3>Despesas por serviço (ocultas)</h3>
+          <p>Cadastre custos (deslocamento, consumíveis, etc.) ligados a cada serviço. Eles entram no preço do orçamento e <strong>não aparecem no PDF do cliente</strong>.</p>
+        </div>
+      </div>
       <div class="grid grid-4" style="margin-bottom:16px">
         <div class="card stat-card success"><div class="stat-label">Entradas (mês)</div><div class="stat-value">${money(entradas)}</div></div>
         <div class="card stat-card danger"><div class="stat-label">Saídas (mês)</div><div class="stat-value">${money(saidas)}</div></div>
-        <div class="card stat-card warn"><div class="stat-label">Despesas fixas</div><div class="stat-value">${money(fixas)}</div></div>
-        <div class="card stat-card accent"><div class="stat-label">Saldo</div><div class="stat-value">${money(saldo)}</div></div>
+        <div class="card stat-card warn"><div class="stat-label">Embutido (cadastro)</div><div class="stat-value">${money(totalEmbutidoCadastro)}</div></div>
+        <div class="card stat-card accent"><div class="stat-label">Embutido em aprovados</div><div class="stat-value">${money(ocultoEmOrcamentos)}</div></div>
       </div>
       <div class="toolbar">
         <button class="btn btn-primary" id="btnLan">+ Lançamento</button>
-        <button class="btn btn-secondary" id="btnFixa">+ Despesa fixa</button>
+        <button class="btn btn-secondary" id="btnDespServ">+ Despesa por serviço</button>
         <button class="btn btn-secondary" id="btnRel">Baixar relatório PDF</button>
       </div>
       <div class="grid grid-2">
         <div class="card" style="padding:0">
-          <div class="card-header" style="padding:16px 16px 0"><div><h3>Lançamentos</h3><p>Entradas e saídas do mês</p></div></div>
+          <div class="card-header" style="padding:16px 16px 0"><div><h3>Lançamentos</h3><p>Entradas e saídas do mês · saldo ${money(saldo)}</p></div></div>
           <div class="table-wrap">
             <table>
               <thead><tr><th>Data</th><th>Descrição</th><th>Tipo</th><th>Valor</th><th></th></tr></thead>
@@ -936,22 +970,23 @@
           </div>
         </div>
         <div class="card" style="padding:0">
-          <div class="card-header" style="padding:16px 16px 0"><div><h3>Despesas fixas</h3><p>Custos recorrentes mensais</p></div></div>
+          <div class="card-header" style="padding:16px 16px 0"><div><h3>Despesas por serviço</h3><p>Imbutidas no unitário · ocultas no PDF</p></div></div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Nome</th><th>Categoria</th><th>Valor</th><th></th></tr></thead>
+              <thead><tr><th>Serviço</th><th>Despesa</th><th>Valor</th><th></th></tr></thead>
               <tbody>
-                ${s.despesasFixas.map((d) => `
+                ${despesasServico.length ? despesasServico.map((d) => `
                   <tr>
+                    <td><strong>${nomeServico(d.servicoId)}</strong></td>
                     <td>${d.nome}</td>
-                    <td>${d.categoria}</td>
                     <td>${money(d.valor)}</td>
-                    <td><button class="btn btn-sm btn-danger" data-del-fixa="${d.id}">✕</button></td>
-                  </tr>`).join("")}
+                    <td><button class="btn btn-sm btn-danger" data-del-ds="${d.id}">✕</button></td>
+                  </tr>`).join("") : `<tr><td colspan="4"><div class="empty">Nenhuma despesa por serviço</div></td></tr>`}
               </tbody>
             </table>
           </div>
         </div>
+      </div>
       </div>
     `;
 
@@ -988,29 +1023,36 @@
       };
     };
 
-    document.getElementById("btnFixa").onclick = () => {
-      openModal("Nova despesa fixa", `
+    document.getElementById("btnDespServ").onclick = () => {
+      openModal("Despesa por serviço", `
         <div class="form-grid">
-          <div class="field full"><label>Nome</label><input id="fNome" /></div>
-          <div class="field"><label>Categoria</label><select id="fCat"><option>Internet</option><option>Aluguel</option><option>Contabilidade</option><option>Telefone</option><option>Transporte</option><option>Material</option><option>Outros</option></select></div>
-          <div class="field"><label>Valor mensal</label><input id="fValor" type="number" step="0.01" /></div>
+          <div class="field full"><label>Serviço</label>
+            <select id="dsServ">
+              ${s.servicos.map((sv) => `<option value="${sv.id}">${sv.nome}</option>`).join("")}
+            </select>
+          </div>
+          <div class="field full"><label>Nome da despesa (interno)</label><input id="dsNome" placeholder="Ex: Rateio deslocamento, consumíveis…" /></div>
+          <div class="field"><label>Valor embutido (R$)</label><input id="dsValor" type="number" step="0.01" /></div>
+          <div class="field full" style="color:var(--text-dim);font-size:.82rem">Esse valor soma no unitário do orçamento. O cliente vê só o preço final, sem detalhar esta despesa.</div>
         </div>
-      `, `<button class="btn btn-ghost" id="cancelModal">Cancelar</button><button class="btn btn-primary" id="saveFixa">Salvar</button>`);
+      `, `<button class="btn btn-ghost" id="cancelModal">Cancelar</button><button class="btn btn-primary" id="saveDs">Salvar</button>`);
       document.getElementById("cancelModal").onclick = closeModal;
-      document.getElementById("saveFixa").onclick = () => {
-        const nome = document.getElementById("fNome").value.trim();
-        const valor = Number(document.getElementById("fValor").value);
+      document.getElementById("saveDs").onclick = () => {
+        const nome = document.getElementById("dsNome").value.trim();
+        const valor = Number(document.getElementById("dsValor").value);
+        const servicoId = document.getElementById("dsServ").value;
+        if (!servicoId) return toast("Selecione um serviço");
         if (!nome || !valor) return toast("Preencha nome e valor");
         Store.update({
-          despesasFixas: [...getState().despesasFixas, {
-            id: uid("df"),
+          despesasServico: [...(getState().despesasServico || []), {
+            id: uid("ds"),
+            servicoId,
             nome,
-            categoria: document.getElementById("fCat").value,
             valor
           }]
         });
         closeModal();
-        toast("Despesa fixa salva");
+        toast("Despesa vinculada ao serviço");
         render();
       };
     };
@@ -1021,9 +1063,14 @@
           periodo: mes,
           entradas,
           saidas,
-          fixas,
+          fixas: ocultoEmOrcamentos,
+          labelFixas: "Custo oculto embutido (aprovados)",
           saldo,
-          lancamentos: doMes
+          lancamentos: doMes,
+          despesasServico: despesasServico.map((d) => ({
+            ...d,
+            servicoNome: nomeServico(d.servicoId)
+          }))
         }, s.empresa);
         toast("Relatório gerado");
       } catch (e) {
@@ -1037,9 +1084,11 @@
         render();
       };
     });
-    content.querySelectorAll("[data-del-fixa]").forEach((btn) => {
+    content.querySelectorAll("[data-del-ds]").forEach((btn) => {
       btn.onclick = () => {
-        Store.update({ despesasFixas: getState().despesasFixas.filter((d) => d.id !== btn.dataset.delFixa) });
+        Store.update({
+          despesasServico: (getState().despesasServico || []).filter((d) => d.id !== btn.dataset.delDs)
+        });
         render();
       };
     });
