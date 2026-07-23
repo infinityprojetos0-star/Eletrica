@@ -228,6 +228,20 @@ img { max-width: 100%; display: block; }
   50% { opacity: 0.45; }
 }
 
+.app-version {
+  text-align: center;
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  opacity: 0.5;
+  font-family: var(--font);
+  user-select: all;
+  padding: 2px 0 4px;
+}
+.app-version:hover {
+  opacity: 0.9;
+}
+
 .main-wrap {
   display: flex;
   flex-direction: column;

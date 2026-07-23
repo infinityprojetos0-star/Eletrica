@@ -1,0 +1,19 @@
+---
+description: Sempre subir versão do app e do cache ao alterar o VoltES
+alwaysApply: true
+---
+
+# Versionamento VoltES
+
+Sempre que alterar código, UI, sync, Firebase, PWA ou assets do app:
+
+1. Edite **somente** `src/version.js`:
+   - Incremente `APP_VERSION` (semver: patch para fix, minor para feature)
+   - Incremente `CACHE_VERSION` (ex.: `voltes-v4` → `voltes-v5`)
+2. Atualize o fallback visível em `index.html`:
+   - `<meta name="voltes-version" content="...">`
+   - texto de `#appVersion` (ex.: `v1.4.0`)
+3. O service worker (`sw.js`) importa `src/version.js` — **não** duplique a versão nele.
+4. Faça commit/push quando for publicar no GitHub Pages.
+
+A versão aparece no rodapé da sidebar (`#appVersion`). Se o front mostrar uma versão antiga, o cache PWA não atualizou.

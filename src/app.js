@@ -1355,6 +1355,17 @@
   });
 
   // Boot
+  function syncAppVersionUI() {
+    const el = document.getElementById("appVersion");
+    if (!el) return;
+    const ver = typeof APP_VERSION !== "undefined" ? APP_VERSION : "—";
+    const cache = typeof CACHE_VERSION !== "undefined" ? CACHE_VERSION : "";
+    el.textContent = `v${ver}`;
+    el.title = cache ? `App v${ver} · cache ${cache}` : `App v${ver}`;
+    const meta = document.querySelector('meta[name="voltes-version"]');
+    if (meta) meta.setAttribute("content", ver);
+  }
+
   function updateSyncChip() {
     const chip = document.getElementById("syncChip");
     const label = document.getElementById("syncLabel");
@@ -1381,6 +1392,7 @@
   });
 
   updateSyncChip();
+  syncAppVersionUI();
   navigate("dashboard");
 
   Store.initCloud().then(() => {
