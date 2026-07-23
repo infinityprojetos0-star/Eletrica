@@ -8,9 +8,14 @@ URL: https://infinityprojetos0-star.github.io/Eletrica/
 
 ## Firebase
 
-Dados (clientes, orçamentos, serviços, materiais, financeiro, contratos) sincronizam no **Realtime Database** do projeto `eletrica-86ed1`.
+Sync otimizado para o plano **Spark (grátis)** no projeto `eletrica-86ed1`:
 
-No Firebase Console → Realtime Database → Rules, use pelo menos:
+- Catálogo base de preços fica no código (não sobe o catálogo inteiro a cada save)
+- Nuvem guarda só: clientes, orçamentos, contratos, financeiro, empresa e **patches** de itens que você alterou
+- Escrita por diff + debounce; listener leve em `meta/rev` (não na árvore inteira)
+- Aba em segundo plano desconecta (`goOffline`) para poupar conexões simultâneas
+
+No Firebase Console → Realtime Database → Rules:
 
 ```json
 {

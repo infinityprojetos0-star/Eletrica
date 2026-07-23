@@ -1,4 +1,4 @@
-/** Configuração Firebase — VoltES */
+/** Configuração Firebase — VoltES (Realtime Database, plano gratuito) */
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyDzi2PKBnGiiHmoL32_lw8HCgS5WcUc5GI",
   authDomain: "eletrica-86ed1.firebaseapp.com",
@@ -14,6 +14,7 @@ const FirebaseApp = (() => {
   let db = null;
   let ready = false;
   let error = null;
+  let visibilityBound = false;
 
   function init() {
     try {
@@ -26,12 +27,24 @@ const FirebaseApp = (() => {
       }
       db = firebase.database();
       ready = true;
+      bindVisibility();
       return db;
     } catch (err) {
       error = err.message || String(err);
       console.error("Firebase init:", err);
       return null;
     }
+  }
+
+  function bindVisibility() {
+    if (visibilityBound || typeof document === "undefined") return;
+    visibilityBound = true;
+    document.addEventListener("visibilitychange", () => {
+      const database = getDb();
+      if (!database) return;
+      if (document.hidden) database.goOffline();
+      else database.goOnline();
+    });
   }
 
   function getDb() {
