@@ -118,8 +118,20 @@
   }
 
   function orcamentoTotal(orc) {
-    const sub = (orc.itens || []).reduce((s, i) => s + i.qtd * i.preco, 0);
-    return Math.max(0, sub - Number(orc.desconto || 0));
+    return orcamentoTotalComNf(orc, getState());
+  }
+
+  function nfLabel(nf) {
+    if (nf === "sim") return "Com NF";
+    if (nf === "nao") return "Sem NF";
+    return "A definir";
+  }
+
+  function syncNfEmissorUI() {
+    const sel = document.getElementById("oNotaFiscal");
+    const wrap = document.getElementById("oNfEmissorWrap");
+    if (!sel || !wrap) return;
+    wrap.hidden = sel.value !== "sim";
   }
 
   function nextCodigo(prefix, list) {
@@ -359,15 +371,18 @@
               ${list.length ? list.map((o) => {
                 const cli = s.clientes.find((c) => c.id === o.clienteId);
                 const nf = o.notaFiscal || "a_definir";
-                const nfLabel = nf === "sim" ? "Com NF" : nf === "nao" ? "Sem NF" : "A definir";
                 const nfBadge = nf === "sim" ? "aprovado" : nf === "nao" ? "rejeitado" : "pendente";
+                const emNome =
+                  nf === "sim"
+                    ? o.nfEmissorNome || getEmissorNf(o.nfEmissorId, s)?.nome || ""
+                    : "";
                 return `<tr>
                   <td>${o.codigo}</td>
                   <td><strong>${o.titulo}</strong></td>
                   <td>${cli?.nome || "—"}</td>
                   <td>${formatDate(o.data)}</td>
                   <td>${money(orcamentoTotal(o))}</td>
-                  <td><span class="badge badge-${nfBadge}" title="Nota fiscal">${nfLabel}</span></td>
+                  <td><span class="badge badge-${nfBadge}" title="${emNome || "Nota fiscal"}">${nfLabel(nf)}${emNome ? ` · ${emNome}` : ""}</span></td>
                   <td><span class="badge badge-${o.status}">${o.status}</span></td>
                   <td class="actions-cell">
                     <button class="btn btn-sm btn-secondary" data-pdf="${o.id}">PDF</button>
@@ -453,6 +468,7 @@
       desconto: 0,
       observacoes: "",
       notaFiscal: "a_definir",
+      nfEmissorId: "nf-propria",
       itens: []
     };
     let itens = (o.itens || []).map((i) => ({
@@ -479,14 +495,31 @@
       const sub = itens.reduce((t, i) => t + i.qtd * i.preco, 0);
       const ocultoTotal = itens.reduce((t, i) => t + i.qtd * Number(i.custoOculto || 0), 0);
       const desconto = Number(document.getElementById("oDesc")?.value || o.desconto || 0);
+      const base = Math.max(0, sub - desconto);
+      const notaFiscal = document.getElementById("oNotaFiscal")?.value || o.notaFiscal || "a_definir";
+      const emissorId =
+        document.getElementById("oNfEmissor")?.value || o.nfEmissorId || "nf-propria";
+      const draft = {
+        itens,
+        desconto,
+        notaFiscal,
+        nfEmissorId: emissorId,
+        nfAliquota:
+          notaFiscal === "sim"
+            ? Number(getEmissorNf(emissorId, getState())?.aliquota) || 0
+            : 0
+      };
+      const nfPct = orcamentoNfPercent(draft, getState());
+      const nfValor = orcamentoNfValor(draft, getState());
+      const totalCliente = base + nfValor;
       box.innerHTML = `
         <div class="line-items">
           ${itens.map((item, idx) => {
-            const base = Number(item.precoBase ?? (item.preco - (item.custoOculto || 0)));
+            const baseItem = Number(item.precoBase ?? (item.preco - (item.custoOculto || 0)));
             const fake = {
-              precoMin: item.precoMin ?? base,
-              preco: item.precoMed ?? base,
-              precoMax: item.precoMax ?? base
+              precoMin: item.precoMin ?? baseItem,
+              preco: item.precoMed ?? baseItem,
+              precoMax: item.precoMax ?? baseItem
             };
             const oculto = Number(item.custoOculto || 0);
             return `
@@ -500,15 +533,21 @@
                 <div class="line-item-total">${money(item.qtd * item.preco)}</div>
                 <button class="icon-btn" data-rm="${idx}" title="Remover">✕</button>
               </div>
-              ${item.tipo === "servico" ? tierPicksHtml(fake, item.precoModo || modoLocal, `data-item-tiers="${idx}"`) : tierPicksHtml(fake, item.precoModo || modoLocal, `data-item-tiers="${idx}"`)}
+              ${tierPicksHtml(fake, item.precoModo || modoLocal, `data-item-tiers="${idx}"`)}
             </div>`;
           }).join("") || `<div class="empty"><strong>Sem itens</strong>Adicione serviços ou materiais.</div>`}
         </div>
         <div class="totals-box">
-          <div class="row"><span>Subtotal (cliente)</span><span>${money(sub)}</span></div>
+          <div class="row"><span>Subtotal</span><span>${money(sub)}</span></div>
           ${ocultoTotal > 0 ? `<div class="row" style="color:var(--text-dim)"><span>Custo oculto embutido (só você)</span><span>${money(ocultoTotal)}</span></div>` : ""}
           <div class="row"><span>Desconto</span><span>${money(desconto)}</span></div>
-          <div class="row total"><span>Total no PDF</span><span>${money(Math.max(0, sub - desconto))}</span></div>
+          <div class="row"><span>Base (serviços/materiais)</span><span>${money(base)}</span></div>
+          ${
+            notaFiscal === "sim"
+              ? `<div class="row" style="color:var(--warn)"><span>NF ${nfPct}% embutida — ${getEmissorNf(emissorId, getState())?.nome || "emissor"} (só você)</span><span>${money(nfValor)}</span></div>`
+              : ""
+          }
+          <div class="row total"><span>Total no PDF (cliente)</span><span>${money(totalCliente)}</span></div>
         </div>
       `;
       box.querySelectorAll("[data-qtd]").forEach((inp) => {
@@ -575,6 +614,20 @@
             <option value="nao" ${o.notaFiscal === "nao" ? "selected" : ""}>Sem NF</option>
           </select>
         </div>
+        <div class="field" id="oNfEmissorWrap" ${(o.notaFiscal || "a_definir") === "sim" ? "" : "hidden"}>
+          <label>Emissor da NF</label>
+          <select id="oNfEmissor">
+            ${getEmissoresNf(s)
+              .filter((e) => e.ativo !== false)
+              .map(
+                (e) =>
+                  `<option value="${e.id}" ${
+                    (o.nfEmissorId || "nf-propria") === e.id ? "selected" : ""
+                  }>${e.nome}${e.contato ? ` (${e.contato})` : ""} — ${Number(e.aliquota) || 0}%</option>`
+              )
+              .join("")}
+          </select>
+        </div>
         <div class="field full"><label>Observações</label><textarea id="oObs">${o.observacoes || ""}</textarea></div>
       </div>
 
@@ -621,6 +674,12 @@
 
     renderItens();
     document.getElementById("oDesc").oninput = renderItens;
+    document.getElementById("oNotaFiscal").onchange = () => {
+      syncNfEmissorUI();
+      renderItens();
+    };
+    document.getElementById("oNfEmissor").onchange = renderItens;
+    syncNfEmissorUI();
     document.getElementById("addServico").onchange = (e) => {
       const sv = s.servicos.find((x) => x.id === e.target.value);
       if (!sv) return;
@@ -680,6 +739,14 @@
       if (!titulo) return toast("Informe o título");
       if (!itens.length) return toast("Adicione ao menos um item");
 
+      const notaFiscal = document.getElementById("oNotaFiscal").value || "a_definir";
+      const nfEmissorId =
+        notaFiscal === "sim"
+          ? document.getElementById("oNfEmissor")?.value || "nf-propria"
+          : "";
+      const emissor = notaFiscal === "sim" ? getEmissorNf(nfEmissorId, getState()) : null;
+      const nfAliquota = notaFiscal === "sim" ? Number(emissor?.aliquota) || 0 : 0;
+
       const data = {
         id: o.id || uid("orc"),
         codigo: o.codigo || nextCodigo("ORC", getState().orcamentos),
@@ -690,7 +757,10 @@
         prazo: document.getElementById("oPrazo").value.trim(),
         desconto: Number(document.getElementById("oDesc").value) || 0,
         observacoes: document.getElementById("oObs").value.trim(),
-        notaFiscal: document.getElementById("oNotaFiscal").value || "a_definir",
+        notaFiscal,
+        nfEmissorId,
+        nfEmissorNome: emissor?.nome || "",
+        nfAliquota,
         precoModo: modoLocal,
         itens,
         status: o.status || "pendente"
@@ -1620,9 +1690,26 @@
             <option value="nao">Sem NF</option>
           </select>
         </div>
+        <div class="field" id="ppNfEmissorWrap" hidden>
+          <label>Emissor da NF</label>
+          <select id="ppNfEmissor">
+            ${getEmissoresNf(s)
+              .filter((e) => e.ativo !== false)
+              .map(
+                (e) =>
+                  `<option value="${e.id}">${e.nome}${e.contato ? ` (${e.contato})` : ""} — ${Number(e.aliquota) || 0}%</option>`
+              )
+              .join("")}
+          </select>
+        </div>
         <div class="field full" style="color:var(--text-dim);font-size:.82rem">${resultado.disclaimer}</div>
       </div>
     `, `<button class="btn btn-ghost" id="cancelModal">Cancelar</button><button class="btn btn-primary" id="savePpOrc">Criar orçamento</button>`);
+
+    document.getElementById("ppNotaFiscal").onchange = () => {
+      document.getElementById("ppNfEmissorWrap").hidden =
+        document.getElementById("ppNotaFiscal").value !== "sim";
+    };
 
     document.getElementById("cancelModal").onclick = closeModal;
     document.getElementById("savePpOrc").onclick = () => {
@@ -1700,6 +1787,18 @@
           resultado.disclaimer
         ].join(" "),
         notaFiscal: document.getElementById("ppNotaFiscal")?.value || "a_definir",
+        nfEmissorId:
+          document.getElementById("ppNotaFiscal")?.value === "sim"
+            ? document.getElementById("ppNfEmissor")?.value || "nf-propria"
+            : "",
+        nfEmissorNome:
+          document.getElementById("ppNotaFiscal")?.value === "sim"
+            ? getEmissorNf(document.getElementById("ppNfEmissor")?.value, getState())?.nome || ""
+            : "",
+        nfAliquota:
+          document.getElementById("ppNotaFiscal")?.value === "sim"
+            ? Number(getEmissorNf(document.getElementById("ppNfEmissor")?.value, getState())?.aliquota) || 0
+            : 0,
         precoModo: modo,
         itens,
         status: "pendente",
@@ -1882,12 +1981,29 @@
             <option value="nao">Sem NF</option>
           </select>
         </div>
+        <div class="field" id="dimNfEmissorWrap" hidden>
+          <label>Emissor da NF</label>
+          <select id="dimNfEmissor">
+            ${getEmissoresNf(s)
+              .filter((e) => e.ativo !== false)
+              .map(
+                (e) =>
+                  `<option value="${e.id}">${e.nome}${e.contato ? ` (${e.contato})` : ""} — ${Number(e.aliquota) || 0}%</option>`
+              )
+              .join("")}
+          </select>
+        </div>
         <div class="field full" style="color:var(--text-dim);font-size:.82rem">
           Serão adicionados ${mats.length} material(is)${incluiServ ? ` e ${servs.length} serviço(s)` : ""}.
           Despesas globais (deslocamento/alimentação) entram ao salvar se houver serviços.
         </div>
       </div>
     `, `<button class="btn btn-ghost" id="cancelModal">Cancelar</button><button class="btn btn-primary" id="saveDimOrc">Criar orçamento</button>`);
+
+    document.getElementById("dimNotaFiscal").onchange = () => {
+      document.getElementById("dimNfEmissorWrap").hidden =
+        document.getElementById("dimNotaFiscal").value !== "sim";
+    };
 
     document.getElementById("cancelModal").onclick = closeModal;
     document.getElementById("saveDimOrc").onclick = () => {
@@ -1960,6 +2076,18 @@
           resultado.disclaimer
         ].join(" "),
         notaFiscal: document.getElementById("dimNotaFiscal")?.value || "a_definir",
+        nfEmissorId:
+          document.getElementById("dimNotaFiscal")?.value === "sim"
+            ? document.getElementById("dimNfEmissor")?.value || "nf-propria"
+            : "",
+        nfEmissorNome:
+          document.getElementById("dimNotaFiscal")?.value === "sim"
+            ? getEmissorNf(document.getElementById("dimNfEmissor")?.value, getState())?.nome || ""
+            : "",
+        nfAliquota:
+          document.getElementById("dimNotaFiscal")?.value === "sim"
+            ? Number(getEmissorNf(document.getElementById("dimNfEmissor")?.value, getState())?.aliquota) || 0
+            : 0,
         precoModo: modo,
         itens,
         status: "pendente",
@@ -2067,8 +2195,102 @@
     });
   }
 
+  function renderNotasFiscais() {
+    const s = getState();
+    const list = getEmissoresNf(s);
+
+    content.innerHTML = `
+      <div class="view-enter">
+      <div class="hero-note" style="margin-bottom:16px">
+        <div>
+          <h3>Emissores de nota fiscal</h3>
+          <p>Cadastre a alíquota de cada emissor. No orçamento, ao marcar <strong>Precisa de NF</strong>, o percentual é <strong>embutido no total</strong> (cliente não vê o detalhe).</p>
+        </div>
+      </div>
+      <div class="grid grid-2" style="gap:16px;align-items:start">
+        ${list
+          .map(
+            (e) => `
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h3>${e.nome}</h3>
+                <p>${e.contato ? `Contato: ${e.contato}` : "Emissor próprio"}</p>
+              </div>
+              <span class="badge badge-${e.ativo === false ? "rejeitado" : "aprovado"}">${
+                e.ativo === false ? "off" : "ativo"
+              }</span>
+            </div>
+            <div class="form-grid">
+              <div class="field full"><label>Nome / identificação</label><input data-nf-id="${e.id}" data-nf-field="nome" value="${e.nome || ""}" /></div>
+              <div class="field full"><label>Razão social</label><input data-nf-id="${e.id}" data-nf-field="razaoSocial" value="${e.razaoSocial || ""}" /></div>
+              <div class="field"><label>CNPJ</label><input data-nf-id="${e.id}" data-nf-field="cnpj" value="${e.cnpj || ""}" /></div>
+              <div class="field"><label>Alíquota NF (%)</label><input type="number" min="0" step="0.01" data-nf-id="${e.id}" data-nf-field="aliquota" value="${e.aliquota ?? 0}" /></div>
+              ${
+                e.id === "nf-impacto"
+                  ? `<div class="field full"><label>Contato</label><input data-nf-id="${e.id}" data-nf-field="contato" value="${e.contato || "Sandro"}" /></div>`
+                  : ""
+              }
+            </div>
+            <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-primary btn-sm" data-save-nf="${e.id}">Salvar</button>
+              <button class="btn btn-secondary btn-sm" data-toggle-nf="${e.id}">${
+                e.ativo === false ? "Ativar" : "Desativar"
+              }</button>
+            </div>
+            <p style="margin-top:10px;font-size:.78rem;color:var(--text-dim)">Ex.: base R$ 1.000 + ${Number(
+              e.aliquota || 0
+            )}% = total cliente ${money(1000 * (1 + Number(e.aliquota || 0) / 100))}</p>
+          </div>`
+          )
+          .join("")}
+      </div>
+      </div>
+    `;
+
+    content.querySelectorAll("[data-save-nf]").forEach((btn) => {
+      btn.onclick = () => {
+        const id = btn.dataset.saveNf;
+        const campos = content.querySelectorAll(`[data-nf-id="${id}"]`);
+        const patch = {};
+        campos.forEach((inp) => {
+          const f = inp.dataset.nfField;
+          patch[f] = f === "aliquota" ? Number(inp.value) || 0 : inp.value.trim();
+        });
+        const next = getEmissoresNf(getState()).map((e) =>
+          e.id === id ? { ...e, ...patch } : e
+        );
+        const updates = { emissoresNf: next };
+        if (id === "nf-propria") {
+          updates.empresa = {
+            ...getState().empresa,
+            aliquotaNf: patch.aliquota,
+            ...(patch.razaoSocial ? { nome: getState().empresa.nome } : {}),
+            ...(patch.cnpj != null ? { cnpj: patch.cnpj || getState().empresa.cnpj } : {})
+          };
+          if (patch.cnpj) updates.empresa.cnpj = patch.cnpj;
+        }
+        Store.update(updates);
+        toast("Emissor de NF salvo");
+        render();
+      };
+    });
+
+    content.querySelectorAll("[data-toggle-nf]").forEach((btn) => {
+      btn.onclick = () => {
+        const next = getEmissoresNf(getState()).map((e) =>
+          e.id === btn.dataset.toggleNf ? { ...e, ativo: e.ativo === false } : e
+        );
+        Store.update({ emissoresNf: next });
+        render();
+      };
+    });
+  }
+
   function renderEmpresa() {
     const e = getState().empresa;
+    const propria = getEmissorNf("nf-propria", getState());
+    const aliquota = e.aliquotaNf != null ? e.aliquotaNf : propria?.aliquota ?? 10;
     content.innerHTML = `
       <div class="view-enter">
       <div class="card" style="max-width:720px">
@@ -2081,6 +2303,10 @@
           <div class="field"><label>Cidade</label><input id="eCidade" value="${e.cidade || ""}" /></div>
           <div class="field"><label>Estado</label><input id="eEstado" value="${e.estado || "ES"}" /></div>
           <div class="field full"><label>Endereço</label><input id="eEnd" value="${e.endereco || ""}" /></div>
+          <div class="field"><label>Alíquota NF própria (%)</label><input id="eAliqNf" type="number" min="0" step="0.01" value="${aliquota}" /></div>
+          <div class="field" style="display:flex;align-items:flex-end">
+            <p style="font-size:.78rem;color:var(--text-dim);margin:0 0 8px">Usada quando o orçamento escolher <strong>Minha empresa</strong> como emissor. Detalhes em Notas fiscais.</p>
+          </div>
         </div>
         <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
           <button class="btn btn-primary" id="saveEmpresa">Salvar dados</button>
@@ -2092,18 +2318,29 @@
       </div>
     `;
     document.getElementById("saveEmpresa").onclick = () => {
-      Store.update({
-        empresa: {
-          nome: document.getElementById("eNome").value.trim(),
-          cnpj: document.getElementById("eCnpj").value.trim(),
-          telefone: document.getElementById("eTel").value.trim(),
-          email: document.getElementById("eEmail").value.trim(),
-          cidade: document.getElementById("eCidade").value.trim(),
-          estado: document.getElementById("eEstado").value.trim(),
-          endereco: document.getElementById("eEnd").value.trim(),
-          logo: e.logo || ""
-        }
-      });
+      const aliquotaNf = Number(document.getElementById("eAliqNf").value) || 0;
+      const empresa = {
+        nome: document.getElementById("eNome").value.trim(),
+        cnpj: document.getElementById("eCnpj").value.trim(),
+        telefone: document.getElementById("eTel").value.trim(),
+        email: document.getElementById("eEmail").value.trim(),
+        cidade: document.getElementById("eCidade").value.trim(),
+        estado: document.getElementById("eEstado").value.trim(),
+        endereco: document.getElementById("eEnd").value.trim(),
+        logo: e.logo || "",
+        aliquotaNf
+      };
+      const emissoresNf = getEmissoresNf(getState()).map((em) =>
+        em.id === "nf-propria"
+          ? {
+              ...em,
+              razaoSocial: empresa.nome || em.razaoSocial,
+              cnpj: empresa.cnpj || em.cnpj,
+              aliquota: aliquotaNf
+            }
+          : em
+      );
+      Store.update({ empresa, emissoresNf });
       toast("Dados da empresa salvos");
     };
     document.getElementById("refreshCatalog").onclick = () => {
@@ -2136,6 +2373,7 @@
       financeiro: renderFinanceiro,
       calculadoras: renderCalculadoras,
       contratos: renderContratos,
+      notas: renderNotasFiscais,
       empresa: renderEmpresa
     };
     map[currentView]();

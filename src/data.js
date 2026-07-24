@@ -689,8 +689,30 @@ const SEED_EMPRESA = {
   endereco: "Vitória — ES",
   cidade: "Vitória",
   estado: "ES",
-  logo: ""
+  logo: "",
+  aliquotaNf: 10
 };
+
+/** Emissores de nota fiscal (alíquota embutida no orçamento, oculta no PDF) */
+const SEED_EMISSORES_NF = [
+  {
+    id: "nf-propria",
+    nome: "Minha empresa",
+    razaoSocial: "VoltES Elétrica",
+    cnpj: "",
+    aliquota: 10,
+    ativo: true
+  },
+  {
+    id: "nf-impacto",
+    nome: "Impacto Soluções",
+    razaoSocial: "Impacto Soluções",
+    cnpj: "",
+    aliquota: 10,
+    ativo: true,
+    contato: "Sandro"
+  }
+];
 
 const PAGE_META = {
   dashboard: { title: "Dashboard", subtitle: "Visão geral do seu negócio elétrico" },
@@ -701,6 +723,7 @@ const PAGE_META = {
   financeiro: { title: "Financeiro", subtitle: "Lançamentos, deslocamento, alimentação e extras por serviço" },
   calculadoras: { title: "Calculadoras", subtitle: "Ambientes, circuitos NBR 5410 e estimativas auxiliares" },
   contratos: { title: "Contratos", subtitle: "Manutenção e contratos recorrentes" },
+  notas: { title: "Notas fiscais", subtitle: "Emissores e percentual embutido no orçamento" },
   empresa: { title: "Empresa", subtitle: "Dados que aparecem nos PDFs" }
 };
 
@@ -749,6 +772,40 @@ function getPrecoByModo(item, modo = "medio") {
 
 function precoModoLabel(modo) {
   return PRECO_MODOS.find((m) => m.id === modo)?.label || "Médio";
+}
+
+function getEmissoresNf(state) {
+  const list = state?.emissoresNf;
+  if (Array.isArray(list) && list.length) return list;
+  return SEED_EMISSORES_NF.map((e) => ({ ...e }));
+}
+
+function getEmissorNf(id, state) {
+  return getEmissoresNf(state).find((e) => e.id === id) || null;
+}
+
+/** Subtotal − desconto (antes da NF) */
+function orcamentoBase(orc) {
+  const sub = (orc?.itens || []).reduce((s, i) => s + Number(i.qtd || 0) * Number(i.preco || 0), 0);
+  return Math.max(0, sub - Number(orc?.desconto || 0));
+}
+
+function orcamentoNfPercent(orc, state) {
+  if (!orc || orc.notaFiscal !== "sim") return 0;
+  if (orc.nfAliquota != null && orc.nfAliquota !== "") return Math.max(0, Number(orc.nfAliquota) || 0);
+  const em = getEmissorNf(orc.nfEmissorId, state);
+  return Math.max(0, Number(em?.aliquota) || 0);
+}
+
+/** Valor da NF embutido (oculto no PDF do cliente) */
+function orcamentoNfValor(orc, state) {
+  const base = orcamentoBase(orc);
+  return base * (orcamentoNfPercent(orc, state) / 100);
+}
+
+/** Total cobrado do cliente = base + NF embutida */
+function orcamentoTotalComNf(orc, state) {
+  return orcamentoBase(orc) + orcamentoNfValor(orc, state);
 }
 
 /** Despesas globais — valem para QUALQUER serviço */

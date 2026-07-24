@@ -54,9 +54,9 @@ const PDF = (() => {
     y += 6;
     const nfTxt =
       orc.notaFiscal === "sim"
-        ? "Com nota fiscal"
+        ? "Documento com nota fiscal"
         : orc.notaFiscal === "nao"
-          ? "Sem nota fiscal"
+          ? "Documento sem nota fiscal"
           : "Nota fiscal: a definir";
     doc.text(nfTxt, 14, y);
     y += 10;
@@ -80,19 +80,30 @@ const PDF = (() => {
     });
 
     const finalY = doc.lastAutoTable.finalY + 10;
-    const subtotal = orc.itens.reduce((s, i) => s + i.qtd * i.preco, 0);
+    const subtotal = (orc.itens || []).reduce((s, i) => s + i.qtd * i.preco, 0);
     const desconto = Number(orc.desconto || 0);
-    const total = Math.max(0, subtotal - desconto);
+    const base = Math.max(0, subtotal - desconto);
+    const total =
+      typeof orcamentoTotalComNf === "function" ? orcamentoTotalComNf(orc) : base;
+    const comNf = orc.notaFiscal === "sim" && total > base + 0.001;
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
     doc.setTextColor(80, 90, 105);
-    doc.text(`Subtotal: ${money(subtotal)}`, 196, finalY, { align: "right" });
-    doc.text(`Desconto: ${money(desconto)}`, 196, finalY + 6, { align: "right" });
+    let ty = finalY;
+    // Com NF embutida: não mostra subtotal “puro” para não expor a alíquota ao cliente
+    if (!comNf) {
+      doc.text(`Subtotal: ${money(subtotal)}`, 196, ty, { align: "right" });
+      ty += 6;
+    }
+    if (desconto > 0) {
+      doc.text(`Desconto: ${money(desconto)}`, 196, ty, { align: "right" });
+      ty += 6;
+    }
     doc.setFont("helvetica", "bold");
     doc.setFontSize(13);
     doc.setTextColor(20, 30, 45);
-    doc.text(`Total: ${money(total)}`, 196, finalY + 14, { align: "right" });
+    doc.text(`Total: ${money(total)}`, 196, ty + 8, { align: "right" });
 
     if (orc.observacoes) {
       doc.setFont("helvetica", "bold");

@@ -12,7 +12,15 @@ const Store = (() => {
   const ROOT = "voltes";
   const FLUSH_MS = 500;
 
-  const USER_LIST_KEYS = ["clientes", "orcamentos", "contratos", "lancamentos", "despesasServico", "despesasGlobais"];
+  const USER_LIST_KEYS = [
+    "clientes",
+    "orcamentos",
+    "contratos",
+    "lancamentos",
+    "despesasServico",
+    "despesasGlobais",
+    "emissoresNf"
+  ];
   const CATALOG_KEYS = ["servicos", "produtos"];
   const CATALOG_FIELDS = [
     "nome",
@@ -66,6 +74,7 @@ const Store = (() => {
     lancamentos: [],
     despesasServico: SEED_DESPESAS_SERVICO.map((d) => ({ ...d, updatedAt: 0 })),
     despesasGlobais: SEED_DESPESAS_GLOBAIS.map((d) => ({ ...d, updatedAt: 0 })),
+    emissoresNf: SEED_EMISSORES_NF.map((d) => ({ ...d, updatedAt: 0 })),
     despesasFixas: [] // legado — não usar
   });
 
@@ -637,7 +646,9 @@ const Store = (() => {
       target.precoModo = value;
       return;
     }
-    const m = path.match(/^(clientes|orcamentos|contratos|lancamentos|despesasServico|despesasGlobais)\/(.+)$/);
+    const m = path.match(
+      /^(clientes|orcamentos|contratos|lancamentos|despesasServico|despesasGlobais|emissoresNf)\/(.+)$/
+    );
     if (m) {
       const [, key, id] = m;
       if (value == null) target[key] = (target[key] || []).filter((x) => x.id !== id);
@@ -814,6 +825,40 @@ const Store = (() => {
     } else if (state.despesasFixas?.length) {
       state = { ...state, despesasFixas: [] };
       persistCache();
+    }
+
+    // Garante emissores de NF (minha empresa + Impacto Soluções)
+    if (!Array.isArray(state.emissoresNf) || !state.emissoresNf.length) {
+      const empresa = state.empresa || {};
+      state = {
+        ...state,
+        emissoresNf: SEED_EMISSORES_NF.map((d) => {
+          if (d.id === "nf-propria") {
+            return {
+              ...d,
+              razaoSocial: empresa.nome || d.razaoSocial,
+              cnpj: empresa.cnpj || d.cnpj,
+              aliquota: empresa.aliquotaNf != null ? Number(empresa.aliquotaNf) : d.aliquota,
+              updatedAt: 0
+            };
+          }
+          return { ...d, updatedAt: 0 };
+        })
+      };
+      persistCache();
+    } else {
+      const map = listToMap(state.emissoresNf);
+      let changed = false;
+      SEED_EMISSORES_NF.forEach((seed) => {
+        if (!map[seed.id]) {
+          map[seed.id] = { ...seed, updatedAt: 0 };
+          changed = true;
+        }
+      });
+      if (changed) {
+        state = { ...state, emissoresNf: Object.values(map) };
+        persistCache();
+      }
     }
 
     // Garante deslocamento + alimentação globais (qualquer serviço)
