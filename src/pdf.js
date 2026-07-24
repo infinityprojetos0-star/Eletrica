@@ -51,6 +51,14 @@ const PDF = (() => {
     doc.text(`Endereço: ${cliente?.endereco || "—"}`, 14, y);
     y += 6;
     doc.text(`Data: ${formatDate(orc.data)}  |  Validade: ${orc.validade || 30} dias  |  Prazo: ${orc.prazo || "—"}`, 14, y);
+    y += 6;
+    const nfTxt =
+      orc.notaFiscal === "sim"
+        ? "Com nota fiscal"
+        : orc.notaFiscal === "nao"
+          ? "Sem nota fiscal"
+          : "Nota fiscal: a definir";
+    doc.text(nfTxt, 14, y);
     y += 10;
 
     const rows = (orc.itens || []).map((item, i) => [

@@ -354,16 +354,20 @@
       <div class="card" style="padding:0">
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Código</th><th>Título</th><th>Cliente</th><th>Data</th><th>Total</th><th>Status</th><th>Ações</th></tr></thead>
+            <thead><tr><th>Código</th><th>Título</th><th>Cliente</th><th>Data</th><th>Total</th><th>NF</th><th>Status</th><th>Ações</th></tr></thead>
             <tbody>
               ${list.length ? list.map((o) => {
                 const cli = s.clientes.find((c) => c.id === o.clienteId);
+                const nf = o.notaFiscal || "a_definir";
+                const nfLabel = nf === "sim" ? "Com NF" : nf === "nao" ? "Sem NF" : "A definir";
+                const nfBadge = nf === "sim" ? "aprovado" : nf === "nao" ? "rejeitado" : "pendente";
                 return `<tr>
                   <td>${o.codigo}</td>
                   <td><strong>${o.titulo}</strong></td>
                   <td>${cli?.nome || "—"}</td>
                   <td>${formatDate(o.data)}</td>
                   <td>${money(orcamentoTotal(o))}</td>
+                  <td><span class="badge badge-${nfBadge}" title="Nota fiscal">${nfLabel}</span></td>
                   <td><span class="badge badge-${o.status}">${o.status}</span></td>
                   <td class="actions-cell">
                     <button class="btn btn-sm btn-secondary" data-pdf="${o.id}">PDF</button>
@@ -376,7 +380,7 @@
                     <button class="btn btn-sm btn-danger" data-del="${o.id}">Excluir</button>
                   </td>
                 </tr>`;
-              }).join("") : `<tr><td colspan="7"><div class="empty"><strong>Nenhum orçamento</strong>Crie o primeiro orçamento profissional.</div></td></tr>`}
+              }).join("") : `<tr><td colspan="8"><div class="empty"><strong>Nenhum orçamento</strong>Crie o primeiro orçamento profissional.</div></td></tr>`}
             </tbody>
           </table>
         </div>
@@ -448,6 +452,7 @@
       prazo: "7 dias",
       desconto: 0,
       observacoes: "",
+      notaFiscal: "a_definir",
       itens: []
     };
     let itens = (o.itens || []).map((i) => ({
@@ -563,6 +568,13 @@
         <div class="field"><label>Validade (dias)</label><input id="oVal" type="number" value="${o.validade || 30}" /></div>
         <div class="field"><label>Prazo de entrega</label><input id="oPrazo" value="${o.prazo || "7 dias"}" /></div>
         <div class="field"><label>Desconto (R$)</label><input id="oDesc" type="number" step="0.01" value="${o.desconto || 0}" /></div>
+        <div class="field"><label>Nota fiscal</label>
+          <select id="oNotaFiscal">
+            <option value="a_definir" ${(o.notaFiscal || "a_definir") === "a_definir" ? "selected" : ""}>A definir</option>
+            <option value="sim" ${o.notaFiscal === "sim" ? "selected" : ""}>Precisa de NF</option>
+            <option value="nao" ${o.notaFiscal === "nao" ? "selected" : ""}>Sem NF</option>
+          </select>
+        </div>
         <div class="field full"><label>Observações</label><textarea id="oObs">${o.observacoes || ""}</textarea></div>
       </div>
 
@@ -678,6 +690,7 @@
         prazo: document.getElementById("oPrazo").value.trim(),
         desconto: Number(document.getElementById("oDesc").value) || 0,
         observacoes: document.getElementById("oObs").value.trim(),
+        notaFiscal: document.getElementById("oNotaFiscal").value || "a_definir",
         precoModo: modoLocal,
         itens,
         status: o.status || "pendente"
@@ -1289,27 +1302,49 @@
     } else {
       box.innerHTML = `
         <h3 style="font-family:var(--display);margin-bottom:12px">Bitola rápida</h3>
-        <p style="color:var(--text-muted);margin-bottom:16px;font-size:.9rem">Atalho — para cálculo completo use a aba NBR 5410</p>
+        <p style="color:var(--text-muted);margin-bottom:16px;font-size:.9rem">Compara o mesmo circuito em <strong>127 V</strong> e <strong>220 V</strong> (atalho — use NBR 5410 para o completo)</p>
         <div class="form-grid">
-          <div class="field full"><label>Corrente do circuito (A)</label><input id="cI" type="number" value="20" /></div>
+          <div class="field"><label>Potência (W)</label><input id="cP" type="number" value="5500" /></div>
+          <div class="field"><label>Comprimento ida (m)</label><input id="cL" type="number" value="15" step="0.5" /></div>
         </div>
-        <button class="btn btn-primary" style="margin-top:14px" id="calcBtn">Sugerir</button>
-        <div class="calc-result" id="calcOut" hidden></div>
+        <button class="btn btn-primary" style="margin-top:14px" id="calcBtn">Sugerir 127 V e 220 V</button>
+        <div id="calcOut" hidden style="margin-top:14px"></div>
       `;
       document.getElementById("calcBtn").onclick = () => {
-        const I = Number(document.getElementById("cI").value);
-        const r = NBR5410.dimensionar({
-          tipoId: "livre",
-          potenciaW: I * 220,
-          tensaoV: 220,
-          comprimentoM: 10,
-          agrupamentoId: "1",
-          tempId: "30",
-          dr: false
-        });
+        const P = Number(document.getElementById("cP").value);
+        const L = Number(document.getElementById("cL").value) || 15;
+        const calc = (tensaoV) =>
+          NBR5410.dimensionar({
+            tipoId: "livre",
+            potenciaW: P,
+            tensaoV,
+            comprimentoM: L,
+            polos: tensaoV >= 220 ? 2 : 1,
+            fases: 1,
+            agrupamentoId: "1",
+            tempId: "30",
+            dr: false
+          });
+        const r127 = calc(127);
+        const r220 = calc(220);
+        const card = (titulo, r, V) => `
+          <div class="calc-result" style="margin:0">
+            <div class="label">${titulo}</div>
+            <div class="value" style="font-size:1.25rem">${r.cabo.secao} mm²</div>
+            <p style="margin-top:8px;color:var(--text-muted);font-size:.82rem;line-height:1.5">
+              Ib ≈ <strong>${r.ib.toFixed(2)} A</strong> · Disjuntor <strong>${r.disjuntor.In} A</strong> (${r.disjuntor.polos}P)<br/>
+              Queda ≈ ${r.queda.pct.toFixed(2)}% ${r.queda.okTerminal ? "(ok ≤4%)" : "(acima de 4%)"} · ${V} V
+            </p>
+          </div>`;
         const out = document.getElementById("calcOut");
         out.hidden = false;
-        out.innerHTML = `<div class="label">Seção sugerida (B1 · PVC)</div><div class="value">${r.cabo.secao} mm²</div><p style="margin-top:8px;color:var(--text-muted);font-size:.85rem">Disjuntor típico: ${r.disjuntor.In} A</p>`;
+        out.innerHTML = `
+          <div class="grid grid-2" style="gap:10px">
+            ${card("127 V — seção sugerida", r127, 127)}
+            ${card("220 V — seção sugerida", r220, 220)}
+          </div>
+          <p style="margin-top:10px;color:var(--text-dim);font-size:.78rem">Em 127 V a corrente sobe (P÷V), então a bitola/disjuntor podem ser maiores que em 220 V para a mesma potência.</p>
+        `;
       };
     }
   }
@@ -1578,6 +1613,13 @@
             <input type="checkbox" id="ppIncluiMat" checked /> Incluir materiais estimados
           </label>
         </div>
+        <div class="field"><label>Nota fiscal</label>
+          <select id="ppNotaFiscal">
+            <option value="a_definir">A definir</option>
+            <option value="sim">Precisa de NF</option>
+            <option value="nao">Sem NF</option>
+          </select>
+        </div>
         <div class="field full" style="color:var(--text-dim);font-size:.82rem">${resultado.disclaimer}</div>
       </div>
     `, `<button class="btn btn-ghost" id="cancelModal">Cancelar</button><button class="btn btn-primary" id="savePpOrc">Criar orçamento</button>`);
@@ -1657,6 +1699,7 @@
           `Pré-projeto ${resultado.uso}. Circuitos estimados: ${c.total} (ilum. ${c.iluminacao.qtd}, TUG ${c.tug.qtd}, dedicados ${c.dedicados.qtd}, reserva ${c.reserva.qtd}). Quadro ~${c.quadroSugerido} polos.`,
           resultado.disclaimer
         ].join(" "),
+        notaFiscal: document.getElementById("ppNotaFiscal")?.value || "a_definir",
         precoModo: modo,
         itens,
         status: "pendente",
@@ -1832,6 +1875,13 @@
         <div class="field full"><label>Título</label>
           <input id="dimTitulo" value="Circuito ${resultado.tipo.label} — ${resultado.cabo.secao} mm² / ${resultado.disjuntor.In} A" />
         </div>
+        <div class="field"><label>Nota fiscal</label>
+          <select id="dimNotaFiscal">
+            <option value="a_definir">A definir</option>
+            <option value="sim">Precisa de NF</option>
+            <option value="nao">Sem NF</option>
+          </select>
+        </div>
         <div class="field full" style="color:var(--text-dim);font-size:.82rem">
           Serão adicionados ${mats.length} material(is)${incluiServ ? ` e ${servs.length} serviço(s)` : ""}.
           Despesas globais (deslocamento/alimentação) entram ao salvar se houver serviços.
@@ -1909,6 +1959,7 @@
           `Queda estimada ${resultado.queda.pct.toFixed(2)}%.`,
           resultado.disclaimer
         ].join(" "),
+        notaFiscal: document.getElementById("dimNotaFiscal")?.value || "a_definir",
         precoModo: modo,
         itens,
         status: "pendente",
