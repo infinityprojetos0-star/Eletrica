@@ -699,7 +699,7 @@ const PAGE_META = {
   servicos: { title: "Serviços", subtitle: "Mão de obra média no Espírito Santo (2026)" },
   produtos: { title: "Materiais", subtitle: "Preços médios de varejo / internet" },
   financeiro: { title: "Financeiro", subtitle: "Lançamentos, deslocamento, alimentação e extras por serviço" },
-  calculadoras: { title: "Calculadoras", subtitle: "Dimensionamento NBR 5410, circuitos, disjuntores e materiais" },
+  calculadoras: { title: "Calculadoras", subtitle: "Ambientes, circuitos NBR 5410 e estimativas auxiliares" },
   contratos: { title: "Contratos", subtitle: "Manutenção e contratos recorrentes" },
   empresa: { title: "Empresa", subtitle: "Dados que aparecem nos PDFs" }
 };

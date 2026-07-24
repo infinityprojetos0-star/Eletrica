@@ -16,6 +16,7 @@ const PRECACHE_URLS = [
   "./src/version.js",
   "./src/data.js",
   "./src/nbr5410.js",
+  "./src/preprojeto.js",
   "./src/firebase.js",
   "./src/cache.js",
   "./src/store.js",

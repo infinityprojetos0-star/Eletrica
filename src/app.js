@@ -16,8 +16,13 @@
   let searchQuery = "";
   let produtoCategoria = "Todas";
   let servicoFiltro = "todos";
-  let calcTab = "nbr5410";
+  let calcTab = "ambientes";
   let lastDimensionamento = null;
+  let lastPreProjeto = null;
+  let preProjetoState = {
+    uso: "residencial",
+    comodos: []
+  };
 
   const icons = {
     tomada: (c = "#3db4ff") => `<svg viewBox="0 0 80 80" fill="none"><rect x="18" y="10" width="44" height="60" rx="10" fill="${c}" opacity=".15" stroke="${c}" stroke-width="2.5"/><circle cx="32" cy="34" r="5" fill="${c}"/><circle cx="48" cy="34" r="5" fill="${c}"/><path d="M40 46v14" stroke="${c}" stroke-width="3" stroke-linecap="round"/><path d="M34 60h12" stroke="${c}" stroke-width="3" stroke-linecap="round"/></svg>`,
@@ -1181,6 +1186,7 @@
 
   function renderCalculadoras() {
     const tabs = [
+      { id: "ambientes", label: "Ambientes" },
       { id: "nbr5410", label: "NBR 5410" },
       { id: "corrente", label: "Corrente" },
       { id: "potencia", label: "Potência" },
@@ -1205,6 +1211,10 @@
     });
 
     const box = document.getElementById("calcBody");
+    if (calcTab === "ambientes") {
+      renderPreProjetoAmbientes(box);
+      return;
+    }
     if (calcTab === "nbr5410") {
       renderDimNBR(box);
       return;
@@ -1302,6 +1312,362 @@
         out.innerHTML = `<div class="label">Seção sugerida (B1 · PVC)</div><div class="value">${r.cabo.secao} mm²</div><p style="margin-top:8px;color:var(--text-muted);font-size:.85rem">Disjuntor típico: ${r.disjuntor.In} A</p>`;
       };
     }
+  }
+
+  function renderPreProjetoAmbientes(box) {
+    if (!preProjetoState.comodos.length && preProjetoState.uso === "residencial") {
+      // seed inicial amigável
+      preProjetoState.comodos = [
+        PreProjeto.criarComodo("residencial", "sala"),
+        PreProjeto.criarComodo("residencial", "quarto", "Quarto 1"),
+        PreProjeto.criarComodo("residencial", "cozinha"),
+        PreProjeto.criarComodo("residencial", "banheiro")
+      ];
+    }
+
+    const uso = preProjetoState.uso;
+    const presets = PreProjeto.PRESETS[uso] || PreProjeto.PRESETS.residencial;
+    const resultado =
+      preProjetoState.comodos.length > 0
+        ? PreProjeto.calcular({
+            uso,
+            comodos: preProjetoState.comodos,
+            produtos: getState().produtos,
+            servicos: getState().servicos,
+            modoPreco: getPrecoModo()
+          })
+        : null;
+    lastPreProjeto = resultado;
+
+    box.innerHTML = `
+      <div class="hero-note" style="margin-bottom:16px">
+        <div>
+          <h3>Pré-projeto por ambientes</h3>
+          <p>Escolha residência ou comércio, monte os cômodos e os pontos. No final: materiais, mão de obra e um <strong>guia de circuitos</strong>. Só para base de orçamento — não substitui engenheiro.</p>
+          <div class="source-pill">Estimativa auxiliar · NBR 5410 simplificada</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px">
+        <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between">
+          <div>
+            <div style="font-size:.78rem;color:var(--text-muted);margin-bottom:6px">Tipo de instalação</div>
+            <div class="segmented" id="ppUsoSeg">
+              <button type="button" data-uso="residencial" class="${uso === "residencial" ? "active" : ""}">Residência</button>
+              <button type="button" data-uso="comercial" class="${uso === "comercial" ? "active" : ""}">Comércio</button>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <select id="ppPreset" style="min-width:160px;background:var(--bg-elevated);border:1px solid var(--border-strong);border-radius:11px;padding:10px">
+              ${presets.map((p) => `<option value="${p.id}">${p.label}</option>`).join("")}
+            </select>
+            <button class="btn btn-primary" id="ppAddComodo">+ Cômodo</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-2" style="align-items:start;gap:16px">
+        <div>
+          <div id="ppComodos">
+            ${
+              preProjetoState.comodos.length
+                ? preProjetoState.comodos
+                    .map(
+                      (c, idx) => `
+              <div class="card room-card" data-room="${c.id}">
+                <div class="room-card-head">
+                  <div>
+                    <input class="room-name" data-field="nome" data-id="${c.id}" value="${c.nome}" />
+                    <div class="room-meta">Área aprox. <input type="number" min="1" step="1" data-field="area" data-id="${c.id}" value="${c.area}" style="width:64px" /> m²</div>
+                  </div>
+                  <button class="btn btn-sm btn-danger" data-del-room="${c.id}">Remover</button>
+                </div>
+                <div class="room-grid">
+                  ${PreProjeto.CAMPOS.map(
+                    (f) => `
+                    <label class="room-field">
+                      <span>${f.label}</span>
+                      <input type="number" min="0" step="1" data-field="${f.key}" data-id="${c.id}" value="${c[f.key] || 0}" />
+                    </label>`
+                  ).join("")}
+                </div>
+              </div>`
+                    )
+                    .join("")
+                : `<div class="card"><div class="empty"><strong>Nenhum cômodo</strong>Adicione sala, quarto, cozinha…</div></div>`
+            }
+          </div>
+        </div>
+
+        <div class="card" id="ppResult">
+          ${
+            resultado
+              ? renderPreProjetoResultadoHtml(resultado)
+              : `<div class="empty"><strong>Resultado</strong>Adicione cômodos para ver circuitos e materiais.</div>`
+          }
+        </div>
+      </div>
+    `;
+
+    document.getElementById("ppUsoSeg").onclick = (e) => {
+      const btn = e.target.closest("button[data-uso]");
+      if (!btn) return;
+      const novo = btn.dataset.uso;
+      if (novo === preProjetoState.uso) return;
+      if (
+        preProjetoState.comodos.length &&
+        !confirm("Trocar o tipo reinicia a lista de cômodos. Continuar?")
+      ) {
+        return;
+      }
+      preProjetoState.uso = novo;
+      preProjetoState.comodos =
+        novo === "comercial"
+          ? [
+              PreProjeto.criarComodo("comercial", "loja"),
+              PreProjeto.criarComodo("comercial", "escritorio"),
+              PreProjeto.criarComodo("comercial", "banheiro_c")
+            ]
+          : [
+              PreProjeto.criarComodo("residencial", "sala"),
+              PreProjeto.criarComodo("residencial", "quarto", "Quarto 1"),
+              PreProjeto.criarComodo("residencial", "cozinha"),
+              PreProjeto.criarComodo("residencial", "banheiro")
+            ];
+      render();
+    };
+
+    document.getElementById("ppAddComodo").onclick = () => {
+      const presetId = document.getElementById("ppPreset").value;
+      preProjetoState.comodos.push(PreProjeto.criarComodo(preProjetoState.uso, presetId));
+      render();
+    };
+
+    box.querySelectorAll("[data-del-room]").forEach((btn) => {
+      btn.onclick = () => {
+        preProjetoState.comodos = preProjetoState.comodos.filter((c) => c.id !== btn.dataset.delRoom);
+        render();
+      };
+    });
+
+    box.querySelectorAll("[data-field][data-id]").forEach((inp) => {
+      const apply = () => {
+        const comodo = preProjetoState.comodos.find((c) => c.id === inp.dataset.id);
+        if (!comodo) return;
+        const field = inp.dataset.field;
+        if (field === "nome") comodo.nome = inp.value.trim() || comodo.nome;
+        else comodo[field] = Math.max(0, Number(inp.value) || 0);
+        // Atualiza só o painel de resultado sem perder foco
+        const r = PreProjeto.calcular({
+          uso: preProjetoState.uso,
+          comodos: preProjetoState.comodos,
+          produtos: getState().produtos,
+          servicos: getState().servicos,
+          modoPreco: getPrecoModo()
+        });
+        lastPreProjeto = r;
+        const panel = document.getElementById("ppResult");
+        if (panel) panel.innerHTML = renderPreProjetoResultadoHtml(r);
+        bindPreProjetoResultActions(panel);
+      };
+      inp.addEventListener(inp.tagName === "INPUT" && inp.type === "number" ? "change" : "change", apply);
+      if (inp.dataset.field === "nome") inp.addEventListener("blur", apply);
+    });
+
+    bindPreProjetoResultActions(box);
+  }
+
+  function renderPreProjetoResultadoHtml(r) {
+    const c = r.circuitos;
+    return `
+      <h3 style="font-family:var(--display);margin-bottom:6px">Guia de circuitos</h3>
+      <p style="color:var(--text-dim);font-size:.8rem;margin-bottom:12px">${r.disclaimer}</p>
+
+      <div class="grid grid-2" style="gap:8px;margin-bottom:12px">
+        <div class="calc-result" style="margin:0"><div class="label">Total de circuitos</div><div class="value" style="font-size:1.35rem">${c.total}</div></div>
+        <div class="calc-result" style="margin:0"><div class="label">Quadro sugerido</div><div class="value" style="font-size:1.35rem">${c.quadroSugerido} polos</div></div>
+      </div>
+
+      <div class="circuit-guide">
+        <div><strong>Iluminação:</strong> ${c.iluminacao.qtd} circuito(s) · ${c.iluminacao.pontos} pontos · ${c.iluminacao.bitola} · ${c.iluminacao.disjuntor}<div class="hint">${c.iluminacao.detalhe}</div></div>
+        <div><strong>Tomadas (TUG):</strong> ${c.tug.qtd} circuito(s) · ${c.tug.tug10}×10A + ${c.tug.tug20}×20A · ${c.tug.bitola}<div class="hint">${c.tug.detalhe}</div></div>
+        <div><strong>Dedicados:</strong> ${c.dedicados.qtd} · chuveiro ${c.dedicados.chuveiros} · ar ${c.dedicados.ares} · fogão ${c.dedicados.fogoes}<div class="hint">${c.dedicados.detalhe}</div></div>
+        <div><strong>Reserva:</strong> ${c.reserva.qtd}<div class="hint">${c.reserva.detalhe}</div></div>
+      </div>
+
+      <div style="font-size:.82rem;color:var(--text-muted);margin:12px 0">
+        Potência prevista (VA aproximados): <strong>${Math.round(c.potenciaPrevistaVA).toLocaleString("pt-BR")} VA</strong>
+      </div>
+
+      <h4 style="font-family:var(--display);margin:14px 0 8px">Materiais estimados</h4>
+      <div class="table-wrap" style="max-height:220px;overflow:auto">
+        <table>
+          <thead><tr><th>Item</th><th>Qtd</th><th>Total</th></tr></thead>
+          <tbody>
+            ${r.materiais
+              .map(
+                (i) => `<tr>
+              <td><strong>${i.nome}</strong>${i.nota ? `<div style="font-size:.72rem;color:var(--text-dim)">${i.nota}</div>` : ""}</td>
+              <td>${i.qtd} ${i.unidade || ""}</td>
+              <td>${money(i.qtd * i.preco)}</td>
+            </tr>`
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+
+      <h4 style="font-family:var(--display);margin:14px 0 8px">Mão de obra estimada</h4>
+      <div class="table-wrap" style="max-height:180px;overflow:auto">
+        <table>
+          <thead><tr><th>Serviço</th><th>Qtd</th><th>Total</th></tr></thead>
+          <tbody>
+            ${
+              r.maoObra.length
+                ? r.maoObra
+                    .map(
+                      (i) => `<tr>
+              <td><strong>${i.nome}</strong></td>
+              <td>${i.qtd} ${i.unidade || ""}</td>
+              <td>${money(i.qtd * i.preco)}</td>
+            </tr>`
+                    )
+                    .join("")
+                : `<tr><td colspan="3"><div class="empty">Sem serviços correspondentes no catálogo</div></td></tr>`
+            }
+          </tbody>
+        </table>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px">
+        <div>
+          <div style="font-size:.78rem;color:var(--text-muted)">Materiais ${money(r.totais.materiais)} · Mão de obra ${money(r.totais.maoObra)}</div>
+          <strong style="font-size:1.1rem">Total base: ${money(r.totais.geral)}</strong>
+        </div>
+        <button class="btn btn-primary" id="ppOrcBtn">Gerar orçamento</button>
+      </div>
+    `;
+  }
+
+  function bindPreProjetoResultActions(root) {
+    const btn = root?.querySelector?.("#ppOrcBtn");
+    if (!btn) return;
+    btn.onclick = () => {
+      if (!lastPreProjeto) return toast("Monte os cômodos antes");
+      enviarPreProjetoAoOrcamento(lastPreProjeto);
+    };
+  }
+
+  function enviarPreProjetoAoOrcamento(resultado) {
+    const s = getState();
+    if (!s.clientes.length) return toast("Cadastre um cliente primeiro");
+
+    openModal("Orçamento do pré-projeto", `
+      <div class="form-grid">
+        <div class="field full"><label>Cliente</label>
+          <select id="ppCli">${s.clientes.map((c) => `<option value="${c.id}">${c.nome}</option>`).join("")}</select>
+        </div>
+        <div class="field full"><label>Título</label>
+          <input id="ppTitulo" value="Pré-projeto ${resultado.uso === "comercial" ? "comercial" : "residencial"} — ${resultado.circuitos.total} circuitos" />
+        </div>
+        <div class="field full">
+          <label style="display:flex;gap:8px;align-items:center;font-size:.9rem">
+            <input type="checkbox" id="ppIncluiServ" checked /> Incluir mão de obra estimada
+          </label>
+          <label style="display:flex;gap:8px;align-items:center;font-size:.9rem;margin-top:8px">
+            <input type="checkbox" id="ppIncluiMat" checked /> Incluir materiais estimados
+          </label>
+        </div>
+        <div class="field full" style="color:var(--text-dim);font-size:.82rem">${resultado.disclaimer}</div>
+      </div>
+    `, `<button class="btn btn-ghost" id="cancelModal">Cancelar</button><button class="btn btn-primary" id="savePpOrc">Criar orçamento</button>`);
+
+    document.getElementById("cancelModal").onclick = closeModal;
+    document.getElementById("savePpOrc").onclick = () => {
+      const modo = getPrecoModo();
+      const incluiServ = document.getElementById("ppIncluiServ").checked;
+      const incluiMat = document.getElementById("ppIncluiMat").checked;
+      const itens = [];
+
+      if (incluiServ) {
+        (resultado.maoObra || []).forEach((sv) => {
+          const ref = s.servicos.find((x) => x.id === sv.refId);
+          const ocultas = ref
+            ? despesasDoServico(ref.id, s).map((d) => ({
+                id: d.id,
+                nome: d.nome,
+                valor: Number(d.valor) || 0,
+                global: !!d.global
+              }))
+            : [];
+          const custoOculto = ocultas.reduce((t, d) => t + d.valor, 0);
+          const base = Number(sv.preco) || 0;
+          itens.push({
+            id: uid("item"),
+            refId: sv.refId,
+            tipo: "servico",
+            nome: sv.nome,
+            precoBase: base,
+            custoOculto,
+            despesasOcultas: ocultas,
+            preco: base + custoOculto,
+            precoMin: sv.precoMin,
+            precoMed: sv.precoMed ?? base,
+            precoMax: sv.precoMax,
+            precoModo: modo,
+            qtd: sv.qtd,
+            unidade: sv.unidade
+          });
+        });
+      }
+
+      if (incluiMat) {
+        (resultado.materiais || []).forEach((m) => {
+          itens.push({
+            id: uid("item"),
+            refId: m.refId,
+            tipo: "produto",
+            nome: m.nome,
+            preco: Number(m.preco) || 0,
+            precoMin: m.precoMin,
+            precoMed: m.precoMed ?? m.preco,
+            precoMax: m.precoMax,
+            precoModo: modo,
+            qtd: m.qtd,
+            unidade: m.unidade,
+            precoBase: Number(m.preco) || 0,
+            custoOculto: 0
+          });
+        });
+      }
+
+      if (!itens.length) return toast("Selecione materiais e/ou mão de obra");
+
+      const c = resultado.circuitos;
+      const data = {
+        id: uid("orc"),
+        codigo: nextCodigo("ORC", getState().orcamentos),
+        clienteId: document.getElementById("ppCli").value,
+        titulo: document.getElementById("ppTitulo").value.trim() || "Pré-projeto elétrico",
+        data: todayISO(),
+        validade: 30,
+        prazo: "A definir após vistoria",
+        desconto: 0,
+        observacoes: [
+          `Pré-projeto ${resultado.uso}. Circuitos estimados: ${c.total} (ilum. ${c.iluminacao.qtd}, TUG ${c.tug.qtd}, dedicados ${c.dedicados.qtd}, reserva ${c.reserva.qtd}). Quadro ~${c.quadroSugerido} polos.`,
+          resultado.disclaimer
+        ].join(" "),
+        precoModo: modo,
+        itens,
+        status: "pendente",
+        origem: "preprojeto"
+      };
+
+      Store.update({ orcamentos: [...getState().orcamentos, data] });
+      closeModal();
+      toast("Orçamento criado a partir do pré-projeto");
+      navigate("orcamentos");
+    };
   }
 
   function renderDimNBR(box) {
