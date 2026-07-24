@@ -15,6 +15,7 @@ const PRECACHE_URLS = [
   "./assets/icons/apple-touch-icon.png",
   "./src/version.js",
   "./src/data.js",
+  "./src/nbr5410.js",
   "./src/firebase.js",
   "./src/cache.js",
   "./src/store.js",

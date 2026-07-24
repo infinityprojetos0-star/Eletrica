@@ -16,7 +16,8 @@
   let searchQuery = "";
   let produtoCategoria = "Todas";
   let servicoFiltro = "todos";
-  let calcTab = "corrente";
+  let calcTab = "nbr5410";
+  let lastDimensionamento = null;
 
   const icons = {
     tomada: (c = "#3db4ff") => `<svg viewBox="0 0 80 80" fill="none"><rect x="18" y="10" width="44" height="60" rx="10" fill="${c}" opacity=".15" stroke="${c}" stroke-width="2.5"/><circle cx="32" cy="34" r="5" fill="${c}"/><circle cx="48" cy="34" r="5" fill="${c}"/><path d="M40 46v14" stroke="${c}" stroke-width="3" stroke-linecap="round"/><path d="M34 60h12" stroke="${c}" stroke-width="3" stroke-linecap="round"/></svg>`,
@@ -1180,24 +1181,38 @@
 
   function renderCalculadoras() {
     const tabs = [
-      { id: "corrente", label: "Corrente (P/V)" },
-      { id: "potencia", label: "Potência (V×I)" },
+      { id: "nbr5410", label: "NBR 5410" },
+      { id: "corrente", label: "Corrente" },
+      { id: "potencia", label: "Potência" },
       { id: "queda", label: "Queda de tensão" },
-      { id: "bitola", label: "Bitola sugerida" }
+      { id: "bitola", label: "Bitola rápida" }
     ];
 
     content.innerHTML = `
+      <div class="view-enter">
       <div class="tabs">
         ${tabs.map((t) => `<button class="tab ${calcTab === t.id ? "active" : ""}" data-tab="${t.id}">${t.label}</button>`).join("")}
       </div>
-      <div class="card" id="calcBody" style="max-width:560px"></div>
+      <div id="calcBody"></div>
+      </div>
     `;
 
     content.querySelectorAll(".tab").forEach((t) => {
-      t.onclick = () => { calcTab = t.dataset.tab; render(); };
+      t.onclick = () => {
+        calcTab = t.dataset.tab;
+        render();
+      };
     });
 
     const box = document.getElementById("calcBody");
+    if (calcTab === "nbr5410") {
+      renderDimNBR(box);
+      return;
+    }
+
+    box.className = "card";
+    box.style.maxWidth = "560px";
+
     if (calcTab === "corrente") {
       box.innerHTML = `
         <h3 style="font-family:var(--display);margin-bottom:12px">Corrente elétrica</h3>
@@ -1239,7 +1254,7 @@
     } else if (calcTab === "queda") {
       box.innerHTML = `
         <h3 style="font-family:var(--display);margin-bottom:12px">Queda de tensão</h3>
-        <p style="color:var(--text-muted);margin-bottom:16px;font-size:.9rem">Estimativa simplificada ΔV = (2 × L × I × ρ) / S (cobre ρ≈0,0175)</p>
+        <p style="color:var(--text-muted);margin-bottom:16px;font-size:.9rem">Estimativa NBR 5410 simplificada (cobre)</p>
         <div class="form-grid">
           <div class="field"><label>Comprimento (m)</label><input id="cL" type="number" value="30" /></div>
           <div class="field"><label>Corrente (A)</label><input id="cI" type="number" value="16" /></div>
@@ -1250,20 +1265,21 @@
         <div class="calc-result" id="calcOut" hidden></div>
       `;
       document.getElementById("calcBtn").onclick = () => {
-        const L = Number(document.getElementById("cL").value);
-        const I = Number(document.getElementById("cI").value);
-        const S = Number(document.getElementById("cS").value);
-        const V = Number(document.getElementById("cV").value);
-        const dV = S ? (2 * L * I * 0.0175) / S : 0;
-        const pct = V ? (dV / V) * 100 : 0;
+        const q = NBR5410.quedaTensao({
+          comprimentoM: Number(document.getElementById("cL").value),
+          correnteA: Number(document.getElementById("cI").value),
+          secaoMm2: Number(document.getElementById("cS").value),
+          tensaoV: Number(document.getElementById("cV").value),
+          fases: 1
+        });
         const out = document.getElementById("calcOut");
         out.hidden = false;
-        out.innerHTML = `<div class="label">Queda estimada</div><div class="value">${dV.toFixed(2)} V <span style="font-size:1rem;color:var(--text-muted)">(${pct.toFixed(2)}%)</span></div><p style="margin-top:8px;color:var(--text-muted);font-size:.85rem">${pct <= 4 ? "Dentro do limite usual (≤4%)." : "Acima de 4% — considere aumentar a bitola."}</p>`;
+        out.innerHTML = `<div class="label">Queda estimada</div><div class="value">${q.dV.toFixed(2)} V <span style="font-size:1rem;color:var(--text-muted)">(${q.pct.toFixed(2)}%)</span></div><p style="margin-top:8px;color:var(--text-muted);font-size:.85rem">${q.okTerminal ? "Dentro do limite usual de circuito terminal (≤4%)." : "Acima de 4% — aumente a bitola."}</p>`;
       };
     } else {
       box.innerHTML = `
-        <h3 style="font-family:var(--display);margin-bottom:12px">Bitola sugerida</h3>
-        <p style="color:var(--text-muted);margin-bottom:16px;font-size:.9rem">Sugestão prática por corrente (referência simplificada — confirme NBR 5410)</p>
+        <h3 style="font-family:var(--display);margin-bottom:12px">Bitola rápida</h3>
+        <p style="color:var(--text-muted);margin-bottom:16px;font-size:.9rem">Atalho — para cálculo completo use a aba NBR 5410</p>
         <div class="form-grid">
           <div class="field full"><label>Corrente do circuito (A)</label><input id="cI" type="number" value="20" /></div>
         </div>
@@ -1272,18 +1288,272 @@
       `;
       document.getElementById("calcBtn").onclick = () => {
         const I = Number(document.getElementById("cI").value);
-        let bitola = "1,5 mm²";
-        if (I > 15) bitola = "2,5 mm²";
-        if (I > 24) bitola = "4,0 mm²";
-        if (I > 32) bitola = "6,0 mm²";
-        if (I > 40) bitola = "10 mm²";
-        if (I > 55) bitola = "16 mm²";
-        if (I > 75) bitola = "25 mm²+ (consulte tabela)";
+        const r = NBR5410.dimensionar({
+          tipoId: "livre",
+          potenciaW: I * 220,
+          tensaoV: 220,
+          comprimentoM: 10,
+          agrupamentoId: "1",
+          tempId: "30",
+          dr: false
+        });
         const out = document.getElementById("calcOut");
         out.hidden = false;
-        out.innerHTML = `<div class="label">Seção sugerida</div><div class="value">${bitola}</div>`;
+        out.innerHTML = `<div class="label">Seção sugerida (B1 · PVC)</div><div class="value">${r.cabo.secao} mm²</div><p style="margin-top:8px;color:var(--text-muted);font-size:.85rem">Disjuntor típico: ${r.disjuntor.In} A</p>`;
       };
     }
+  }
+
+  function renderDimNBR(box) {
+    const tipo0 = NBR5410.tipoById("chuveiro");
+    box.innerHTML = `
+      <div class="hero-note" style="margin-bottom:16px">
+        <div>
+          <h3>Dimensionamento NBR 5410</h3>
+          <p>Sugere cabo, disjuntor, DR e materiais com critérios brasileiros simplificados. Use como assistência — não substitui projeto assinado.</p>
+          <div class="source-pill">NBR 5410 · cobre PVC 70 °C · método B1 (ref.)</div>
+        </div>
+      </div>
+      <div class="grid grid-2" style="align-items:start;gap:16px">
+        <div class="card">
+          <div class="form-grid">
+            <div class="field full"><label>Tipo de circuito</label>
+              <select id="nbrTipo">
+                ${NBR5410.tipos().map((t) => `<option value="${t.id}" ${t.id === "chuveiro" ? "selected" : ""}>${t.label}</option>`).join("")}
+              </select>
+            </div>
+            <div class="field full" id="nbrTipoDesc" style="color:var(--text-dim);font-size:.82rem;margin-top:-8px">${tipo0.descricao}</div>
+            <div class="field"><label>Potência (W)</label><input id="nbrP" type="number" value="${tipo0.potenciaPadrao || 2200}" /></div>
+            <div class="field"><label>Tensão (V)</label><input id="nbrV" type="number" value="${tipo0.tensaoPadrao || 220}" /></div>
+            <div class="field"><label>Comprimento ida (m)</label><input id="nbrL" type="number" value="18" step="0.5" /></div>
+            <div class="field"><label>Fator de potência</label><input id="nbrFp" type="number" value="${tipo0.fp}" min="0.5" max="1" step="0.05" /></div>
+            <div class="field"><label>Agrupamento</label>
+              <select id="nbrAgr">${NBR5410.FATOR_AGRUPAMENTO.map((a) => `<option value="${a.id}">${a.label}</option>`).join("")}</select>
+            </div>
+            <div class="field"><label>Temp. ambiente</label>
+              <select id="nbrTemp">${NBR5410.FATOR_TEMP.map((a) => `<option value="${a.id}">${a.label}</option>`).join("")}</select>
+            </div>
+            <div class="field"><label>Polos do disjuntor</label>
+              <select id="nbrPolos">
+                <option value="1">1P (fase + PE)</option>
+                <option value="2" selected>2P (220 V típico)</option>
+                <option value="3">3P (trifásico)</option>
+              </select>
+            </div>
+            <div class="field"><label>DR / IDR 30 mA</label>
+              <select id="nbrDr">
+                <option value="auto">Automático (pela norma)</option>
+                <option value="sim">Forçar sim</option>
+                <option value="nao">Não incluir</option>
+              </select>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
+            <button class="btn btn-primary" id="nbrCalc">Dimensionar</button>
+            <button class="btn btn-secondary" id="nbrOrc" ${lastDimensionamento ? "" : "disabled"}>Enviar ao orçamento</button>
+          </div>
+        </div>
+        <div class="card" id="nbrOut">
+          <div class="empty"><strong>Resultado</strong>Preencha os dados e clique em Dimensionar.</div>
+        </div>
+      </div>
+    `;
+
+    const applyTipoDefaults = () => {
+      const t = NBR5410.tipoById(document.getElementById("nbrTipo").value);
+      document.getElementById("nbrTipoDesc").textContent = t.descricao;
+      if (t.potenciaPadrao) document.getElementById("nbrP").value = t.potenciaPadrao;
+      if (t.tensaoPadrao) document.getElementById("nbrV").value = t.tensaoPadrao;
+      document.getElementById("nbrFp").value = t.fp;
+      document.getElementById("nbrPolos").value = String(t.polos || 1);
+    };
+    document.getElementById("nbrTipo").onchange = applyTipoDefaults;
+
+    const paintResult = (r) => {
+      lastDimensionamento = r;
+      const btnOrc = document.getElementById("nbrOrc");
+      if (btnOrc) btnOrc.disabled = false;
+      const quedaOk = r.queda.okTerminal;
+      document.getElementById("nbrOut").innerHTML = `
+        <h3 style="font-family:var(--display);margin-bottom:8px">${r.tipo.label}</h3>
+        <p style="color:var(--text-muted);font-size:.85rem;margin-bottom:14px">${r.disclaimer}</p>
+        <div class="grid grid-2" style="gap:10px;margin-bottom:14px">
+          <div class="calc-result" style="margin:0"><div class="label">Corrente de projeto (Ib)</div><div class="value" style="font-size:1.4rem">${r.ib.toFixed(2)} A</div></div>
+          <div class="calc-result" style="margin:0"><div class="label">Cabo sugerido</div><div class="value" style="font-size:1.4rem">${r.cabo.secao} mm²</div></div>
+          <div class="calc-result" style="margin:0"><div class="label">Disjuntor</div><div class="value" style="font-size:1.4rem">${r.disjuntor.In} A · ${r.disjuntor.polos}P · ${r.disjuntor.curva}</div></div>
+          <div class="calc-result" style="margin:0"><div class="label">Queda de tensão</div><div class="value" style="font-size:1.4rem">${r.queda.pct.toFixed(2)}% ${quedaOk ? "✓" : "!"}</div></div>
+        </div>
+        <div style="font-size:.86rem;color:var(--text-muted);line-height:1.55;margin-bottom:12px">
+          Iz cabo: ${r.cabo.iz.toFixed(1)} A · Iz corrigida (k=${r.entrada.k.toFixed(2)}): ${r.cabo.izCorrigida.toFixed(1)} A<br/>
+          Cabo estimado: ~${r.metrosCabo.toFixed(0)} m (${r.nCondutores} condutores) · Eletroduto: ${r.eletroduto}<br/>
+          DR: ${r.dr ? "recomendado / incluído na lista" : "não obrigatório neste tipo"}
+        </div>
+        ${r.avisos.length ? `<div style="background:rgba(255,193,77,.08);border:1px solid rgba(255,193,77,.25);border-radius:12px;padding:10px 12px;font-size:.82rem;color:var(--warn);margin-bottom:12px">${r.avisos.map((a) => `• ${a}`).join("<br/>")}</div>` : ""}
+        <div id="nbrMats"></div>
+      `;
+      const s = getState();
+      const mats = NBR5410.sugerirMateriais(r, s.produtos, getPrecoModo());
+      const servs = NBR5410.sugerirServicos(r, s.servicos, getPrecoModo());
+      r._materiais = mats;
+      r._servicos = servs;
+      const matBox = document.getElementById("nbrMats");
+      const total = [...mats, ...servs].reduce((t, i) => t + i.qtd * i.preco, 0);
+      matBox.innerHTML = `
+        <h4 style="margin:8px 0 10px;font-family:var(--display)">Lista sugerida</h4>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Item</th><th>Qtd</th><th>Unit.</th><th>Total</th></tr></thead>
+            <tbody>
+              ${[...mats, ...servs].map((i) => `
+                <tr>
+                  <td><strong>${i.nome}</strong>${i.nota ? `<div style="font-size:.75rem;color:var(--text-dim)">${i.nota}</div>` : ""}</td>
+                  <td>${i.qtd} ${i.unidade || ""}</td>
+                  <td>${money(i.preco)}</td>
+                  <td>${money(i.qtd * i.preco)}</td>
+                </tr>`).join("")}
+            </tbody>
+          </table>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;gap:8px;flex-wrap:wrap">
+          <strong>Subtotal estimado: ${money(total)}</strong>
+          <label style="font-size:.82rem;color:var(--text-muted);display:flex;gap:8px;align-items:center">
+            <input type="checkbox" id="nbrIncluiServ" checked /> Incluir mão de obra sugerida
+          </label>
+        </div>
+      `;
+    };
+
+    document.getElementById("nbrCalc").onclick = () => {
+      const drSel = document.getElementById("nbrDr").value;
+      const r = NBR5410.dimensionar({
+        tipoId: document.getElementById("nbrTipo").value,
+        potenciaW: Number(document.getElementById("nbrP").value),
+        tensaoV: Number(document.getElementById("nbrV").value),
+        comprimentoM: Number(document.getElementById("nbrL").value),
+        fp: Number(document.getElementById("nbrFp").value),
+        agrupamentoId: document.getElementById("nbrAgr").value,
+        tempId: document.getElementById("nbrTemp").value,
+        polos: Number(document.getElementById("nbrPolos").value),
+        fases: Number(document.getElementById("nbrPolos").value) === 3 ? 3 : 1,
+        dr: drSel === "auto" ? undefined : drSel === "sim"
+      });
+      paintResult(r);
+      toast("Dimensionamento calculado");
+    };
+
+    document.getElementById("nbrOrc").onclick = () => {
+      if (!lastDimensionamento) return toast("Calcule antes de enviar");
+      enviarDimAoOrcamento(lastDimensionamento);
+    };
+
+    if (lastDimensionamento) paintResult(lastDimensionamento);
+  }
+
+  function enviarDimAoOrcamento(resultado) {
+    const s = getState();
+    if (!s.clientes.length) return toast("Cadastre um cliente primeiro");
+    const incluiServ = document.getElementById("nbrIncluiServ")?.checked !== false;
+    const mats = resultado._materiais || NBR5410.sugerirMateriais(resultado, s.produtos, getPrecoModo());
+    const servs = incluiServ
+      ? resultado._servicos || NBR5410.sugerirServicos(resultado, s.servicos, getPrecoModo())
+      : [];
+
+    openModal("Criar orçamento do dimensionamento", `
+      <div class="form-grid">
+        <div class="field full"><label>Cliente</label>
+          <select id="dimCli">${s.clientes.map((c) => `<option value="${c.id}">${c.nome}</option>`).join("")}</select>
+        </div>
+        <div class="field full"><label>Título</label>
+          <input id="dimTitulo" value="Circuito ${resultado.tipo.label} — ${resultado.cabo.secao} mm² / ${resultado.disjuntor.In} A" />
+        </div>
+        <div class="field full" style="color:var(--text-dim);font-size:.82rem">
+          Serão adicionados ${mats.length} material(is)${incluiServ ? ` e ${servs.length} serviço(s)` : ""}.
+          Despesas globais (deslocamento/alimentação) entram ao salvar se houver serviços.
+        </div>
+      </div>
+    `, `<button class="btn btn-ghost" id="cancelModal">Cancelar</button><button class="btn btn-primary" id="saveDimOrc">Criar orçamento</button>`);
+
+    document.getElementById("cancelModal").onclick = closeModal;
+    document.getElementById("saveDimOrc").onclick = () => {
+      const modo = getPrecoModo();
+      const itens = [];
+
+      servs.forEach((sv) => {
+        const ref = s.servicos.find((x) => x.id === sv.refId);
+        const ocultas = ref
+          ? despesasDoServico(ref.id, s).map((d) => ({
+              id: d.id,
+              nome: d.nome,
+              valor: Number(d.valor) || 0,
+              global: !!d.global
+            }))
+          : [];
+        const custoOculto = ocultas.reduce((t, d) => t + d.valor, 0);
+        const base = Number(sv.preco) || 0;
+        itens.push({
+          id: uid("item"),
+          refId: sv.refId,
+          tipo: "servico",
+          nome: sv.nome,
+          precoBase: base,
+          custoOculto,
+          despesasOcultas: ocultas,
+          preco: base + custoOculto,
+          precoMin: sv.precoMin,
+          precoMed: sv.precoMed ?? base,
+          precoMax: sv.precoMax,
+          precoModo: modo,
+          qtd: sv.qtd,
+          unidade: sv.unidade
+        });
+      });
+
+      mats.forEach((m) => {
+        itens.push({
+          id: uid("item"),
+          refId: m.refId,
+          tipo: "produto",
+          nome: m.nome,
+          preco: Number(m.preco) || 0,
+          precoMin: m.precoMin,
+          precoMed: m.precoMed ?? m.preco,
+          precoMax: m.precoMax,
+          precoModo: modo,
+          qtd: m.qtd,
+          unidade: m.unidade,
+          precoBase: Number(m.preco) || 0,
+          custoOculto: 0
+        });
+      });
+
+      if (!itens.length) return toast("Nenhum item para o orçamento");
+
+      const data = {
+        id: uid("orc"),
+        codigo: nextCodigo("ORC", getState().orcamentos),
+        clienteId: document.getElementById("dimCli").value,
+        titulo: document.getElementById("dimTitulo").value.trim() || "Dimensionamento NBR 5410",
+        data: todayISO(),
+        validade: 30,
+        prazo: "7 dias",
+        desconto: 0,
+        observacoes: [
+          `Dimensionamento auxiliar NBR 5410 — ${resultado.tipo.label}.`,
+          `Ib ${resultado.ib.toFixed(2)} A · Cabo ${resultado.cabo.secao} mm² · Disjuntor ${resultado.disjuntor.In} A ${resultado.disjuntor.polos}P curva ${resultado.disjuntor.curva}.`,
+          `Queda estimada ${resultado.queda.pct.toFixed(2)}%.`,
+          resultado.disclaimer
+        ].join(" "),
+        precoModo: modo,
+        itens,
+        status: "pendente",
+        origem: "nbr5410"
+      };
+
+      Store.update({ orcamentos: [...getState().orcamentos, data] });
+      closeModal();
+      toast("Orçamento criado a partir do dimensionamento");
+      navigate("orcamentos");
+    };
   }
 
   function renderContratos() {
