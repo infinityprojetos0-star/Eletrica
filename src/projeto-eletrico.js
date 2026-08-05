@@ -874,6 +874,7 @@ var ProjetoEletrico = (() => {
     let tool = "select";
     let placeTipo = "tomada";
     let placeArch = "porta";
+    let placePreset = null; // variante escolhida na barra superior
     let ppm = PPM_DEFAULT;
     let pan = { x: 40, y: 40 };
     let drag = null;
@@ -956,11 +957,11 @@ var ProjetoEletrico = (() => {
               <button type="button" class="btn btn-primary btn-sm" id="peAnalisar">Analisar NBR 5410</button>
             </div>
           </div>
+          <div class="pe-variants" id="peVariants" hidden></div>
           <div class="pe-body">
             <div class="pe-canvas-wrap">
               <canvas id="peCanvas" width="900" height="560"></canvas>
-              <div class="pe-float" id="peFloat" hidden></div>
-              <div class="pe-hint" id="peHint">Grade ${GRID_M} m · Clique = selecionar · Segure e arraste = mover · R gira porta/janela</div>
+              <div class="pe-hint" id="peHint">Grade ${GRID_M} m · Clique = selecionar · Arraste = mover · Variantes na barra de cima</div>
             </div>
             <aside class="pe-side" id="peSide"></aside>
           </div>
@@ -969,12 +970,15 @@ var ProjetoEletrico = (() => {
       bindChrome();
       resizeCanvas();
       paint();
-      renderSide();
+      refreshSelectionUI();
     }
 
     function setTool(t, tipo, arch) {
       tool = t;
-      if (tipo) placeTipo = tipo;
+      if (tipo) {
+        placeTipo = tipo;
+        placePreset = null;
+      }
       if (arch) placeArch = arch;
       conduitDraft = null;
       root.querySelectorAll(".pe-tool").forEach((btn) => {
@@ -984,15 +988,144 @@ var ProjetoEletrico = (() => {
         btn.classList.toggle("active", !!active);
       });
       const labels = {
-        select: "clique seleciona · segure e arraste para mover · edição no painel à direita",
+        select: "clique seleciona · arraste para mover · edição no painel à direita",
         room: "cômodo — arraste para desenhar",
         arch: `${tipoArch(placeArch).label} — clique para inserir (R = girar)`,
         conduit: "conduíte — vértices; Enter ou duplo clique termina",
-        place: `${tipoPonto(placeTipo).label} — clique para inserir (variantes no menu flutuante)`,
+        place: `${tipoPonto(placeTipo).label} — escolha a variante na barra e clique no grid`,
         delete: "apagar — clique no elemento"
       };
       const hint = root.querySelector("#peHint");
       if (hint) hint.textContent = `Grade ${GRID_M} m · ${labels[tool] || tool}`;
+      renderVariantsBar();
+    }
+
+    function variantsContext() {
+      if (selectedKind === "point" && selectedId) {
+        const pt = projeto.points.find((p) => p.id === selectedId);
+        if (pt && ["tomada", "interruptor", "conjugado", "lampada"].includes(pt.tipo)) {
+          return { tipo: pt.tipo, mode: "selected", pt };
+        }
+      }
+      if (tool === "place" && ["tomada", "interruptor", "conjugado", "lampada"].includes(placeTipo)) {
+        return { tipo: placeTipo, mode: "place", pt: null };
+      }
+      return null;
+    }
+
+    function presetsForTipo(tipo) {
+      if (tipo === "tomada") {
+        const list = [];
+        MODULOS_TOMADA.forEach((m) => {
+          [10, 20].forEach((amp) => {
+            list.push({
+              group: "tomada",
+              id: `t_${m.id}_${amp}`,
+              label: `${m.label.split(" ")[0]} ${amp}A`,
+              short: `${m.simb}${amp === 20 ? "20" : ""}`,
+              modulos: m.id,
+              amp
+            });
+          });
+        });
+        return list;
+      }
+      if (tipo === "interruptor") {
+        return VAR_INTERRUPTOR.map((v) => ({
+          group: "interruptor",
+          id: `i_${v.id}`,
+          label: v.label,
+          short: v.simb,
+          variante: v.id
+        }));
+      }
+      if (tipo === "conjugado") {
+        return PRESETS_CONJUGADO.map((c) => ({
+          group: "conjugado",
+          id: c.id,
+          conjugadoId: c.id,
+          label: c.label,
+          short: c.simb
+        }));
+      }
+      if (tipo === "lampada") {
+        return VAR_LAMPADA.map((v) => ({
+          group: "lampada",
+          id: v.id,
+          variante: v.id,
+          label: v.label,
+          short: v.simb
+        }));
+      }
+      return [];
+    }
+
+    function isPresetActive(preset, ctxVar) {
+      if (!ctxVar) return placePreset && placePreset.id === preset.id;
+      if (ctxVar.mode === "place") return placePreset && placePreset.id === preset.id;
+      const n = normalizePoint(ctxVar.pt);
+      if (preset.group === "tomada")
+        return n.tipo === "tomada" && n.modulos === preset.modulos && Number(n.amperagem) === preset.amp;
+      if (preset.group === "interruptor")
+        return n.tipo === "interruptor" && n.variante === preset.variante;
+      if (preset.group === "conjugado")
+        return n.tipo === "conjugado" && n.conjugadoId === preset.conjugadoId;
+      if (preset.group === "lampada")
+        return n.tipo === "lampada" && n.variante === preset.variante;
+      return false;
+    }
+
+    function renderVariantsBar() {
+      const bar = root.querySelector("#peVariants");
+      if (!bar) return;
+      const ctxVar = variantsContext();
+      if (!ctxVar) {
+        bar.hidden = true;
+        bar.innerHTML = "";
+        return;
+      }
+      const presets = presetsForTipo(ctxVar.tipo);
+      const titles = {
+        tomada: "Variantes de tomada",
+        interruptor: "Variantes de interruptor",
+        conjugado: "Conjugados (interruptor + tomada)",
+        lampada: "Tipos de iluminação"
+      };
+      bar.hidden = false;
+      bar.innerHTML = `
+        <span class="pe-variants-label">${titles[ctxVar.tipo] || "Variantes"}</span>
+        <div class="pe-variants-list">
+          ${presets
+            .map(
+              (pr) =>
+                `<button type="button" class="pe-var-btn ${isPresetActive(pr, ctxVar) ? "active" : ""}" data-preset="${escapeHtml(pr.id)}" title="${escapeHtml(pr.label)}">
+                  <strong>${escapeHtml(pr.short)}</strong>
+                  <span>${escapeHtml(pr.label)}</span>
+                </button>`
+            )
+            .join("")}
+        </div>
+      `;
+      bar.onclick = (e) => {
+        const btn = e.target.closest("[data-preset]");
+        if (!btn) return;
+        const preset = presets.find((p) => p.id === btn.dataset.preset);
+        if (!preset) return;
+        if (ctxVar.mode === "selected" && ctxVar.pt) {
+          const p = projeto.points.find((x) => x.id === ctxVar.pt.id);
+          if (!p) return;
+          applyPointPreset(p, preset);
+          Object.assign(p, normalizePoint(p));
+          save();
+          paint();
+          refreshSelectionUI();
+          ctx.toast?.(preset.label);
+        } else {
+          placePreset = preset;
+          renderVariantsBar();
+          ctx.toast?.(`Próximo ponto: ${preset.label}`);
+        }
+      };
     }
 
     function bindChrome() {
@@ -1026,9 +1159,9 @@ var ProjetoEletrico = (() => {
       const canvas = root.querySelector("#peCanvas");
       canvas.addEventListener("mousedown", onDown);
       canvas.addEventListener("mousemove", onMove);
-      canvas.addEventListener("mouseup", onUp);
-      canvas.addEventListener("mouseleave", onUp);
       canvas.addEventListener("dblclick", onDbl);
+      // mouseup no window: soltar fora do canvas não limpa seleção
+      window.addEventListener("mouseup", onUp);
       canvas.addEventListener(
         "wheel",
         (e) => {
@@ -1182,9 +1315,13 @@ var ProjetoEletrico = (() => {
           return;
         }
         const pt = defaultPoint(placeTipo, w.x, w.y);
+        if (placePreset) applyPointPreset(pt, placePreset);
+        Object.assign(pt, normalizePoint(pt));
         projeto.points.push(pt);
         selectedId = pt.id;
         selectedKind = "point";
+        tool = "select";
+        setTool("select");
         save();
         paint();
         refreshSelectionUI();
@@ -1335,7 +1472,8 @@ var ProjetoEletrico = (() => {
     }
 
     function onUp() {
-      if (drag?.type === "room") {
+      if (!drag) return;
+      if (drag.type === "room") {
         const x = Math.min(drag.x0, drag.x1);
         const y = Math.min(drag.y0, drag.y1);
         const ww = Math.abs(drag.x1 - drag.x0);
@@ -1355,12 +1493,13 @@ var ProjetoEletrico = (() => {
           save();
         }
       } else if (
-        drag?.type === "move-room" ||
-        drag?.type === "resize-room" ||
-        drag?.type === "move-point" ||
-        drag?.type === "move-arch"
+        drag.type === "move-room" ||
+        drag.type === "resize-room" ||
+        drag.type === "move-point" ||
+        drag.type === "move-arch" ||
+        drag.type === "pan"
       ) {
-        save();
+        if (drag.type !== "pan") save();
       }
       drag = null;
       paint();
@@ -1393,60 +1532,7 @@ var ProjetoEletrico = (() => {
 
     function refreshSelectionUI() {
       renderSide();
-      updateFloatMenu();
-    }
-
-    function updateFloatMenu() {
-      const el = root.querySelector("#peFloat");
-      const canvas = root.querySelector("#peCanvas");
-      if (!el || !canvas) return;
-      if (selectedKind !== "point" || !selectedId) {
-        el.hidden = true;
-        el.innerHTML = "";
-        return;
-      }
-      const pt = projeto.points.find((p) => p.id === selectedId);
-      if (!pt) {
-        el.hidden = true;
-        return;
-      }
-      const presets = floatPresetsFor(pt);
-      if (!presets.length) {
-        el.hidden = true;
-        return;
-      }
-      const n = normalizePoint(pt);
-      el.innerHTML = presets
-        .map((pr) => {
-          let active = false;
-          if (pr.group === "tomada" && n.tipo === "tomada")
-            active = n.modulos === pr.modulos && Number(n.amperagem) === pr.amp;
-          if (pr.group === "interruptor" && n.tipo === "interruptor")
-            active = n.variante === pr.variante;
-          if (pr.group === "conjugado" && n.tipo === "conjugado")
-            active = n.conjugadoId === pr.conjugadoId;
-          if (pr.group === "lampada" && n.tipo === "lampada")
-            active = n.variante === pr.variante;
-          return `<button type="button" class="pe-float-btn ${active ? "active" : ""}" data-preset="${escapeHtml(pr.id)}" title="${escapeHtml(pr.label)}">${escapeHtml(pr.short)}</button>`;
-        })
-        .join("");
-      el.hidden = false;
-      const left = pan.x + n.x * ppm + 22;
-      const top = pan.y + n.y * ppm - 40;
-      el.style.left = `${Math.max(8, Math.min(left, canvas.width - 52))}px`;
-      el.style.top = `${Math.max(8, Math.min(top, canvas.height - 120))}px`;
-      el.onclick = (e) => {
-        const btn = e.target.closest("[data-preset]");
-        if (!btn) return;
-        const preset = presets.find((p) => p.id === btn.dataset.preset);
-        const p = projeto.points.find((x) => x.id === selectedId);
-        if (!preset || !p) return;
-        applyPointPreset(p, preset);
-        Object.assign(p, normalizePoint(p));
-        save();
-        paint();
-        refreshSelectionUI();
-      };
+      renderVariantsBar();
     }
 
     function inspectorHtml() {
@@ -1899,7 +1985,6 @@ var ProjetoEletrico = (() => {
       });
 
       ctx2.restore();
-      updateFloatMenu();
     }
 
     function renderSide() {
@@ -1969,7 +2054,6 @@ var ProjetoEletrico = (() => {
       if (!document.body.contains(root)) return;
       resizeCanvas();
       paint();
-      updateFloatMenu();
     });
 
     return {

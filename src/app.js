@@ -2689,6 +2689,8 @@
     updateSyncChip();
     // Evita “reload” da tela a cada ping de sync/status
     if (e.detail?.stateChanged === false) return;
+    // Não remonta o editor de planta a cada autosave (senão some seleção/painel)
+    if (currentView === "projeto" && peEditingId) return;
     clearTimeout(storeRenderTimer);
     storeRenderTimer = setTimeout(() => render(), 60);
   });
