@@ -362,11 +362,13 @@ var ProjetoEletrico = (() => {
       base.usoCircuito = "tug";
       base.potenciaVA = 100;
       base.tensaoV = 127;
+      base.alturaM = 0.3; // NBR: tomada baixa ≈ 300 mm
       base.label = "Tomada simples 10A";
     }
     if (tipo === "interruptor") {
       base.variante = "simples";
       base.potenciaVA = 0;
+      base.alturaM = 1.2;
       base.label = "Interruptor simples";
     }
     if (tipo === "lampada") {
@@ -400,6 +402,218 @@ var ProjetoEletrico = (() => {
 
   function dist(a, b) {
     return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
+  /**
+   * Simbologia NBR 5444 (instalações prediais):
+   * círculo = luz / interruptor · triângulo = tomada · quadrado = quadro
+   * Tomada: vazia=baixa · meia=média · cheia=alta (altura do ponto)
+   */
+  function nivelTomada(alturaM) {
+    const h = Number(alturaM);
+    if (!Number.isFinite(h)) return "baixa";
+    if (h >= 1.8) return "alta";
+    if (h >= 1.0) return "media";
+    return "baixa";
+  }
+
+  function drawTrianguloTomada(ctx, cx, cy, size, fillMode, stroke, lw) {
+    const h = (size * Math.sqrt(3)) / 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy + h * 0.55);
+    ctx.lineTo(cx - size / 2, cy - h * 0.45);
+    ctx.lineTo(cx + size / 2, cy - h * 0.45);
+    ctx.closePath();
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = lw;
+    ctx.fillStyle = "#111";
+    if (fillMode === "alta") {
+      ctx.fill();
+      ctx.stroke();
+    } else if (fillMode === "media") {
+      ctx.fillStyle = "#fff";
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cx, cy + h * 0.55);
+      ctx.lineTo(cx - size / 2, cy - h * 0.45);
+      ctx.lineTo(cx, cy - h * 0.45);
+      ctx.closePath();
+      ctx.fillStyle = "#111";
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = "#fff";
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+
+  function drawNbrSymbol(ctx, pt, ppm, selected, strokeColor) {
+    const n = normalizePoint(pt);
+    const cx = n.x * ppm;
+    const cy = n.y * ppm;
+    const stroke = selected ? "#f57c00" : strokeColor || "#111";
+    const lw = selected ? 2.4 : 1.6;
+    ctx.save();
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+
+    if (n.tipo === "lampada") {
+      const r = n.variante === "arandela" ? 9 : 12;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = "#fff";
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = lw;
+      ctx.fill();
+      ctx.stroke();
+      // ponto de luz no teto: cruz leve (uso comum em plantas NBR)
+      if (n.variante !== "arandela") {
+        ctx.beginPath();
+        ctx.moveTo(cx - r * 0.45, cy);
+        ctx.lineTo(cx + r * 0.45, cy);
+        ctx.moveTo(cx, cy - r * 0.45);
+        ctx.lineTo(cx, cy + r * 0.45);
+        ctx.stroke();
+      }
+      if (n.variante === "emergencia") {
+        ctx.beginPath();
+        ctx.arc(cx, cy, r * 0.35, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    } else if (n.tipo === "interruptor") {
+      const r = 7;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = "#fff";
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = lw;
+      ctx.fill();
+      ctx.stroke();
+      // traços internos conforme seções (simples / duplo / paralelo…)
+      const v = n.variante || "simples";
+      ctx.beginPath();
+      if (v === "duplo") {
+        ctx.moveTo(cx - 3, cy - 2);
+        ctx.lineTo(cx + 3, cy - 2);
+        ctx.moveTo(cx - 3, cy + 2);
+        ctx.lineTo(cx + 3, cy + 2);
+      } else if (v === "paralelo" || v === "intermediario") {
+        ctx.moveTo(cx - 3, cy);
+        ctx.lineTo(cx + 3, cy);
+        ctx.moveTo(cx, cy - 3);
+        ctx.lineTo(cx, cy + 3);
+      } else if (v === "bipolar") {
+        ctx.moveTo(cx - 3.5, cy - 1.5);
+        ctx.lineTo(cx + 3.5, cy - 1.5);
+        ctx.moveTo(cx - 3.5, cy + 1.5);
+        ctx.lineTo(cx + 3.5, cy + 1.5);
+        ctx.moveTo(cx - 2, cy - 3);
+        ctx.lineTo(cx - 2, cy + 3);
+      } else if (v === "dimmer") {
+        ctx.moveTo(cx - 3, cy + 2);
+        ctx.lineTo(cx + 3, cy - 2);
+      } else {
+        ctx.moveTo(cx - 3, cy);
+        ctx.lineTo(cx + 3, cy);
+      }
+      ctx.stroke();
+    } else if (n.tipo === "tomada") {
+      const fill = nivelTomada(n.alturaM);
+      drawTrianguloTomada(ctx, cx, cy, 16, fill, stroke, lw);
+      if (Number(n.amperagem) >= 20 || n.usoCircuito === "tue") {
+        ctx.fillStyle = stroke;
+        ctx.font = "bold 7px Segoe UI, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "top";
+        ctx.fillText("20", cx, cy + 10);
+      }
+    } else if (n.tipo === "conjugado") {
+      drawTrianguloTomada(ctx, cx + 4, cy + 2, 13, nivelTomada(n.alturaM), stroke, lw);
+      ctx.beginPath();
+      ctx.arc(cx - 6, cy - 4, 5.5, 0, Math.PI * 2);
+      ctx.fillStyle = "#fff";
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = lw;
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cx - 9, cy - 4);
+      ctx.lineTo(cx - 3, cy - 4);
+      ctx.stroke();
+    } else if (n.tipo === "qdc") {
+      const w = 22;
+      const h = 18;
+      ctx.fillStyle = "#fff";
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = lw;
+      ctx.fillRect(cx - w / 2, cy - h / 2, w, h);
+      ctx.strokeRect(cx - w / 2, cy - h / 2, w, h);
+      ctx.beginPath();
+      ctx.moveTo(cx - w / 2, cy - h / 2);
+      ctx.lineTo(cx + w / 2, cy + h / 2);
+      ctx.stroke();
+      ctx.fillStyle = stroke;
+      ctx.font = "bold 7px Segoe UI, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillText("QD", cx, cy - h / 2 - 2);
+    } else if (n.tipo === "chuveiro" || n.tipo === "torneira") {
+      drawTrianguloTomada(ctx, cx, cy, 15, "alta", stroke, lw);
+      ctx.fillStyle = stroke;
+      ctx.font = "bold 7px Segoe UI, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("CH", cx, cy + 12);
+    } else if (n.tipo === "ar" || n.tipo === "fogao" || n.tipo === "exaustor") {
+      drawTrianguloTomada(ctx, cx, cy, 15, "alta", stroke, lw);
+      ctx.fillStyle = stroke;
+      ctx.font = "bold 7px Segoe UI, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(n.tipo === "ar" ? "AC" : n.tipo === "fogao" ? "FG" : "EX", cx, cy + 12);
+    } else if (n.tipo === "sensor" || n.tipo === "campainha") {
+      const r = 7;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = "#fff";
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = lw;
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = stroke;
+      ctx.font = "bold 7px Segoe UI, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(n.tipo === "sensor" ? "S" : "C", cx, cy);
+    } else {
+      ctx.beginPath();
+      ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+      ctx.fillStyle = "#fff";
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = lw;
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    // Legenda NBR: potência / circuito / comando
+    ctx.fillStyle = selected ? "#c45c00" : "#222";
+    ctx.font = "9px Segoe UI, sans-serif";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+    const circNum = n.circuitoId ? String(n.circuitoId).replace(/^C/i, "") : "";
+    const parts = [];
+    if (n.tipo === "lampada" || n.tipo === "tomada" || n.tipo === "conjugado" || n.tipo === "chuveiro" || n.tipo === "ar") {
+      if (n.potenciaVA) parts.push(String(Math.round(n.potenciaVA)));
+    }
+    if (circNum) parts.push(circNum);
+    if (n.interruptor) parts.push(String(n.interruptor).toLowerCase());
+    if (n.usoTue) {
+      const u = usoTueById(n.usoTue);
+      if (u) parts.push(u.label.split(" ")[0]);
+    }
+    const tag = parts.join(" ");
+    if (tag) ctx.fillText(tag, cx + 14, cy - 6);
+    ctx.restore();
   }
 
   function polylineLength(verts) {
@@ -1639,12 +1853,17 @@ var ProjetoEletrico = (() => {
               </select>
             </label>
             <label>Altura (m)<input type="number" id="pePtAlt" step="0.1" value="${Number(pt.alturaM ?? 0.3)}" /></label>
+            ${
+              showTom
+                ? `<p class="hint">NBR 5444 — tomada: triângulo vazio ≈ baixa (0,30 m), meio cheio ≈ média (1,30 m), cheio ≈ alta (2,00 m). Ajuste pela altura.</p>`
+                : ""
+            }
             <label>Circuito<select id="pePtCirc">${circOpts}</select></label>
             <div class="pe-insp-actions">
               <button type="button" class="btn btn-danger btn-sm" id="pePtDel">Excluir</button>
               <button type="button" class="btn btn-primary btn-sm" id="pePtOk">Atualizar</button>
             </div>
-            <p class="hint">Edite os campos e clique em Atualizar. TUE: escolha o equipamento para potência média automática.</p>
+            <p class="hint">Símbolos conforme <strong>NBR 5444</strong> (círculo, triângulo, quadrado). TUE: escolha o equipamento para potência média automática.</p>
           </div>
         </div>`;
       }
@@ -2014,37 +2233,10 @@ var ProjetoEletrico = (() => {
 
       projeto.points.forEach((p) => {
         const n = normalizePoint(p);
-        const cx = n.x * ppm;
-        const cy = n.y * ppm;
         const sel = selectedKind === "point" && selectedId === n.id;
         const circ = (projeto.lastAnalise?.circuits || []).find((x) => x.id === n.circuitoId);
-        const stroke = circ?.cor || (n.tipo === "qdc" ? "#0b2d5c" : "#222");
-        ctx2.beginPath();
-        ctx2.fillStyle = n.tipo === "qdc" ? "#0b2d5c" : "#fff";
-        ctx2.strokeStyle = sel ? "#f57c00" : stroke;
-        ctx2.lineWidth = sel ? 3 : 2;
-        if (n.tipo === "lampada") ctx2.arc(cx, cy, 12, 0, Math.PI * 2);
-        else if (n.tipo === "qdc") ctx2.rect(cx - 14, cy - 12, 28, 24);
-        else ctx2.rect(cx - 12, cy - 11, 24, 22);
-        ctx2.fill();
-        ctx2.stroke();
-        ctx2.fillStyle = n.tipo === "qdc" ? "#fff" : "#111";
-        ctx2.font = "bold 8px Segoe UI, sans-serif";
-        ctx2.textAlign = "center";
-        ctx2.textBaseline = "middle";
-        ctx2.fillText(simbPonto(n), cx, cy);
-        ctx2.textAlign = "left";
-        ctx2.textBaseline = "alphabetic";
-        ctx2.fillStyle = "#333";
-        ctx2.font = "10px Segoe UI, sans-serif";
-        const tag = [
-          n.circuitoId,
-          n.tipo === "tomada" ? `${n.amperagem}A` : n.potenciaVA ? String(n.potenciaVA) : "",
-          n.interruptor
-        ]
-          .filter(Boolean)
-          .join(" · ");
-        if (tag) ctx2.fillText(tag, cx + 14, cy - 8);
+        const stroke = circ?.cor || "#111";
+        drawNbrSymbol(ctx2, n, ppm, sel, stroke);
       });
 
       ctx2.restore();
