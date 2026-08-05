@@ -1219,7 +1219,6 @@ var ProjetoEletrico = (() => {
     let selectedId = null;
     let selectedKind = null;
     let hover = null;
-    let spacePan = false;
     let lengthBuffer = "";
     let hotkeys = loadHotkeys();
     let capturingHotkeyId = null;
@@ -1414,7 +1413,7 @@ var ProjetoEletrico = (() => {
         room: "cômodo — arraste para desenhar (bordas se encaixam nas vizinhas)",
         arch: `${tipoArch(placeArch).label} — clique na parede (cola) · pontas laranja · R = girar`,
         line: "linha — vértices; digite distância + Enter; Enter/duplo clique termina",
-        measure: "trena — clique ancora · mova · digite distância (1.2 ou 80cm) + Enter · 2º clique também mede",
+        measure: "trena — clique na parede · puxa perpendicular · digite .1 (=10cm) + Enter · Espaço = cursor",
         conduit: "conduíte — vértices; digite distância + Enter; Enter/duplo clique termina",
         erase: "borracha — clique/arraste sobre linha, guia ou cota",
         place: `${tipoPonto(placeTipo).label} — escolha a variante nos botões ao lado e clique no grid`,
@@ -1570,9 +1569,6 @@ var ProjetoEletrico = (() => {
         { passive: false }
       );
       window.addEventListener("keydown", onKey);
-      window.addEventListener("keyup", (e) => {
-        if (e.key === " ") spacePan = false;
-      });
     }
 
     function onKey(e) {
@@ -1612,18 +1608,14 @@ var ProjetoEletrico = (() => {
           e.preventDefault();
           lengthBuffer += e.key === "," ? "." : e.key;
           updateVcb();
-          // preview na trena
+          // preview na trena (perpendicular à parede)
           if (tool === "measure" && measureDraft?.a) {
             const len = parseLengthInput(lengthBuffer);
             if (len != null) {
-              const dir = directionFrom(
-                measureDraft.a,
-                hover ? { x: hover.x, y: hover.y } : measureDraft.b
-              );
-              measureDraft.b = {
-                x: roundCm(measureDraft.a.x + dir.x * len),
-                y: roundCm(measureDraft.a.y + dir.y * len)
-              };
+              const toward = hover
+                ? { x: hover.rawX ?? hover.x, y: hover.rawY ?? hover.y }
+                : measureDraft.b;
+              measureDraft.b = measureEndPoint(measureDraft, toward, len);
               paint();
             }
           }
@@ -1656,8 +1648,21 @@ var ProjetoEletrico = (() => {
         paint();
         return;
       }
-      if (e.key === " ") {
-        spacePan = true;
+      if (e.key === " " || e.code === "Space") {
+        e.preventDefault();
+        // Espaço = só cursor (ferramenta Mover), sem pan
+        conduitDraft = null;
+        lineDraft = null;
+        measureDraft = null;
+        snapGuides = null;
+        drag = null;
+        clearLengthBuffer();
+        selectedId = null;
+        selectedKind = null;
+        setTool("select");
+        refreshSelectionUI();
+        paint();
+        ctx.toast?.("Cursor (Mover)");
         return;
       }
       if ((e.key === "r" || e.key === "R") && selectedKind === "arch" && selectedId) {
@@ -1934,11 +1939,13 @@ var ProjetoEletrico = (() => {
     }
 
     function parseLengthInput(s) {
-      const t = String(s || "")
+      let t = String(s || "")
         .trim()
         .toLowerCase()
         .replace(",", ".");
-      if (!t) return null;
+      if (!t || t === ".") return null;
+      // ",1" / ".1" → 0.1 m (10 cm)
+      if (t.startsWith(".")) t = "0" + t;
       const m = t.match(/^(-?\d+(?:\.\d+)?)\s*(mm|cm|m)?$/i);
       if (!m) return null;
       let v = Number(m[1]);
@@ -1947,6 +1954,48 @@ var ProjetoEletrico = (() => {
       if (u === "mm") v /= 1000;
       else if (u === "cm") v /= 100;
       return v;
+    }
+
+    function normalFromSeg(seg) {
+      if (!seg?.a || !seg?.b) return null;
+      const dx = seg.b.x - seg.a.x;
+      const dy = seg.b.y - seg.a.y;
+      const L = Math.hypot(dx, dy);
+      if (L < 1e-9) return null;
+      // perpendicular unitário à parede de origem
+      return { x: -dy / L, y: dx / L };
+    }
+
+    /** Direção da trena: sempre perpendicular à parede de origem (lado do cursor). */
+    function measureDir(draft, toward) {
+      if (draft?.normal) {
+        let n = { x: draft.normal.x, y: draft.normal.y };
+        if (toward) {
+          const vx = toward.x - draft.a.x;
+          const vy = toward.y - draft.a.y;
+          if (n.x * vx + n.y * vy < 0) n = { x: -n.x, y: -n.y };
+        }
+        return n;
+      }
+      return directionFrom(draft.a, toward);
+    }
+
+    function measureEndPoint(draft, toward, fixedLen) {
+      const dir = measureDir(draft, toward);
+      if (fixedLen != null && Number.isFinite(fixedLen)) {
+        return {
+          x: roundCm(draft.a.x + dir.x * fixedLen),
+          y: roundCm(draft.a.y + dir.y * fixedLen)
+        };
+      }
+      if (!toward) return { x: draft.a.x + dir.x, y: draft.a.y + dir.y };
+      const vx = toward.x - draft.a.x;
+      const vy = toward.y - draft.a.y;
+      const t = Math.max(0, vx * dir.x + vy * dir.y);
+      return {
+        x: roundCm(draft.a.x + dir.x * t),
+        y: roundCm(draft.a.y + dir.y * t)
+      };
     }
 
     function updateVcb() {
@@ -1981,16 +2030,10 @@ var ProjetoEletrico = (() => {
       const len = parseLengthInput(lengthBuffer);
       if (len == null) return false;
       if (tool === "measure" && measureDraft?.a) {
-        const dir = directionFrom(
-          measureDraft.a,
-          measureDraft.b || (hover ? { x: hover.x, y: hover.y } : null)
-        );
-        const b = {
-          x: roundCm(measureDraft.a.x + dir.x * len),
-          y: roundCm(measureDraft.a.y + dir.y * len)
-        };
+        const toward = hover ? { x: hover.rawX ?? hover.x, y: hover.rawY ?? hover.y } : measureDraft.b;
+        const b = measureEndPoint(measureDraft, toward, len);
         clearLengthBuffer();
-        finishMeasure(b);
+        finishMeasure(b, len);
         return true;
       }
       if (tool === "line" && lineDraft?.points?.length) {
@@ -2107,12 +2150,24 @@ var ProjetoEletrico = (() => {
       projeto.guides.push({ id: newId("gd"), axis, value: v });
     }
 
-    function finishMeasure(b) {
+    function finishMeasure(b, fixedLen) {
       if (!measureDraft?.a) return;
       const a = measureDraft.a;
-      const aligned = axisAlignPoint(a, b);
-      const len = dist(a, aligned);
-      if (len < 0.05) {
+      const toward =
+        b ||
+        (hover
+          ? { x: hover.rawX ?? hover.x, y: hover.rawY ?? hover.y }
+          : {
+              x: a.x + (measureDraft.normal?.x || 1),
+              y: a.y + (measureDraft.normal?.y || 0)
+            });
+      const resolved = measureEndPoint(
+        measureDraft,
+        toward,
+        fixedLen != null && fixedLen > 0 ? fixedLen : null
+      );
+      const len = dist(a, resolved);
+      if (len < 0.01) {
         measureDraft = null;
         paint();
         return;
@@ -2120,11 +2175,14 @@ var ProjetoEletrico = (() => {
       projeto.dims.push({
         id: newId("dm"),
         a: { x: a.x, y: a.y },
-        b: { x: aligned.x, y: aligned.y }
+        b: { x: resolved.x, y: resolved.y }
       });
-      // Como no SketchUp: medição H/V cria guia infinita
-      if (Math.abs(aligned.x - a.x) < 1e-6) addGuide("v", a.x);
-      if (Math.abs(aligned.y - a.y) < 1e-6) addGuide("h", a.y);
+      if (Math.abs(resolved.x - a.x) < 1e-6) addGuide("v", a.x);
+      if (Math.abs(resolved.y - a.y) < 1e-6) addGuide("h", a.y);
+      if (measureDraft.normal) {
+        if (Math.abs(measureDraft.normal.x) > 0.7) addGuide("v", resolved.x);
+        if (Math.abs(measureDraft.normal.y) > 0.7) addGuide("h", resolved.y);
+      }
       measureDraft = null;
       clearLengthBuffer();
       save();
@@ -2217,7 +2275,7 @@ var ProjetoEletrico = (() => {
     function onDown(e) {
       const canvas = e.currentTarget;
       const w = worldFromEvent(e, canvas);
-      if (spacePan || e.button === 1) {
+      if (e.button === 1) {
         drag = { type: "pan", x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
         return;
       }
@@ -2249,7 +2307,11 @@ var ProjetoEletrico = (() => {
       if (tool === "measure") {
         const snapped = snapToGeometry({ x: w.rawX, y: w.rawY });
         if (!measureDraft?.a) {
-          measureDraft = { a: { x: snapped.x, y: snapped.y }, b: null };
+          measureDraft = {
+            a: { x: snapped.x, y: snapped.y },
+            b: null,
+            normal: normalFromSeg(snapped.seg) // perpendicular à parede de origem
+          };
           clearLengthBuffer();
           paint();
         } else {
@@ -2494,9 +2556,9 @@ var ProjetoEletrico = (() => {
         const a = projeto.arch.find((x) => x.id === drag.id);
         if (a) {
           const sn = snapToGeometry({ x: w.rawX, y: w.rawY });
+          // NÃO altera ângulo — mantém a rotação escolhida pelo usuário
           a.x = sn.x;
           a.y = sn.y;
-          if (sn.segAngle != null) a.angulo = sn.segAngle;
           if (dist({ x: w.x, y: w.y }, { x: drag.startX, y: drag.startY }) > DRAG_CLICK_M)
             drag.moved = true;
           paint();
@@ -2507,7 +2569,7 @@ var ProjetoEletrico = (() => {
         const a = projeto.arch.find((x) => x.id === drag.id);
         if (a) {
           const sn = snapToGeometry({ x: w.rawX, y: w.rawY });
-          if (sn.segAngle != null) a.angulo = sn.segAngle;
+          // Só cola a ponta; preserva ângulo atual
           const tip = archEndpoints(a).find((ep) => ep.id === drag.handle) || archEndpoints(a)[0];
           a.x = roundCm(a.x + (sn.x - tip.x));
           a.y = roundCm(a.y + (sn.y - tip.y));
@@ -2520,7 +2582,9 @@ var ProjetoEletrico = (() => {
       if (tool === "conduit" && conduitDraft) paint();
       if (tool === "line" && lineDraft) paint();
       if (tool === "measure" && measureDraft?.a) {
-        measureDraft.b = axisAlignPoint(measureDraft.a, snapPointToEdges({ x: w.x, y: w.y }));
+        const toward = { x: w.rawX, y: w.rawY };
+        const typed = parseLengthInput(lengthBuffer);
+        measureDraft.b = measureEndPoint(measureDraft, toward, typed);
         paint();
       }
     }
