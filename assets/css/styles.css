@@ -1069,7 +1069,7 @@ tr:hover td { background: rgba(61,180,255,0.03); }
 .pe-actions { display: flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
 .pe-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-columns: minmax(0, 1fr) 320px;
   gap: 12px;
   align-items: start;
 }
@@ -1102,8 +1102,9 @@ tr:hover td { background: rgba(61,180,255,0.03); }
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: min(70vh, 640px);
+  max-height: min(78vh, 720px);
   overflow: auto;
+  width: 300px;
 }
 .pe-side-block {
   background: rgba(18, 26, 38, 0.72);
@@ -1115,6 +1116,70 @@ tr:hover td { background: rgba(61,180,255,0.03); }
   font-family: var(--display);
   font-size: 0.95rem;
   margin-bottom: 8px;
+}
+.pe-inspector h3 {
+  color: #ff8a65;
+  font-size: 1.05rem;
+}
+.pe-insp-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pe-insp-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+.pe-insp-form input,
+.pe-insp-form select {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 7px 9px;
+  font-size: 0.85rem;
+}
+.pe-insp-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+.pe-float {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px;
+  background: #fff;
+  border: 1px solid #c5ccd6;
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+  max-height: 280px;
+  overflow: auto;
+}
+.pe-float-btn {
+  width: 36px;
+  min-height: 28px;
+  border: 1px solid #d0d5dd;
+  background: #fafbfc;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #222;
+  cursor: pointer;
+  padding: 2px;
+  line-height: 1.1;
+}
+.pe-float-btn:hover { background: #eef5ff; border-color: #7eb6ff; }
+.pe-float-btn.active {
+  background: #0b2d5c;
+  color: #fff;
+  border-color: #0b2d5c;
 }
 .pe-circ {
   padding: 8px 10px;
