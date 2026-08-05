@@ -36,6 +36,42 @@ var ProjetoEletrico = (() => {
     { id: 20, label: "20 A — uso geral/específico", tipoCirc: "tue", potModulo: 600, tensao: 220 }
   ];
 
+  /** Usos típicos de TUE — potência média residencial (W) para pré-preencher */
+  const USOS_TUE = [
+    { id: "microondas", label: "Micro-ondas", pot: 1400, tensao: 220 },
+    { id: "airfryer", label: "Air fryer", pot: 1500, tensao: 220 },
+    { id: "forno", label: "Forno elétrico", pot: 2200, tensao: 220 },
+    { id: "cooktop", label: "Cooktop elétrico", pot: 5500, tensao: 220 },
+    { id: "lava_loucas", label: "Lava-louças", pot: 1800, tensao: 220 },
+    { id: "maquina_lavar", label: "Máquina de lavar", pot: 1200, tensao: 220 },
+    { id: "secadora", label: "Secadora de roupas", pot: 3500, tensao: 220 },
+    { id: "ferro", label: "Ferro de passar", pot: 1200, tensao: 220 },
+    { id: "aquecedor", label: "Aquecedor de ambiente", pot: 1800, tensao: 220 },
+    { id: "torneira", label: "Torneira elétrica", pot: 5500, tensao: 220 },
+    { id: "freezer", label: "Freezer", pot: 350, tensao: 220 },
+    { id: "bomba", label: "Bomba d'água", pot: 750, tensao: 220 },
+    { id: "outro", label: "Outro / livre", pot: 2000, tensao: 220 }
+  ];
+
+  function usoTueById(id) {
+    return USOS_TUE.find((u) => u.id === id) || null;
+  }
+
+  function applyUsoTue(pt, usoId) {
+    if (!pt) return;
+    const uso = usoTueById(usoId);
+    if (!uso) {
+      pt.usoTue = "";
+      return;
+    }
+    pt.usoTue = uso.id;
+    pt.usoCircuito = "tue";
+    if (Number(pt.amperagem) < 20) pt.amperagem = 20;
+    pt.potenciaVA = uso.pot;
+    pt.tensaoV = uso.tensao;
+    pt.label = `TUE · ${uso.label}`;
+  }
+
   const VAR_INTERRUPTOR = [
     { id: "simples", label: "Simples", simb: "S" },
     { id: "duplo", label: "Duplo", simb: "S2" },
@@ -140,6 +176,11 @@ var ProjetoEletrico = (() => {
       out.amperagem = Number(out.amperagem) === 20 ? 20 : 10;
       out.usoCircuito =
         out.usoCircuito || (out.amperagem >= 20 ? "tue" : "tug");
+      if (out.usoCircuito === "tue" || out.amperagem >= 20) {
+        out.usoTue = out.usoTue || "";
+      } else {
+        out.usoTue = "";
+      }
     }
     if (out.tipo === "interruptor") out.variante = out.variante || "simples";
     if (out.tipo === "lampada") out.variante = out.variante || "ponto";
@@ -170,6 +211,10 @@ var ProjetoEletrico = (() => {
   function cargaPonto(p) {
     const n = normalizePoint(p);
     if (n.tipo === "tomada" || n.tipo === "conjugado") {
+      if (n.usoTue) {
+        const uso = usoTueById(n.usoTue);
+        if (uso && !(Number(n.potenciaVA) > 0)) return uso.pot;
+      }
       if (Number(n.potenciaVA) > 0) return Number(n.potenciaVA);
       const amp = AMP_TOMADA.find((a) => a.id === n.amperagem) || AMP_TOMADA[0];
       return amp.potModulo * modulosTomada(n.modulos).modulos;
@@ -194,6 +239,10 @@ var ProjetoEletrico = (() => {
     const n = normalizePoint(p);
     if (n.tipo === "conjugado") return conjugadoById(n.conjugadoId).label;
     if (n.tipo === "tomada") {
+      if (n.usoTue) {
+        const uso = usoTueById(n.usoTue);
+        if (uso) return `TUE · ${uso.label}`;
+      }
       return `Tomada ${modulosTomada(n.modulos).label.split(" ")[0]} ${n.amperagem}A`;
     }
     if (n.tipo === "interruptor") return `Interruptor ${varInterruptor(n.variante).label}`;
@@ -1509,6 +1558,7 @@ var ProjetoEletrico = (() => {
           .join("");
         const showTom = pt.tipo === "tomada" || pt.tipo === "conjugado";
         const showInt = pt.tipo === "interruptor" || pt.tipo === "conjugado";
+        const isTue = showTom && (pt.usoCircuito === "tue" || Number(pt.amperagem) >= 20);
         return `<div class="pe-side-block pe-inspector">
           <h3>${escapeHtml(meta.label)}</h3>
           <div class="pe-insp-form">
@@ -1535,7 +1585,20 @@ var ProjetoEletrico = (() => {
               <select id="pePtUso">
                 <option value="tug" ${pt.usoCircuito !== "tue" ? "selected" : ""}>TUG</option>
                 <option value="tue" ${pt.usoCircuito === "tue" ? "selected" : ""}>TUE</option>
-              </select></label>`
+              </select></label>
+              ${
+                isTue
+                  ? `<label>Uso da TUE (equipamento)
+              <select id="pePtUsoTue">
+                <option value="">— Selecione o uso —</option>
+                ${USOS_TUE.map(
+                  (u) =>
+                    `<option value="${u.id}" ${pt.usoTue === u.id ? "selected" : ""}>${u.label} (~${u.pot} W)</option>`
+                ).join("")}
+              </select></label>
+              <p class="hint">Ao escolher o uso, a potência média é preenchida automaticamente (pode ajustar depois).</p>`
+                  : ""
+              }`
                 : ""
             }
             ${
@@ -1581,7 +1644,7 @@ var ProjetoEletrico = (() => {
               <button type="button" class="btn btn-danger btn-sm" id="pePtDel">Excluir</button>
               <button type="button" class="btn btn-primary btn-sm" id="pePtOk">Atualizar</button>
             </div>
-            <p class="hint">Use o menu vertical ao lado do ponto para trocar variantes/conjugados rápido.</p>
+            <p class="hint">Edite os campos e clique em Atualizar. TUE: escolha o equipamento para potência média automática.</p>
           </div>
         </div>`;
       }
@@ -1659,6 +1722,20 @@ var ProjetoEletrico = (() => {
             p.modulos = document.getElementById("pePtMod")?.value || "simples";
             p.amperagem = Number(document.getElementById("pePtAmp")?.value) || 10;
             p.usoCircuito = document.getElementById("pePtUso")?.value || "tug";
+            const usoTue = document.getElementById("pePtUsoTue")?.value || "";
+            if (p.usoCircuito === "tue" || p.amperagem >= 20) {
+              if (usoTue) {
+                p.usoTue = usoTue;
+                const uso = usoTueById(usoTue);
+                if (uso && !(document.getElementById("pePtLabel")?.value || "").trim())
+                  p.label = `TUE · ${uso.label}`;
+              } else p.usoTue = "";
+            } else {
+              p.usoTue = "";
+            }
+            // potência/tensão do formulário prevalecem (já preenchidas pelo uso TUE)
+            p.potenciaVA = Math.max(0, Number(document.getElementById("pePtPot")?.value) || 0);
+            p.tensaoV = Number(document.getElementById("pePtV")?.value) || p.tensaoV;
           }
           if (p.tipo === "interruptor" || p.tipo === "conjugado") {
             p.variante = document.getElementById("pePtVarInt")?.value || p.variante || "simples";
@@ -1694,6 +1771,37 @@ var ProjetoEletrico = (() => {
           Object.assign(p, normalizePoint(p));
           save();
           refreshSelectionUI();
+        });
+        const syncTueFields = () => {
+          const p = projeto.points.find((x) => x.id === selectedId);
+          if (!p) return;
+          p.amperagem = Number(document.getElementById("pePtAmp")?.value) || p.amperagem;
+          p.usoCircuito = document.getElementById("pePtUso")?.value || p.usoCircuito;
+          if (p.usoCircuito === "tue" && Number(p.amperagem) < 20) p.amperagem = 20;
+          save();
+          refreshSelectionUI();
+        };
+        side.querySelector("#pePtUso")?.addEventListener("change", syncTueFields);
+        side.querySelector("#pePtAmp")?.addEventListener("change", syncTueFields);
+        side.querySelector("#pePtUsoTue")?.addEventListener("change", () => {
+          const p = projeto.points.find((x) => x.id === selectedId);
+          const usoId = document.getElementById("pePtUsoTue")?.value;
+          if (!p) return;
+          if (usoId) {
+            applyUsoTue(p, usoId);
+            const pot = document.getElementById("pePtPot");
+            const ten = document.getElementById("pePtV");
+            const lab = document.getElementById("pePtLabel");
+            if (pot) pot.value = String(p.potenciaVA);
+            if (ten) ten.value = String(p.tensaoV);
+            if (lab) lab.value = p.label;
+            save();
+            paint();
+            ctx.toast?.(`${usoTueById(usoId).label}: ~${p.potenciaVA} W`);
+          } else {
+            p.usoTue = "";
+            save();
+          }
         });
         side.querySelector("#pePtDel")?.addEventListener("click", () => {
           deleteSelected();
@@ -2024,6 +2132,7 @@ var ProjetoEletrico = (() => {
     VAR_INTERRUPTOR,
     VAR_LAMPADA,
     PRESETS_CONJUGADO,
+    USOS_TUE,
     CORES_CIRCUITO,
     createEmpty,
     analisar,
