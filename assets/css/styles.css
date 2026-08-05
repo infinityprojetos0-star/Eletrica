@@ -1107,6 +1107,7 @@ tr:hover td { background: rgba(61,180,255,0.03); }
   overflow: hidden;
   min-height: 420px;
 }
+.pe-canvas-wrap.pe-erase-cursor canvas { cursor: cell; }
 .pe-canvas-wrap canvas {
   display: block;
   width: 100%;

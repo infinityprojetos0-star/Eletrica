@@ -9,8 +9,10 @@ var ProjetoEletrico = (() => {
   const PPM_MIN = 8;
   const PPM_MAX = 480;
   const SNAP_M = 0.35;
+  const WALL_SNAP_M = 0.3;
   const GRID_M = 0.5;
   const DRAG_CLICK_M = 0.15;
+  const ERASE_M = 0.2;
 
   const CORES_CIRCUITO = [
     "#e53935",
@@ -405,6 +407,9 @@ var ProjetoEletrico = (() => {
       arch: [],
       points: [],
       conduits: [],
+      walls: [],
+      dims: [],
+      guides: [],
       symbolScale: 1,
       lastAnalise: null,
       criadoEm: typeof todayISO === "function" ? todayISO() : new Date().toISOString().slice(0, 10),
@@ -1169,6 +1174,9 @@ var ProjetoEletrico = (() => {
   function mount(root, ctx) {
     let projeto = JSON.parse(JSON.stringify(ctx.projeto));
     if (!Array.isArray(projeto.arch)) projeto.arch = [];
+    if (!Array.isArray(projeto.walls)) projeto.walls = [];
+    if (!Array.isArray(projeto.dims)) projeto.dims = [];
+    if (!Array.isArray(projeto.guides)) projeto.guides = [];
     projeto.symbolScale = clampEscala(projeto.symbolScale == null ? 1 : projeto.symbolScale);
     projeto.points = (projeto.points || []).map(normalizePoint);
 
@@ -1180,6 +1188,9 @@ var ProjetoEletrico = (() => {
     let pan = { x: 40, y: 40 };
     let drag = null;
     let conduitDraft = null;
+    let lineDraft = null;
+    let measureDraft = null;
+    let snapGuides = null;
     let selectedId = null;
     let selectedKind = null;
     let hover = null;
@@ -1280,7 +1291,10 @@ var ProjetoEletrico = (() => {
               <button type="button" data-tool="arch" data-arch="janela" class="pe-tool" title="Janela">Janela</button>
               <button type="button" data-tool="arch" data-arch="vao" class="pe-tool" title="Vão">Vão</button>
               <button type="button" data-tool="arch" data-arch="pilar" class="pe-tool" title="Pilar">Pilar</button>
+              <button type="button" data-tool="line" class="pe-tool" title="Linha / parede">Linha</button>
+              <button type="button" data-tool="measure" class="pe-tool" title="Trena (medir e guias)">Trena</button>
               <button type="button" data-tool="conduit" class="pe-tool" title="Conduíte">Conduíte</button>
+              <button type="button" data-tool="erase" class="pe-tool danger" title="Borracha — apaga trecho de linha">Borracha</button>
               <button type="button" data-tool="place" data-tipo="tomada" class="pe-tool" title="Tomada">Tomada</button>
               <button type="button" data-tool="place" data-tipo="interruptor" class="pe-tool" title="Interruptor">Interr.</button>
               <button type="button" data-tool="place" data-tipo="conjugado" class="pe-tool" title="Conjugado int.+tomada">Conjug.</button>
@@ -1328,6 +1342,9 @@ var ProjetoEletrico = (() => {
       }
       if (arch) placeArch = arch;
       conduitDraft = null;
+      lineDraft = null;
+      if (tool !== "measure") measureDraft = null;
+      snapGuides = null;
       root.querySelectorAll(".pe-tool").forEach((btn) => {
         let active = btn.dataset.tool === tool;
         if (tool === "place") active = active && btn.dataset.tipo === placeTipo;
@@ -1335,16 +1352,22 @@ var ProjetoEletrico = (() => {
         btn.classList.toggle("active", !!active);
       });
       const labels = {
-        select: "clique seleciona · arraste para mover · edição no painel à direita",
-        room: "cômodo — arraste para desenhar",
+        select: "clique seleciona · arraste para mover · paredes magnetizam · edição no painel",
+        room: "cômodo — arraste para desenhar (bordas se encaixam nas vizinhas)",
         arch: `${tipoArch(placeArch).label} — clique para inserir (R = girar)`,
+        line: "linha — vértices; Enter ou duplo clique termina",
+        measure: "trena — 1º clique ancora · 2º mede (H/V cria guia) · Esc limpa",
         conduit: "conduíte — vértices; Enter ou duplo clique termina",
+        erase: "borracha — clique/arraste sobre linha, guia ou cota",
         place: `${tipoPonto(placeTipo).label} — escolha a variante nos botões ao lado e clique no grid`,
-        delete: "apagar — clique no elemento"
+        delete: "apagar — clique no elemento inteiro"
       };
       const hint = root.querySelector("#peHint");
       if (hint) hint.textContent = `Grade ${GRID_M} m · ${labels[tool] || tool}`;
+      const wrap = root.querySelector(".pe-canvas-wrap");
+      if (wrap) wrap.classList.toggle("pe-erase-cursor", tool === "erase");
       renderToolbarVariants();
+      paint();
     }
 
     function presetsForTipo(tipo) {
@@ -1490,8 +1513,12 @@ var ProjetoEletrico = (() => {
       if (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA" || document.activeElement?.tagName === "SELECT")
         return;
       if (e.key === "Enter" && tool === "conduit" && conduitDraft?.points?.length >= 2) finishConduit();
+      if (e.key === "Enter" && tool === "line" && lineDraft?.points?.length >= 2) finishLine();
       if (e.key === "Escape") {
         conduitDraft = null;
+        lineDraft = null;
+        measureDraft = null;
+        snapGuides = null;
         drag = null;
         paint();
       }
@@ -1499,9 +1526,10 @@ var ProjetoEletrico = (() => {
       if ((e.key === "r" || e.key === "R") && selectedKind === "arch" && selectedId) {
         const a = projeto.arch.find((x) => x.id === selectedId);
         if (a) {
-          a.angulo = ((a.angulo || 0) + 90) % 360;
+          a.angulo = ((Number(a.angulo) || 0) + 90) % 360;
           save();
           paint();
+          refreshSelectionUI();
         }
       }
       if ((e.key === "Delete" || e.key === "Backspace") && selectedId) deleteSelected();
@@ -1523,6 +1551,244 @@ var ProjetoEletrico = (() => {
       save();
       paint();
       renderSide();
+    }
+
+    function finishLine() {
+      if (!lineDraft || lineDraft.points.length < 2) {
+        lineDraft = null;
+        paint();
+        return;
+      }
+      projeto.walls.push({
+        id: typeof uid === "function" ? uid("wl") : `wl-${Date.now()}`,
+        points: lineDraft.points
+      });
+      lineDraft = null;
+      save();
+      paint();
+      renderSide();
+    }
+
+    function newId(prefix) {
+      return typeof uid === "function" ? uid(prefix) : `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    }
+
+    function collectSnapEdges(excludeRoomId) {
+      const vertical = [];
+      const horizontal = [];
+      (projeto.rooms || []).forEach((o) => {
+        if (o.id === excludeRoomId) return;
+        vertical.push(o.x, o.x + o.w);
+        horizontal.push(o.y, o.y + o.h);
+      });
+      (projeto.walls || []).forEach((wall) => {
+        const pts = wall.points || [];
+        for (let i = 0; i < pts.length; i++) {
+          vertical.push(pts[i].x);
+          horizontal.push(pts[i].y);
+          if (i > 0) {
+            if (Math.abs(pts[i].x - pts[i - 1].x) < 1e-6) vertical.push(pts[i].x);
+            if (Math.abs(pts[i].y - pts[i - 1].y) < 1e-6) horizontal.push(pts[i].y);
+          }
+        }
+      });
+      (projeto.guides || []).forEach((g) => {
+        if (g.axis === "v") vertical.push(g.value);
+        if (g.axis === "h") horizontal.push(g.value);
+      });
+      return { vertical, horizontal };
+    }
+
+    function nearestSnap(value, targets, thr) {
+      let best = null;
+      for (const t of targets) {
+        const d = t - value;
+        if (Math.abs(d) <= thr && (best == null || Math.abs(d) < Math.abs(best.d))) {
+          best = { d, t };
+        }
+      }
+      return best;
+    }
+
+    /** Magnetiza paredes de cômodos (e linhas/guias) para juntar uma na outra. */
+    function applyRoomEdgeSnap(r, mode) {
+      const { vertical, horizontal } = collectSnapEdges(r.id);
+      const thr = WALL_SNAP_M;
+      const guides = { v: [], h: [] };
+      if (mode === "move" || mode === "resize") {
+        const sL = nearestSnap(r.x, vertical, thr);
+        const sR = nearestSnap(r.x + r.w, vertical, thr);
+        if (sL && sR) {
+          if (Math.abs(sL.d) <= Math.abs(sR.d)) {
+            r.x = sL.t;
+            guides.v.push(sL.t);
+          } else {
+            r.x = sR.t - r.w;
+            guides.v.push(sR.t);
+          }
+        } else if (sL) {
+          r.x = sL.t;
+          guides.v.push(sL.t);
+        } else if (sR) {
+          r.x = sR.t - r.w;
+          guides.v.push(sR.t);
+        }
+        const sT = nearestSnap(r.y, horizontal, thr);
+        const sB = nearestSnap(r.y + r.h, horizontal, thr);
+        if (sT && sB) {
+          if (Math.abs(sT.d) <= Math.abs(sB.d)) {
+            r.y = sT.t;
+            guides.h.push(sT.t);
+          } else {
+            r.y = sB.t - r.h;
+            guides.h.push(sB.t);
+          }
+        } else if (sT) {
+          r.y = sT.t;
+          guides.h.push(sT.t);
+        } else if (sB) {
+          r.y = sB.t - r.h;
+          guides.h.push(sB.t);
+        }
+      }
+      snapGuides = guides.v.length || guides.h.length ? guides : null;
+      return r;
+    }
+
+    function snapPointToEdges(pt) {
+      const { vertical, horizontal } = collectSnapEdges(null);
+      const sx = nearestSnap(pt.x, vertical, WALL_SNAP_M);
+      const sy = nearestSnap(pt.y, horizontal, WALL_SNAP_M);
+      const out = { x: pt.x, y: pt.y };
+      const guides = { v: [], h: [] };
+      if (sx) {
+        out.x = sx.t;
+        guides.v.push(sx.t);
+      }
+      if (sy) {
+        out.y = sy.t;
+        guides.h.push(sy.t);
+      }
+      snapGuides = guides.v.length || guides.h.length ? guides : null;
+      return out;
+    }
+
+    function axisAlignPoint(from, to) {
+      const dx = Math.abs(to.x - from.x);
+      const dy = Math.abs(to.y - from.y);
+      if (dx < WALL_SNAP_M && dy >= dx) return { x: from.x, y: to.y };
+      if (dy < WALL_SNAP_M && dx > dy) return { x: to.x, y: from.y };
+      return { x: to.x, y: to.y };
+    }
+
+    function removePolylineSegment(list, makeItem, w, thr, seen) {
+      for (let i = list.length - 1; i >= 0; i--) {
+        const item = list[i];
+        const pts = item.points || [];
+        for (let j = 1; j < pts.length; j++) {
+          const segKey = `${item.id}:${j}`;
+          if (seen?.has(segKey)) continue;
+          if (distToSeg({ x: w.rawX, y: w.rawY }, pts[j - 1], pts[j]) > thr) continue;
+          seen?.add(segKey);
+          const partA = pts.slice(0, j);
+          const partB = pts.slice(j);
+          list.splice(i, 1);
+          if (partA.length >= 2) list.push(makeItem(partA, item));
+          if (partB.length >= 2) list.push(makeItem(partB, item));
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function eraseAt(w, seen) {
+      let changed = false;
+      if (
+        removePolylineSegment(
+          projeto.walls,
+          (points) => ({ id: newId("wl"), points }),
+          w,
+          ERASE_M,
+          seen
+        )
+      )
+        changed = true;
+      else if (
+        removePolylineSegment(
+          projeto.conduits,
+          (points, src) => ({
+            id: newId("cd"),
+            points,
+            circuitoId: src.circuitoId || null,
+            cor: src.cor || "#222"
+          }),
+          w,
+          ERASE_M,
+          seen
+        )
+      )
+        changed = true;
+      else {
+        for (let i = (projeto.dims || []).length - 1; i >= 0; i--) {
+          const d = projeto.dims[i];
+          if (distToSeg({ x: w.rawX, y: w.rawY }, d.a, d.b) <= ERASE_M) {
+            projeto.dims.splice(i, 1);
+            changed = true;
+            break;
+          }
+        }
+        if (!changed) {
+          for (let i = (projeto.guides || []).length - 1; i >= 0; i--) {
+            const g = projeto.guides[i];
+            const hit =
+              g.axis === "v"
+                ? Math.abs(w.rawX - g.value) <= ERASE_M
+                : Math.abs(w.rawY - g.value) <= ERASE_M;
+            if (hit) {
+              projeto.guides.splice(i, 1);
+              changed = true;
+              break;
+            }
+          }
+        }
+      }
+      if (changed) {
+        save();
+        paint();
+        renderSide();
+      }
+      return changed;
+    }
+
+    function addGuide(axis, value) {
+      const v = Math.round(value * 1000) / 1000;
+      if ((projeto.guides || []).some((g) => g.axis === axis && Math.abs(g.value - v) < 1e-6)) return;
+      projeto.guides.push({ id: newId("gd"), axis, value: v });
+    }
+
+    function finishMeasure(b) {
+      if (!measureDraft?.a) return;
+      const a = measureDraft.a;
+      const aligned = axisAlignPoint(a, b);
+      const len = dist(a, aligned);
+      if (len < 0.05) {
+        measureDraft = null;
+        paint();
+        return;
+      }
+      projeto.dims.push({
+        id: newId("dm"),
+        a: { x: a.x, y: a.y },
+        b: { x: aligned.x, y: aligned.y }
+      });
+      // Como no SketchUp: medição H/V cria guia infinita
+      if (Math.abs(aligned.x - a.x) < 1e-6) addGuide("v", a.x);
+      if (Math.abs(aligned.y - a.y) < 1e-6) addGuide("h", a.y);
+      measureDraft = null;
+      save();
+      paint();
+      renderSide();
+      ctx.toast?.(`Medida: ${len.toFixed(2)} m`);
     }
 
     function roomHandle(r, w) {
@@ -1549,6 +1815,14 @@ var ProjetoEletrico = (() => {
         const a = projeto.arch[i];
         if (dist(a, { x: w.rawX, y: w.rawY }) <= 0.4) return { kind: "arch", item: a };
       }
+      for (let i = (projeto.walls || []).length - 1; i >= 0; i--) {
+        const wall = projeto.walls[i];
+        const pts = wall.points || [];
+        for (let j = 1; j < pts.length; j++) {
+          if (distToSeg({ x: w.rawX, y: w.rawY }, pts[j - 1], pts[j]) < 0.2)
+            return { kind: "wall", item: wall };
+        }
+      }
       for (let i = projeto.conduits.length - 1; i >= 0; i--) {
         const c = projeto.conduits[i];
         const pts = c.points || [];
@@ -1556,6 +1830,10 @@ var ProjetoEletrico = (() => {
           if (distToSeg({ x: w.rawX, y: w.rawY }, pts[j - 1], pts[j]) < 0.2)
             return { kind: "conduit", item: c };
         }
+      }
+      for (let i = (projeto.dims || []).length - 1; i >= 0; i--) {
+        const d = projeto.dims[i];
+        if (distToSeg({ x: w.rawX, y: w.rawY }, d.a, d.b) < 0.25) return { kind: "dim", item: d };
       }
       if (selectedKind === "room" && selectedId) {
         const r = projeto.rooms.find((x) => x.id === selectedId);
@@ -1600,13 +1878,40 @@ var ProjetoEletrico = (() => {
         paint();
         return;
       }
+      if (tool === "line") {
+        const snapped = snapPointToEdges({ x: w.x, y: w.y });
+        if (!lineDraft) lineDraft = { points: [snapped] };
+        else {
+          const last = lineDraft.points[lineDraft.points.length - 1];
+          const next = axisAlignPoint(last, snapped);
+          if (dist(last, next) > 0.05) lineDraft.points.push(next);
+        }
+        paint();
+        return;
+      }
+      if (tool === "measure") {
+        const snapped = snapPointToEdges({ x: w.x, y: w.y });
+        if (!measureDraft?.a) {
+          measureDraft = { a: snapped, b: null };
+          paint();
+        } else {
+          finishMeasure(snapped);
+        }
+        return;
+      }
+      if (tool === "erase") {
+        drag = { type: "erase", seen: new Set() };
+        eraseAt(w, drag.seen);
+        return;
+      }
       if (tool === "arch") {
         const meta = tipoArch(placeArch);
+        const snapped = snapPointToEdges({ x: w.x, y: w.y });
         const item = {
           id: typeof uid === "function" ? uid("ar") : `ar-${Date.now()}`,
           tipo: placeArch,
-          x: w.x,
-          y: w.y,
+          x: snapped.x,
+          y: snapped.y,
           largura: meta.larguraDefault,
           angulo: 0
         };
@@ -1701,7 +2006,7 @@ var ProjetoEletrico = (() => {
           startY: w.y,
           moved: false
         };
-      } else if (hit.kind === "conduit") {
+      } else if (hit.kind === "conduit" || hit.kind === "wall" || hit.kind === "dim") {
         refreshSelectionUI();
       }
       paint();
@@ -1726,11 +2031,16 @@ var ProjetoEletrico = (() => {
         paint();
         return;
       }
+      if (drag?.type === "erase") {
+        eraseAt(w, drag.seen);
+        return;
+      }
       if (drag?.type === "move-room") {
         const r = projeto.rooms.find((x) => x.id === drag.id);
         if (r) {
           r.x = w.x - drag.dx;
           r.y = w.y - drag.dy;
+          applyRoomEdgeSnap(r, "move");
           if (dist({ x: w.x, y: w.y }, { x: drag.startX, y: drag.startY }) > DRAG_CLICK_M)
             drag.moved = true;
           paint();
@@ -1752,14 +2062,49 @@ var ProjetoEletrico = (() => {
         r.y = Math.min(y1, y2);
         r.w = Math.max(GRID_M, Math.abs(x2 - x1));
         r.h = Math.max(GRID_M, Math.abs(y2 - y1));
+        // Snap das arestas movidas
+        const { vertical, horizontal } = collectSnapEdges(r.id);
+        if (drag.handle.includes("w")) {
+          const s = nearestSnap(r.x, vertical, WALL_SNAP_M);
+          if (s) {
+            const right = r.x + r.w;
+            r.x = s.t;
+            r.w = Math.max(GRID_M, right - r.x);
+            snapGuides = { v: [s.t], h: [] };
+          }
+        }
+        if (drag.handle.includes("e")) {
+          const s = nearestSnap(r.x + r.w, vertical, WALL_SNAP_M);
+          if (s) {
+            r.w = Math.max(GRID_M, s.t - r.x);
+            snapGuides = { v: [s.t], h: snapGuides?.h || [] };
+          }
+        }
+        if (drag.handle.includes("n")) {
+          const s = nearestSnap(r.y, horizontal, WALL_SNAP_M);
+          if (s) {
+            const bottom = r.y + r.h;
+            r.y = s.t;
+            r.h = Math.max(GRID_M, bottom - r.y);
+            snapGuides = { v: snapGuides?.v || [], h: [s.t] };
+          }
+        }
+        if (drag.handle.includes("s")) {
+          const s = nearestSnap(r.y + r.h, horizontal, WALL_SNAP_M);
+          if (s) {
+            r.h = Math.max(GRID_M, s.t - r.y);
+            snapGuides = { v: snapGuides?.v || [], h: [s.t] };
+          }
+        }
         paint();
         return;
       }
       if (drag?.type === "move-point") {
         const p = projeto.points.find((x) => x.id === drag.id);
         if (p) {
-          p.x = w.x;
-          p.y = w.y;
+          const sn = snapPointToEdges({ x: w.x, y: w.y });
+          p.x = sn.x;
+          p.y = sn.y;
           if (dist({ x: w.x, y: w.y }, { x: drag.startX, y: drag.startY }) > DRAG_CLICK_M)
             drag.moved = true;
           paint();
@@ -1769,8 +2114,9 @@ var ProjetoEletrico = (() => {
       if (drag?.type === "move-arch") {
         const a = projeto.arch.find((x) => x.id === drag.id);
         if (a) {
-          a.x = w.x;
-          a.y = w.y;
+          const sn = snapPointToEdges({ x: w.x, y: w.y });
+          a.x = sn.x;
+          a.y = sn.y;
           if (dist({ x: w.x, y: w.y }, { x: drag.startX, y: drag.startY }) > DRAG_CLICK_M)
             drag.moved = true;
           paint();
@@ -1778,6 +2124,11 @@ var ProjetoEletrico = (() => {
         return;
       }
       if (tool === "conduit" && conduitDraft) paint();
+      if (tool === "line" && lineDraft) paint();
+      if (tool === "measure" && measureDraft?.a) {
+        measureDraft.b = axisAlignPoint(measureDraft.a, snapPointToEdges({ x: w.x, y: w.y }));
+        paint();
+      }
     }
 
     function onUp() {
@@ -1796,6 +2147,7 @@ var ProjetoEletrico = (() => {
             w: ww,
             h: hh
           };
+          applyRoomEdgeSnap(room, "move");
           projeto.rooms.push(room);
           selectedId = room.id;
           selectedKind = "room";
@@ -1806,11 +2158,13 @@ var ProjetoEletrico = (() => {
         drag.type === "resize-room" ||
         drag.type === "move-point" ||
         drag.type === "move-arch" ||
+        drag.type === "erase" ||
         drag.type === "pan"
       ) {
-        if (drag.type !== "pan") save();
+        if (drag.type !== "pan" && drag.type !== "erase") save();
       }
       drag = null;
+      snapGuides = null;
       paint();
       refreshSelectionUI();
     }
@@ -1819,6 +2173,10 @@ var ProjetoEletrico = (() => {
       if (tool === "conduit") {
         e.preventDefault();
         finishConduit();
+      }
+      if (tool === "line") {
+        e.preventDefault();
+        finishLine();
       }
     }
 
@@ -1830,6 +2188,10 @@ var ProjetoEletrico = (() => {
         projeto.rooms = projeto.rooms.filter((r) => r.id !== selectedId);
       if (selectedKind === "conduit")
         projeto.conduits = projeto.conduits.filter((c) => c.id !== selectedId);
+      if (selectedKind === "wall")
+        projeto.walls = (projeto.walls || []).filter((w) => w.id !== selectedId);
+      if (selectedKind === "dim")
+        projeto.dims = (projeto.dims || []).filter((d) => d.id !== selectedId);
       if (selectedKind === "arch")
         projeto.arch = (projeto.arch || []).filter((a) => a.id !== selectedId);
       selectedId = null;
@@ -2013,7 +2375,7 @@ var ProjetoEletrico = (() => {
               <button type="button" class="btn btn-danger btn-sm" id="peArDel">Excluir</button>
               <button type="button" class="btn btn-primary btn-sm" id="peArOk">Atualizar</button>
             </div>
-            <p class="hint">Tecla <strong>R</strong> gira 90°.</p>
+            <p class="hint">Altere o ângulo — gira na hora. Tecla <strong>R</strong> também gira 90°.</p>
           </div>
         </div>`;
       }
@@ -2023,6 +2385,26 @@ var ProjetoEletrico = (() => {
           <h3>Conduíte</h3>
           <p class="hint">Selecionado. Após analisar, recebe cor/rótulo do circuito.</p>
           <button type="button" class="btn btn-danger btn-sm" id="peCdDel">Excluir conduíte</button>
+        </div>`;
+      }
+      if (selectedKind === "wall") {
+        const wall = (projeto.walls || []).find((w) => w.id === selectedId);
+        const len = wall?.points?.length
+          ? polylineLength(wall.points).toFixed(2)
+          : "—";
+        return `<div class="pe-side-block pe-inspector">
+          <h3>Linha / parede</h3>
+          <p class="hint">Comprimento ≈ <strong>${len}</strong> m. Use a borracha para apagar um trecho.</p>
+          <button type="button" class="btn btn-danger btn-sm" id="peWlDel">Excluir linha</button>
+        </div>`;
+      }
+      if (selectedKind === "dim") {
+        const d = (projeto.dims || []).find((x) => x.id === selectedId);
+        const len = d ? dist(d.a, d.b).toFixed(2) : "—";
+        return `<div class="pe-side-block pe-inspector">
+          <h3>Cota (trena)</h3>
+          <p class="hint">Medida: <strong>${len}</strong> m</p>
+          <button type="button" class="btn btn-danger btn-sm" id="peDmDel">Excluir cota</button>
         </div>`;
       }
       return "";
@@ -2153,21 +2535,34 @@ var ProjetoEletrico = (() => {
       }
 
       if (selectedKind === "arch") {
-        side.querySelector("#peArOk")?.addEventListener("click", () => {
+        const applyArch = (toast) => {
           const a = projeto.arch.find((x) => x.id === selectedId);
           if (!a) return;
-          a.tipo = document.getElementById("peArTipo").value;
-          a.largura = Math.max(0.2, Number(document.getElementById("peArL").value) || 0.8);
-          a.angulo = Number(document.getElementById("peArAng").value) || 0;
+          a.tipo = document.getElementById("peArTipo")?.value || a.tipo;
+          a.largura = Math.max(0.2, Number(document.getElementById("peArL")?.value) || 0.8);
+          a.angulo = Number(document.getElementById("peArAng")?.value) || 0;
           save();
           paint();
-          refreshSelectionUI();
-        });
+          if (toast) {
+            refreshSelectionUI();
+            ctx.toast?.("Atualizado");
+          }
+        };
+        side.querySelector("#peArOk")?.addEventListener("click", () => applyArch(true));
+        side.querySelector("#peArAng")?.addEventListener("change", () => applyArch(false));
+        side.querySelector("#peArTipo")?.addEventListener("change", () => applyArch(false));
+        side.querySelector("#peArL")?.addEventListener("change", () => applyArch(false));
         side.querySelector("#peArDel")?.addEventListener("click", () => deleteSelected());
       }
 
       if (selectedKind === "conduit") {
         side.querySelector("#peCdDel")?.addEventListener("click", () => deleteSelected());
+      }
+      if (selectedKind === "wall") {
+        side.querySelector("#peWlDel")?.addEventListener("click", () => deleteSelected());
+      }
+      if (selectedKind === "dim") {
+        side.querySelector("#peDmDel")?.addEventListener("click", () => deleteSelected());
       }
     }
 
@@ -2305,7 +2700,41 @@ var ProjetoEletrico = (() => {
         ctx2.setLineDash([]);
       }
 
-      (projeto.arch || []).forEach((a) => drawArch(ctx2, a));
+      // Guias da trena (estilo SketchUp)
+      (projeto.guides || []).forEach((g) => {
+        ctx2.strokeStyle = "rgba(0, 180, 216, 0.55)";
+        ctx2.lineWidth = 1;
+        ctx2.setLineDash([4, 4]);
+        ctx2.beginPath();
+        if (g.axis === "v") {
+          ctx2.moveTo(g.value * ppm, y0 - 2000);
+          ctx2.lineTo(g.value * ppm, y0 + H + 2000);
+        } else {
+          ctx2.moveTo(x0 - 2000, g.value * ppm);
+          ctx2.lineTo(x0 + W + 2000, g.value * ppm);
+        }
+        ctx2.stroke();
+        ctx2.setLineDash([]);
+      });
+
+      if (snapGuides) {
+        ctx2.strokeStyle = "rgba(245, 124, 0, 0.85)";
+        ctx2.lineWidth = 1.2;
+        ctx2.setLineDash([3, 3]);
+        (snapGuides.v || []).forEach((vx) => {
+          ctx2.beginPath();
+          ctx2.moveTo(vx * ppm, y0 - 500);
+          ctx2.lineTo(vx * ppm, y0 + H + 500);
+          ctx2.stroke();
+        });
+        (snapGuides.h || []).forEach((hy) => {
+          ctx2.beginPath();
+          ctx2.moveTo(x0 - 500, hy * ppm);
+          ctx2.lineTo(x0 + W + 500, hy * ppm);
+          ctx2.stroke();
+        });
+        ctx2.setLineDash([]);
+      }
 
       const drawPoly = (pts, color, width, dash) => {
         if (!pts?.length) return;
@@ -2314,11 +2743,27 @@ var ProjetoEletrico = (() => {
         ctx2.lineWidth = width;
         ctx2.setLineDash(dash || []);
         ctx2.lineJoin = "round";
+        ctx2.lineCap = "round";
         ctx2.moveTo(pts[0].x * ppm, pts[0].y * ppm);
         for (let i = 1; i < pts.length; i++) ctx2.lineTo(pts[i].x * ppm, pts[i].y * ppm);
         ctx2.stroke();
         ctx2.setLineDash([]);
       };
+
+      (projeto.walls || []).forEach((wall) => {
+        const sel = selectedKind === "wall" && selectedId === wall.id;
+        drawPoly(wall.points, sel ? "#f57c00" : "#2c3e50", sel ? 3.2 : 2.4);
+      });
+      if (lineDraft) {
+        drawPoly(lineDraft.points, "#f57c00", 2.2, [5, 4]);
+        if (hover && lineDraft.points.length) {
+          const last = lineDraft.points[lineDraft.points.length - 1];
+          const sn = axisAlignPoint(last, snapPointToEdges({ x: hover.x, y: hover.y }));
+          drawPoly([last, sn], "#f57c00", 1.5, [3, 3]);
+        }
+      }
+
+      (projeto.arch || []).forEach((a) => drawArch(ctx2, a));
 
       projeto.conduits.forEach((c) => {
         const sel = selectedKind === "conduit" && selectedId === c.id;
@@ -2349,6 +2794,49 @@ var ProjetoEletrico = (() => {
         const stroke = circ?.cor || "#111";
         drawNbrSymbol(ctx2, n, ppm, sel, stroke, projeto.symbolScale);
       });
+
+      const drawDim = (a, b, color) => {
+        const len = dist(a, b);
+        if (len < 0.01) return;
+        const mx = ((a.x + b.x) / 2) * ppm;
+        const my = ((a.y + b.y) / 2) * ppm;
+        ctx2.strokeStyle = color;
+        ctx2.fillStyle = color;
+        ctx2.lineWidth = 1.4;
+        ctx2.beginPath();
+        ctx2.moveTo(a.x * ppm, a.y * ppm);
+        ctx2.lineTo(b.x * ppm, b.y * ppm);
+        ctx2.stroke();
+        // marcas nas pontas
+        const ang = Math.atan2(b.y - a.y, b.x - a.x);
+        const tick = 6;
+        [a, b].forEach((p) => {
+          ctx2.beginPath();
+          ctx2.moveTo(p.x * ppm + Math.cos(ang + Math.PI / 2) * tick, p.y * ppm + Math.sin(ang + Math.PI / 2) * tick);
+          ctx2.lineTo(p.x * ppm - Math.cos(ang + Math.PI / 2) * tick, p.y * ppm - Math.sin(ang + Math.PI / 2) * tick);
+          ctx2.stroke();
+        });
+        ctx2.font = "bold 11px Segoe UI, sans-serif";
+        ctx2.textAlign = "center";
+        ctx2.textBaseline = "bottom";
+        ctx2.fillText(`${len.toFixed(2)} m`, mx, my - 4);
+      };
+
+      (projeto.dims || []).forEach((d) => {
+        const sel = selectedKind === "dim" && selectedId === d.id;
+        drawDim(d.a, d.b, sel ? "#f57c00" : "#00838f");
+      });
+
+      if (measureDraft?.a) {
+        const b = measureDraft.b || (hover ? axisAlignPoint(measureDraft.a, { x: hover.x, y: hover.y }) : null);
+        if (b) drawDim(measureDraft.a, b, "#00bcd4");
+        else {
+          ctx2.fillStyle = "#00bcd4";
+          ctx2.beginPath();
+          ctx2.arc(measureDraft.a.x * ppm, measureDraft.a.y * ppm, 4, 0, Math.PI * 2);
+          ctx2.fill();
+        }
+      }
 
       ctx2.restore();
     }
@@ -2391,7 +2879,7 @@ var ProjetoEletrico = (() => {
         ${inspectorHtml()}
         <div class="pe-side-block">
           <h3>Resumo</h3>
-          <p class="hint">${projeto.rooms.length} cômodo(s) · ${(projeto.arch || []).length} porta/janela · ${projeto.points.length} ponto(s) · ${projeto.conduits.length} conduíte(s)</p>
+          <p class="hint">${projeto.rooms.length} cômodo(s) · ${(projeto.arch || []).length} porta/janela · ${(projeto.walls || []).length} linha(s) · ${projeto.points.length} ponto(s) · ${projeto.conduits.length} conduíte(s)</p>
           <p class="source-pill">Base: NBR 5410 (baixa tensão)</p>
         </div>
         <div class="pe-side-block">
