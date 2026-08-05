@@ -3,21 +3,29 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#0d1420" />
+  <meta name="theme-color" content="#1a5695" />
   <meta name="color-scheme" content="dark" />
   <meta name="description" content="VoltES — orçamentos elétricos residenciais e comerciais para o Espírito Santo." />
   <meta name="application-name" content="VoltES" />
-  <meta name="voltes-version" content="1.11.0" />
+  <meta name="voltes-version" content="1.20.0" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="VoltES" />
   <meta name="mobile-web-app-capable" content="yes" />
   <title>VoltES — Orçamentos Elétricos</title>
 
-  <link rel="manifest" href="./manifest.webmanifest" />
-  <link rel="icon" href="./assets/icons/icon.svg" type="image/svg+xml" />
   <link rel="icon" href="./assets/icons/icon-192.png" type="image/png" sizes="192x192" />
+  <link rel="icon" href="./assets/icons/icon-512.png" type="image/png" sizes="512x512" />
   <link rel="apple-touch-icon" href="./assets/icons/apple-touch-icon.png" />
+  <script>
+    /* file:// bloqueia manifest por CORS — só carrega em http/https */
+    if (location.protocol !== "file:") {
+      var m = document.createElement("link");
+      m.rel = "manifest";
+      m.href = "./manifest.webmanifest";
+      document.head.appendChild(m);
+    }
+  </script>
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -28,15 +36,15 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/dist/jspdf.plugin.autotable.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js" defer></script>
 </head>
 <body>
   <div class="app">
     <aside class="sidebar" id="sidebar">
       <div class="brand">
-        <div class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 32 32" fill="none"><path d="M18 2L8 18h7l-1 12 12-18h-7l-1-10z" fill="currentColor"/></svg>
-        </div>
-        <div>
+        <img class="brand-logo" src="./assets/brand/logo-sidebar.png" alt="VoltES" width="64" height="64" />
+        <div class="brand-text">
           <strong>VoltES</strong>
           <span>Espírito Santo</span>
         </div>
@@ -70,6 +78,10 @@
         <button class="nav-item" data-view="calculadoras">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h8M8 10h8M8 14h3M13 14h3M8 18h3M13 18h3"/></svg>
           Calculadoras
+        </button>
+        <button class="nav-item" data-view="projeto">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/><path d="M10 6.5h4M17.5 10v4M10 17.5h4M6.5 10v4"/></svg>
+          Projeto elétrico
         </button>
         <button class="nav-item" data-view="contratos">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
@@ -155,9 +167,11 @@
   <script src="./src/data.js"></script>
   <script src="./src/nbr5410.js"></script>
   <script src="./src/preprojeto.js"></script>
+  <script src="./src/projeto-eletrico.js"></script>
   <script src="./src/firebase.js"></script>
   <script src="./src/cache.js"></script>
   <script src="./src/store.js"></script>
+  <script src="./src/pdf-assets.js"></script>
   <script src="./src/pdf.js"></script>
   <script src="./src/pwa.js"></script>
   <script src="./src/app.js"></script>

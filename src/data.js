@@ -684,7 +684,7 @@ const SEED_PRODUTOS = [
 const SEED_EMPRESA = {
   nome: "VoltES Elétrica",
   cnpj: "",
-  telefone: "(27) 99999-0000",
+  telefone: "(27) 99617-5219",
   email: "contato@voltes.com.br",
   endereco: "Vitória — ES",
   cidade: "Vitória",
@@ -722,6 +722,10 @@ const PAGE_META = {
   produtos: { title: "Materiais", subtitle: "Preços médios de varejo / internet" },
   financeiro: { title: "Financeiro", subtitle: "Lançamentos, deslocamento, alimentação e extras por serviço" },
   calculadoras: { title: "Calculadoras", subtitle: "Ambientes, circuitos NBR 5410 e estimativas auxiliares" },
+  projeto: {
+    title: "Projeto elétrico",
+    subtitle: "Planta, pontos, conduítes e dimensionamento auxiliar NBR 5410"
+  },
   contratos: { title: "Contratos", subtitle: "Manutenção e contratos recorrentes" },
   notas: { title: "Notas fiscais", subtitle: "Emissores e percentual embutido no orçamento" },
   empresa: { title: "Empresa", subtitle: "Dados que aparecem nos PDFs" }

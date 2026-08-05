@@ -23,6 +23,7 @@
     uso: "residencial",
     comodos: []
   };
+  let peEditingId = null;
 
   const icons = {
     tomada: (c = "#3db4ff") => `<svg viewBox="0 0 80 80" fill="none"><rect x="18" y="10" width="44" height="60" rx="10" fill="${c}" opacity=".15" stroke="${c}" stroke-width="2.5"/><circle cx="32" cy="34" r="5" fill="${c}"/><circle cx="48" cy="34" r="5" fill="${c}"/><path d="M40 46v14" stroke="${c}" stroke-width="3" stroke-linecap="round"/><path d="M34 60h12" stroke="${c}" stroke-width="3" stroke-linecap="round"/></svg>`,
@@ -407,11 +408,12 @@
       btn.onclick = () => openOrcamentoForm(s.orcamentos.find((o) => o.id === btn.dataset.edit));
     });
     content.querySelectorAll("[data-pdf]").forEach((btn) => {
-      btn.onclick = () => {
+      btn.onclick = async () => {
         const orc = s.orcamentos.find((o) => o.id === btn.dataset.pdf);
         const cli = s.clientes.find((c) => c.id === orc.clienteId);
         try {
-          PDF.orcamento(orc, cli, s.empresa);
+          await PDF.preloadBrand();
+          await PDF.orcamento(orc, cli, s.empresa);
           toast("PDF gerado");
         } catch (e) {
           toast(e.message);
@@ -463,12 +465,15 @@
       clienteId: s.clientes[0]?.id || "",
       titulo: "",
       data: todayISO(),
-      validade: 30,
+      validade: 15,
       prazo: "7 dias",
       desconto: 0,
       observacoes: "",
       notaFiscal: "a_definir",
       nfEmissorId: "nf-propria",
+      formasPagamento: ["pix"],
+      formaPagamentoObs: "",
+      garantiaMeses: 3,
       itens: []
     };
     let itens = (o.itens || []).map((i) => ({
@@ -604,9 +609,10 @@
         </div>
         <div class="field full"><label>Título</label><input id="oTitulo" value="${o.titulo || ""}" placeholder="Ex: Orçamento de quadro elétrico" /></div>
         <div class="field"><label>Data</label><input id="oData" type="date" value="${o.data || todayISO()}" /></div>
-        <div class="field"><label>Validade (dias)</label><input id="oVal" type="number" value="${o.validade || 30}" /></div>
+        <div class="field"><label>Validade (dias)</label><input id="oVal" type="number" value="${o.validade || 15}" /></div>
         <div class="field"><label>Prazo de entrega</label><input id="oPrazo" value="${o.prazo || "7 dias"}" /></div>
         <div class="field"><label>Desconto (R$)</label><input id="oDesc" type="number" step="0.01" value="${o.desconto || 0}" /></div>
+        <div class="field"><label>Garantia (meses)</label><input id="oGarantia" type="number" min="1" value="${o.garantiaMeses || 3}" /></div>
         <div class="field"><label>Nota fiscal</label>
           <select id="oNotaFiscal">
             <option value="a_definir" ${(o.notaFiscal || "a_definir") === "a_definir" ? "selected" : ""}>A definir</option>
@@ -628,6 +634,24 @@
               .join("")}
           </select>
         </div>
+        <div class="field full">
+          <label>Formas de pagamento (aparecem no PDF)</label>
+          <div style="display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:6px">
+            ${[
+              ["pix", "PIX"],
+              ["dinheiro", "Dinheiro"],
+              ["transferencia", "Transferência"],
+              ["boleto", "Boleto"],
+              ["cartao", "Cartão"]
+            ]
+              .map(
+                ([id, label]) =>
+                  `<label style="display:flex;align-items:center;gap:6px;font-size:.85rem;color:var(--text-muted)"><input type="checkbox" class="oPag" value="${id}" ${(o.formasPagamento || ["pix"]).includes(id) ? "checked" : ""} /> ${label}</label>`
+              )
+              .join("")}
+          </div>
+        </div>
+        <div class="field full"><label>Detalhe da forma de pagamento</label><input id="oPagObs" value="${o.formaPagamentoObs || ""}" placeholder="Ex: 50% entrada + 50% na conclusão" /></div>
         <div class="field full"><label>Observações</label><textarea id="oObs">${o.observacoes || ""}</textarea></div>
       </div>
 
@@ -753,9 +777,12 @@
         clienteId,
         titulo,
         data: document.getElementById("oData").value,
-        validade: Number(document.getElementById("oVal").value) || 30,
+        validade: Number(document.getElementById("oVal").value) || 15,
         prazo: document.getElementById("oPrazo").value.trim(),
         desconto: Number(document.getElementById("oDesc").value) || 0,
+        garantiaMeses: Number(document.getElementById("oGarantia").value) || 3,
+        formasPagamento: [...document.querySelectorAll(".oPag:checked")].map((el) => el.value),
+        formaPagamentoObs: document.getElementById("oPagObs").value.trim(),
         observacoes: document.getElementById("oObs").value.trim(),
         notaFiscal,
         nfEmissorId,
@@ -791,7 +818,10 @@
           <p>Clique em <strong>Mínimo</strong>, <strong>Médio</strong> ou <strong>Máximo</strong> em cada serviço (ou no topo da tela) para definir o valor usado nos orçamentos.</p>
           <div class="source-pill">Modo ativo: ${precoModoLabel(getPrecoModo())}</div>
         </div>
-        <button class="btn btn-primary" id="btnNovoServ">+ Novo serviço</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+          <button class="btn btn-secondary" id="btnPdfPrecos">PDF tabela de preços</button>
+          <button class="btn btn-primary" id="btnNovoServ">+ Novo serviço</button>
+        </div>
       </div>
       <div class="tabs">
         <button class="tab ${servicoFiltro === "todos" ? "active" : ""}" data-f="todos">Todos</button>
@@ -834,6 +864,15 @@
       btn.onclick = () => setPrecoModo(btn.dataset.tier);
     });
     document.getElementById("btnNovoServ").onclick = () => openServicoForm();
+    document.getElementById("btnPdfPrecos").onclick = async () => {
+      try {
+        await PDF.preloadBrand();
+        PDF.tabelaPrecos(getState().servicos, getState().produtos, getState().empresa);
+        toast("PDF da tabela de preços gerado");
+      } catch (e) {
+        toast(e.message || "Falha ao gerar PDF");
+      }
+    };
     content.querySelectorAll("[data-edit]").forEach((btn) => {
       btn.onclick = () => openServicoForm(s.servicos.find((x) => x.id === btn.dataset.edit));
     });
@@ -911,7 +950,10 @@
           <p>Escolha Mínimo, Médio ou Máximo no topo (ou nos cards). Esse valor entra automaticamente no orçamento.</p>
           <div class="source-pill">Modo ativo: ${precoModoLabel(getPrecoModo())}</div>
         </div>
-        <button class="btn btn-primary" id="btnNovoProd">+ Novo material</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+          <button class="btn btn-secondary" id="btnPdfPrecosMat">PDF tabela de preços</button>
+          <button class="btn btn-primary" id="btnNovoProd">+ Novo material</button>
+        </div>
       </div>
       <div class="tabs">
         ${cats.map((c) => `<button class="tab ${produtoCategoria === c ? "active" : ""}" data-cat="${c}">${c}</button>`).join("")}
@@ -945,6 +987,15 @@
       btn.onclick = () => setPrecoModo(btn.dataset.tier);
     });
     document.getElementById("btnNovoProd").onclick = () => openProdutoForm();
+    document.getElementById("btnPdfPrecosMat").onclick = async () => {
+      try {
+        await PDF.preloadBrand();
+        PDF.tabelaPrecos(getState().servicos, getState().produtos, getState().empresa);
+        toast("PDF da tabela de preços gerado");
+      } catch (e) {
+        toast(e.message || "Falha ao gerar PDF");
+      }
+    };
     content.querySelectorAll("[data-edit]").forEach((btn) => {
       btn.onclick = () => openProdutoForm(s.produtos.find((p) => p.id === btn.dataset.edit));
     });
@@ -1229,8 +1280,9 @@
       };
     };
 
-    document.getElementById("btnRel").onclick = () => {
+    document.getElementById("btnRel").onclick = async () => {
       try {
+        await PDF.preloadBrand();
         PDF.financeiro({
           periodo: mes,
           entradas,
@@ -1779,9 +1831,12 @@
         clienteId: document.getElementById("ppCli").value,
         titulo: document.getElementById("ppTitulo").value.trim() || "Pré-projeto elétrico",
         data: todayISO(),
-        validade: 30,
+        validade: 15,
         prazo: "A definir após vistoria",
         desconto: 0,
+        garantiaMeses: 3,
+        formasPagamento: ["pix"],
+        formaPagamentoObs: "",
         observacoes: [
           `Pré-projeto ${resultado.uso}. Circuitos estimados: ${c.total} (ilum. ${c.iluminacao.qtd}, TUG ${c.tug.qtd}, dedicados ${c.dedicados.qtd}, reserva ${c.reserva.qtd}). Quadro ~${c.quadroSugerido} polos.`,
           resultado.disclaimer
@@ -1810,6 +1865,190 @@
       toast("Orçamento criado a partir do pré-projeto");
       navigate("orcamentos");
     };
+  }
+
+  function renderProjetoEletrico() {
+    const projetos = getState().projetos || [];
+
+    if (peEditingId) {
+      const projeto = projetos.find((p) => p.id === peEditingId);
+      if (!projeto) {
+        peEditingId = null;
+        return renderProjetoEletrico();
+      }
+      content.innerHTML = `<div id="peRoot" class="view-enter"></div>`;
+      ProjetoEletrico.mount(document.getElementById("peRoot"), {
+        projeto,
+        produtos: getState().produtos,
+        servicos: getState().servicos,
+        precoModo: getPrecoModo(),
+        openModal,
+        closeModal,
+        toast,
+        onSave: (next) => {
+          const list = (getState().projetos || []).slice();
+          const idx = list.findIndex((p) => p.id === next.id);
+          if (idx >= 0) list[idx] = { ...next, updatedAt: Date.now() };
+          else list.push({ ...next, updatedAt: Date.now() });
+          Store.update({ projetos: list });
+        },
+        onBack: () => {
+          peEditingId = null;
+          render();
+        },
+        onCreateOrcamento: (proj, analise) => {
+          if (!analise?.materiais?.length) return toast("Rode a análise antes");
+          const clientes = getState().clientes;
+          openModal(
+            "Orçamento do projeto elétrico",
+            `
+            <div class="form-grid">
+              <div class="field full"><label>Cliente</label>
+                <select id="peOrcCli">
+                  <option value="">— Sem cliente —</option>
+                  ${clientes.map((c) => `<option value="${c.id}">${c.nome}</option>`).join("")}
+                </select>
+              </div>
+              <div class="field full"><label>Título</label>
+                <input id="peOrcTitulo" value="Projeto elétrico — ${proj.nome}" />
+              </div>
+              <p class="hint" style="grid-column:1/-1">${analise.circuits.length} circuitos · lista NBR 5410 auxiliar</p>
+            </div>
+            `,
+            `<button class="btn btn-secondary" id="peOrcCancel">Cancelar</button>
+             <button class="btn btn-primary" id="peOrcOk">Criar orçamento</button>`
+          );
+          document.getElementById("peOrcCancel").onclick = closeModal;
+          document.getElementById("peOrcOk").onclick = () => {
+            const modo = getPrecoModo();
+            const itens = analise.materiais.map((m) => ({
+              id: uid("item"),
+              tipo: "produto",
+              refId: m.refId || null,
+              nome: m.nome,
+              unidade: m.unidade || "un",
+              qtd: m.qtd,
+              preco: Number(m.preco || 0),
+              precoMin: m.precoMin,
+              precoMed: m.precoMed,
+              precoMax: m.precoMax,
+              nota: m.nota || ""
+            }));
+            const data = {
+              id: uid("orc"),
+              codigo: `ORC-${Date.now().toString(36).toUpperCase()}`,
+              clienteId: document.getElementById("peOrcCli").value || null,
+              titulo: document.getElementById("peOrcTitulo").value.trim() || proj.nome,
+              data: todayISO(),
+              validade: 15,
+              observacoes:
+                `Gerado do projeto elétrico "${proj.nome}". ${analise.disclaimer}`,
+              nf: "nao",
+              precoModo: modo,
+              itens,
+              status: "pendente",
+              origem: "projeto-eletrico",
+              projetoId: proj.id,
+              updatedAt: Date.now()
+            };
+            Store.update({ orcamentos: [...getState().orcamentos, data] });
+            closeModal();
+            toast("Orçamento criado a partir do projeto");
+            peEditingId = null;
+            navigate("orcamentos");
+          };
+        }
+      });
+      return;
+    }
+
+    content.innerHTML = `
+      <div class="view-enter">
+        <div class="hero-note">
+          <div>
+            <h3>Projeto elétrico na planta</h3>
+            <p>Desenhe a planta, coloque os pontos, trace os conduítes até o QDC e analise com critérios da <strong>NBR 5410</strong> (circuitos, bitolas, disjuntores e lista de materiais). Auxiliar — não substitui projeto assinado.</p>
+            <div class="source-pill">NBR 5410 · residencial / comercial · conduítes manuais</div>
+          </div>
+          <button class="btn btn-primary" id="peNovo">+ Novo projeto</button>
+        </div>
+        <div class="card">
+          ${
+            projetos.length
+              ? `<div class="table-wrap"><table>
+                  <thead><tr><th>Nome</th><th>Uso</th><th>Pontos</th><th>Conduítes</th><th>Circuitos</th><th></th></tr></thead>
+                  <tbody>
+                    ${projetos
+                      .slice()
+                      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+                      .map((p) => {
+                        const nCirc = p.lastAnalise?.circuits?.length || "—";
+                        return `<tr>
+                          <td><strong>${p.nome}</strong><div class="hint">${p.criadoEm || ""}</div></td>
+                          <td>${p.uso === "comercial" ? "Comercial" : "Residencial"}</td>
+                          <td>${(p.points || []).length}</td>
+                          <td>${(p.conduits || []).length}</td>
+                          <td>${nCirc}</td>
+                          <td class="actions-cell">
+                            <button class="btn btn-secondary btn-sm" data-open="${p.id}">Abrir</button>
+                            <button class="btn btn-ghost btn-sm" data-del="${p.id}">Excluir</button>
+                          </td>
+                        </tr>`;
+                      })
+                      .join("")}
+                  </tbody>
+                </table></div>`
+              : `<div class="empty"><strong>Nenhum projeto</strong>Crie o primeiro para desenhar a planta no grid.</div>`
+          }
+        </div>
+      </div>
+    `;
+
+    document.getElementById("peNovo").onclick = () => {
+      openModal(
+        "Novo projeto elétrico",
+        `
+        <div class="form-grid">
+          <div class="field full"><label>Nome</label><input id="peNewNome" value="Residência — planta" /></div>
+          <div class="field full"><label>Uso</label>
+            <select id="peNewUso">
+              <option value="residencial">Residencial</option>
+              <option value="comercial">Comercial</option>
+            </select>
+          </div>
+        </div>
+        `,
+        `<button class="btn btn-secondary" id="peNewCancel">Cancelar</button>
+         <button class="btn btn-primary" id="peNewOk">Criar e abrir</button>`
+      );
+      document.getElementById("peNewCancel").onclick = closeModal;
+      document.getElementById("peNewOk").onclick = () => {
+        const p = ProjetoEletrico.createEmpty(
+          document.getElementById("peNewNome").value.trim() || "Novo projeto",
+          document.getElementById("peNewUso").value
+        );
+        Store.update({ projetos: [...(getState().projetos || []), p] });
+        peEditingId = p.id;
+        closeModal();
+        render();
+      };
+    };
+
+    content.querySelectorAll("[data-open]").forEach((btn) => {
+      btn.onclick = () => {
+        peEditingId = btn.dataset.open;
+        render();
+      };
+    });
+    content.querySelectorAll("[data-del]").forEach((btn) => {
+      btn.onclick = () => {
+        if (!confirm("Excluir este projeto?")) return;
+        Store.update({
+          projetos: (getState().projetos || []).filter((p) => p.id !== btn.dataset.del)
+        });
+        render();
+      };
+    });
   }
 
   function renderDimNBR(box) {
@@ -2066,9 +2305,12 @@
         clienteId: document.getElementById("dimCli").value,
         titulo: document.getElementById("dimTitulo").value.trim() || "Dimensionamento NBR 5410",
         data: todayISO(),
-        validade: 30,
+        validade: 15,
         prazo: "7 dias",
         desconto: 0,
+        garantiaMeses: 3,
+        formasPagamento: ["pix"],
+        formaPagamentoObs: "",
         observacoes: [
           `Dimensionamento auxiliar NBR 5410 — ${resultado.tipo.label}.`,
           `Ib ${resultado.ib.toFixed(2)} A · Cabo ${resultado.cabo.secao} mm² · Disjuntor ${resultado.disjuntor.In} A ${resultado.disjuntor.polos}P curva ${resultado.disjuntor.curva}.`,
@@ -2175,10 +2417,11 @@
     };
 
     content.querySelectorAll("[data-pdf]").forEach((btn) => {
-      btn.onclick = () => {
+      btn.onclick = async () => {
         const ct = getState().contratos.find((c) => c.id === btn.dataset.pdf);
         const cli = getState().clientes.find((c) => c.id === ct.clienteId);
         try {
+          await PDF.preloadBrand();
           PDF.contrato(ct, cli, getState().empresa);
           toast("PDF do contrato gerado");
         } catch (e) {
@@ -2372,6 +2615,7 @@
       produtos: renderProdutos,
       financeiro: renderFinanceiro,
       calculadoras: renderCalculadoras,
+      projeto: renderProjetoEletrico,
       contratos: renderContratos,
       notas: renderNotasFiscais,
       empresa: renderEmpresa
@@ -2452,6 +2696,7 @@
   updateSyncChip();
   syncAppVersionUI();
   navigate("dashboard");
+  if (typeof PDF !== "undefined" && PDF.preloadBrand) PDF.preloadBrand();
 
   Store.initCloud().then(() => {
     updateSyncChip();

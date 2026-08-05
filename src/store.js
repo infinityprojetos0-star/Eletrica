@@ -19,7 +19,8 @@ const Store = (() => {
     "lancamentos",
     "despesasServico",
     "despesasGlobais",
-    "emissoresNf"
+    "emissoresNf",
+    "projetos"
   ];
   const CATALOG_KEYS = ["servicos", "produtos"];
   const CATALOG_FIELDS = [
@@ -70,6 +71,7 @@ const Store = (() => {
     servicos: SEED_SERVICOS.map((s) => ({ ...s, updatedAt: 0 })),
     produtos: SEED_PRODUTOS.map((p) => ({ ...p, updatedAt: 0 })),
     orcamentos: [],
+    projetos: [],
     contratos: [],
     lancamentos: [],
     despesasServico: SEED_DESPESAS_SERVICO.map((d) => ({ ...d, updatedAt: 0 })),
@@ -647,7 +649,7 @@ const Store = (() => {
       return;
     }
     const m = path.match(
-      /^(clientes|orcamentos|contratos|lancamentos|despesasServico|despesasGlobais|emissoresNf)\/(.+)$/
+      /^(clientes|orcamentos|contratos|lancamentos|despesasServico|despesasGlobais|emissoresNf|projetos)\/(.+)$/
     );
     if (m) {
       const [, key, id] = m;
@@ -824,6 +826,11 @@ const Store = (() => {
       persistCache();
     } else if (state.despesasFixas?.length) {
       state = { ...state, despesasFixas: [] };
+      persistCache();
+    }
+
+    if (!Array.isArray(state.projetos)) {
+      state = { ...state, projetos: [] };
       persistCache();
     }
 
