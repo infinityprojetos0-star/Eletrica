@@ -1216,6 +1216,7 @@ var ProjetoEletrico = (() => {
     let lineDraft = null;
     let measureDraft = null;
     let snapGuides = null;
+    let inferSnap = null; // {x,y,kind,seg} — travinha SketchUp
     let selectedId = null;
     let selectedKind = null;
     let hover = null;
@@ -1402,6 +1403,7 @@ var ProjetoEletrico = (() => {
       lineDraft = null;
       if (tool !== "measure") measureDraft = null;
       snapGuides = null;
+      inferSnap = null;
       root.querySelectorAll(".pe-tool").forEach((btn) => {
         let active = btn.dataset.tool === tool;
         if (tool === "place") active = active && btn.dataset.tipo === placeTipo;
@@ -1413,7 +1415,7 @@ var ProjetoEletrico = (() => {
         room: "cômodo — arraste para desenhar (bordas se encaixam nas vizinhas)",
         arch: `${tipoArch(placeArch).label} — clique na parede (cola) · pontas laranja · R = girar`,
         line: "linha — vértices; digite distância + Enter; Enter/duplo clique termina",
-        measure: "trena — clique na parede · puxa perpendicular · digite .1 (=10cm) + Enter · Espaço = cursor",
+        measure: "trena — clique na ponta/aresta (travinha) · perpendicular · .1=10cm · pode partir de outra trena",
         conduit: "conduíte — vértices; digite distância + Enter; Enter/duplo clique termina",
         erase: "borracha — clique/arraste sobre linha, guia ou cota",
         place: `${tipoPonto(placeTipo).label} — escolha a variante nos botões ao lado e clique no grid`,
@@ -1643,6 +1645,7 @@ var ProjetoEletrico = (() => {
         lineDraft = null;
         measureDraft = null;
         snapGuides = null;
+        inferSnap = null;
         drag = null;
         clearLengthBuffer();
         paint();
@@ -1655,6 +1658,7 @@ var ProjetoEletrico = (() => {
         lineDraft = null;
         measureDraft = null;
         snapGuides = null;
+        inferSnap = null;
         drag = null;
         clearLengthBuffer();
         selectedId = null;
@@ -1733,6 +1737,11 @@ var ProjetoEletrico = (() => {
     function collectSnapEdges(excludeRoomId) {
       const vertical = [];
       const horizontal = [];
+      const pushPt = (p) => {
+        if (!p) return;
+        vertical.push(p.x);
+        horizontal.push(p.y);
+      };
       (projeto.rooms || []).forEach((o) => {
         if (o.id === excludeRoomId) return;
         vertical.push(o.x, o.x + o.w);
@@ -1741,13 +1750,23 @@ var ProjetoEletrico = (() => {
       (projeto.walls || []).forEach((wall) => {
         const pts = wall.points || [];
         for (let i = 0; i < pts.length; i++) {
-          vertical.push(pts[i].x);
-          horizontal.push(pts[i].y);
+          pushPt(pts[i]);
           if (i > 0) {
             if (Math.abs(pts[i].x - pts[i - 1].x) < 1e-6) vertical.push(pts[i].x);
             if (Math.abs(pts[i].y - pts[i - 1].y) < 1e-6) horizontal.push(pts[i].y);
           }
         }
+      });
+      // Portas/janelas — mesmas referências de aresta que paredes
+      (projeto.arch || []).forEach((a) => {
+        archSnapGeometry(a).points.forEach(pushPt);
+      });
+      // Cotas da trena
+      (projeto.dims || []).forEach((d) => {
+        pushPt(d.a);
+        pushPt(d.b);
+        if (Math.abs(d.a.x - d.b.x) < 1e-6) vertical.push(d.a.x);
+        if (Math.abs(d.a.y - d.b.y) < 1e-6) horizontal.push(d.a.y);
       });
       (projeto.guides || []).forEach((g) => {
         if (g.axis === "v") vertical.push(g.value);
@@ -1812,6 +1831,43 @@ var ProjetoEletrico = (() => {
       return r;
     }
 
+    function archEndpoints(a) {
+      const ang = ((Number(a.angulo) || 0) * Math.PI) / 180;
+      const half = Math.max(0.1, Number(a.largura) || 0.8) / 2;
+      const dx = Math.cos(ang) * half;
+      const dy = Math.sin(ang) * half;
+      return [
+        { id: "a", x: a.x - dx, y: a.y - dy },
+        { id: "b", x: a.x + dx, y: a.y + dy }
+      ];
+    }
+
+    /** Pontos e segmentos de porta/janela (soleira + ponta do arco) — referência CAD. */
+    function archSnapGeometry(a) {
+      const ends = archEndpoints(a);
+      const ang = ((Number(a.angulo) || 0) * Math.PI) / 180;
+      const L = Math.max(0.1, Number(a.largura) || 0.8);
+      const hinge = ends[0];
+      const latch = ends[1];
+      const mid = { x: a.x, y: a.y };
+      // ponta do arco de abertura (local −Y a partir do batente)
+      const tip = {
+        x: hinge.x + Math.cos(ang - Math.PI / 2) * L,
+        y: hinge.y + Math.sin(ang - Math.PI / 2) * L
+      };
+      const points = [
+        { ...hinge, kind: "end", label: "batente" },
+        { ...latch, kind: "end", label: "fecho" },
+        { ...mid, kind: "mid", label: "meio" },
+        { ...tip, kind: "end", label: "arco" }
+      ];
+      const segs = [
+        { a: hinge, b: latch, source: "arch" },
+        { a: hinge, b: tip, source: "arch-swing" }
+      ];
+      return { points, segs };
+    }
+
     function collectSegments(excludeRoomId) {
       const segs = [];
       (projeto.rooms || []).forEach((r) => {
@@ -1819,17 +1875,60 @@ var ProjetoEletrico = (() => {
         const x2 = r.x + r.w;
         const y2 = r.y + r.h;
         segs.push(
-          { a: { x: r.x, y: r.y }, b: { x: x2, y: r.y } },
-          { a: { x: x2, y: r.y }, b: { x: x2, y: y2 } },
-          { a: { x: x2, y: y2 }, b: { x: r.x, y: y2 } },
-          { a: { x: r.x, y: y2 }, b: { x: r.x, y: r.y } }
+          { a: { x: r.x, y: r.y }, b: { x: x2, y: r.y }, source: "room" },
+          { a: { x: x2, y: r.y }, b: { x: x2, y: y2 }, source: "room" },
+          { a: { x: x2, y: y2 }, b: { x: r.x, y: y2 }, source: "room" },
+          { a: { x: r.x, y: y2 }, b: { x: r.x, y: r.y }, source: "room" }
         );
       });
       (projeto.walls || []).forEach((wall) => {
         const pts = wall.points || [];
-        for (let i = 1; i < pts.length; i++) segs.push({ a: pts[i - 1], b: pts[i] });
+        for (let i = 1; i < pts.length; i++)
+          segs.push({ a: pts[i - 1], b: pts[i], source: "wall" });
+      });
+      (projeto.arch || []).forEach((a) => {
+        archSnapGeometry(a).segs.forEach((s) => segs.push(s));
+      });
+      // Trena existente: pode puxar outra trena a partir dela
+      (projeto.dims || []).forEach((d) => {
+        if (d?.a && d?.b) segs.push({ a: d.a, b: d.b, source: "dim" });
+      });
+      // Guias infinitas (trecho longo para snap/normal)
+      (projeto.guides || []).forEach((g) => {
+        if (g.axis === "v")
+          segs.push({
+            a: { x: g.value, y: -200 },
+            b: { x: g.value, y: 200 },
+            source: "guide"
+          });
+        if (g.axis === "h")
+          segs.push({
+            a: { x: -200, y: g.value },
+            b: { x: 200, y: g.value },
+            source: "guide"
+          });
       });
       return segs;
+    }
+
+    function collectInferencePoints(excludeRoomId) {
+      const pts = [];
+      collectSegments(excludeRoomId).forEach((s) => {
+        pts.push({ x: s.a.x, y: s.a.y, kind: "end", seg: s });
+        pts.push({ x: s.b.x, y: s.b.y, kind: "end", seg: s });
+        pts.push({
+          x: (s.a.x + s.b.x) / 2,
+          y: (s.a.y + s.b.y) / 2,
+          kind: "mid",
+          seg: s
+        });
+      });
+      (projeto.arch || []).forEach((a) => {
+        archSnapGeometry(a).points.forEach((p) => {
+          pts.push({ x: p.x, y: p.y, kind: p.kind, seg: archSnapGeometry(a).segs[0], label: p.label });
+        });
+      });
+      return pts;
     }
 
     function projectOnSeg(p, a, b) {
@@ -1843,85 +1942,109 @@ var ProjetoEletrico = (() => {
     function segAngleDeg(a, b) {
       let ang = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
       ang = ((ang % 360) + 360) % 360;
-      // porta/janela: normaliza para 0/90/180/270 (paredes ortogonais)
       const snapped = Math.round(ang / 90) * 90;
       return snapped % 360;
     }
 
-    function archEndpoints(a) {
-      const ang = ((Number(a.angulo) || 0) * Math.PI) / 180;
-      const half = Math.max(0.1, Number(a.largura) || 0.8) / 2;
-      const dx = Math.cos(ang) * half;
-      const dy = Math.sin(ang) * half;
-      return [
-        { id: "a", x: a.x - dx, y: a.y - dy },
-        { id: "b", x: a.x + dx, y: a.y + dy }
-      ];
-    }
-
-    /** Snap em grade 1 cm + arestas/segmentos (pontas colam na parede). */
+    /** Snap em grade 1 cm + arestas/pontas (porta, trena, guia, parede). */
     function snapToGeometry(pt, opts = {}) {
       const thr = opts.thr ?? SEG_SNAP_M;
+      const endThr = opts.endThr ?? Math.max(thr, 0.16);
       const segs = collectSegments(opts.excludeRoomId || null);
+      const inferPts = collectInferencePoints(opts.excludeRoomId || null);
       let best = null;
-      // prioridade: vértices (pontas)
+
+      // 1) Pontos de inferência (extremidade / meio) — prioridade máxima
+      inferPts.forEach((ip) => {
+        const d = dist(pt, ip);
+        const lim = ip.kind === "end" ? endThr : thr;
+        const prio = ip.kind === "end" ? 0 : 1;
+        if (d > lim) return;
+        if (
+          !best ||
+          prio < best.prio ||
+          (prio === best.prio && d < best.d - 1e-9)
+        ) {
+          best = {
+            d,
+            prio,
+            x: ip.x,
+            y: ip.y,
+            kind: ip.kind,
+            segAngle: ip.seg ? segAngleDeg(ip.seg.a, ip.seg.b) : null,
+            seg: ip.seg || null,
+            label: ip.label || null
+          };
+        }
+      });
+
+      // 2) Sobre a aresta
       segs.forEach((s) => {
-        [s.a, s.b].forEach((v) => {
-          const d = dist(pt, v);
-          if (d <= thr && (!best || d < best.d - 1e-9 || (Math.abs(d - best.d) < 1e-9 && best.kind !== "end"))) {
+        const proj = projectOnSeg(pt, s.a, s.b);
+        const d = dist(pt, proj);
+        if (d <= thr && (!best || best.prio > 2 || (best.prio === 2 && d < best.d - 1e-9))) {
+          if (!best || best.prio >= 2) {
             best = {
               d,
-              x: v.x,
-              y: v.y,
-              kind: "end",
+              prio: 2,
+              x: proj.x,
+              y: proj.y,
+              kind: "seg",
               segAngle: segAngleDeg(s.a, s.b),
               seg: s
             };
           }
-        });
-      });
-      segs.forEach((s) => {
-        const proj = projectOnSeg(pt, s.a, s.b);
-        const d = dist(pt, proj);
-        if (d <= thr && (!best || d < best.d - 1e-9)) {
-          best = {
-            d,
-            x: proj.x,
-            y: proj.y,
-            kind: "seg",
-            segAngle: segAngleDeg(s.a, s.b),
-            seg: s
-          };
         }
       });
+
       const { vertical, horizontal } = collectSnapEdges(opts.excludeRoomId || null);
       const sx = nearestSnap(pt.x, vertical, WALL_SNAP_M);
       const sy = nearestSnap(pt.y, horizontal, WALL_SNAP_M);
       const guides = { v: [], h: [] };
-      let out = { x: roundCm(pt.x), y: roundCm(pt.y), segAngle: null, kind: "grid" };
+      let out = { x: roundCm(pt.x), y: roundCm(pt.y), segAngle: null, kind: "grid", seg: null };
+
       if (best) {
         out = {
           x: roundCm(best.x),
           y: roundCm(best.y),
           segAngle: best.segAngle,
           kind: best.kind,
-          seg: best.seg
+          seg: best.seg,
+          label: best.label || null
         };
-        if (Math.abs(best.seg.a.x - best.seg.b.x) < 1e-6) guides.v.push(best.seg.a.x);
-        if (Math.abs(best.seg.a.y - best.seg.b.y) < 1e-6) guides.h.push(best.seg.a.y);
+        if (best.seg) {
+          if (Math.abs(best.seg.a.x - best.seg.b.x) < 1e-6) guides.v.push(best.seg.a.x);
+          if (Math.abs(best.seg.a.y - best.seg.b.y) < 1e-6) guides.h.push(best.seg.a.y);
+        }
       } else {
         if (sx) {
           out.x = sx.t;
           guides.v.push(sx.t);
-          out.kind = "edge";
+          out.kind = "guide";
+          out.seg = {
+            a: { x: sx.t, y: pt.y - 1 },
+            b: { x: sx.t, y: pt.y + 1 },
+            source: "guide"
+          };
         }
         if (sy) {
           out.y = sy.t;
           guides.h.push(sy.t);
-          out.kind = "edge";
+          out.kind = "guide";
+          out.seg = {
+            a: { x: pt.x - 1, y: sy.t },
+            b: { x: pt.x + 1, y: sy.t },
+            source: "guide"
+          };
         }
       }
+
       snapGuides = guides.v.length || guides.h.length ? guides : null;
+      if (out.kind && out.kind !== "grid") {
+        inferSnap = { x: out.x, y: out.y, kind: out.kind, seg: out.seg, label: out.label };
+      } else {
+        inferSnap = null;
+      }
       return out;
     }
 
@@ -2310,10 +2433,19 @@ var ProjetoEletrico = (() => {
           measureDraft = {
             a: { x: snapped.x, y: snapped.y },
             b: null,
-            normal: normalFromSeg(snapped.seg) // perpendicular à parede de origem
+            // perpendicular à aresta de origem (parede, porta, trena ou guia)
+            normal: normalFromSeg(snapped.seg)
           };
           clearLengthBuffer();
           paint();
+          if (snapped.kind === "end" || snapped.kind === "mid")
+            ctx.toast?.(
+              snapped.label
+                ? `Ancorado: ${snapped.label}`
+                : snapped.seg?.source === "dim"
+                  ? "Ancorado na trena"
+                  : "Ancorado na ponta"
+            );
         } else {
           finishMeasure({ x: snapped.x, y: snapped.y });
         }
@@ -2580,11 +2712,22 @@ var ProjetoEletrico = (() => {
         return;
       }
       if (tool === "conduit" && conduitDraft) paint();
-      if (tool === "line" && lineDraft) paint();
-      if (tool === "measure" && measureDraft?.a) {
-        const toward = { x: w.rawX, y: w.rawY };
-        const typed = parseLengthInput(lengthBuffer);
-        measureDraft.b = measureEndPoint(measureDraft, toward, typed);
+      if (tool === "line") {
+        snapToGeometry({ x: w.rawX, y: w.rawY });
+        paint();
+      }
+      if (tool === "measure") {
+        const sn = snapToGeometry({ x: w.rawX, y: w.rawY });
+        if (measureDraft?.a) {
+          const toward = { x: sn.x, y: sn.y };
+          const typed = parseLengthInput(lengthBuffer);
+          // 2º ponto também magnetiza em pontas/arestas (porta, trena, guia…)
+          if (!typed && (sn.kind === "end" || sn.kind === "mid")) {
+            measureDraft.b = { x: sn.x, y: sn.y };
+          } else {
+            measureDraft.b = measureEndPoint(measureDraft, toward, typed);
+          }
+        }
         paint();
       }
     }
@@ -3333,7 +3476,15 @@ var ProjetoEletrico = (() => {
       });
 
       if (measureDraft?.a) {
-        const b = measureDraft.b || (hover ? axisAlignPoint(measureDraft.a, { x: hover.x, y: hover.y }) : null);
+        const b =
+          measureDraft.b ||
+          (hover
+            ? measureEndPoint(
+                measureDraft,
+                { x: hover.rawX ?? hover.x, y: hover.rawY ?? hover.y },
+                parseLengthInput(lengthBuffer)
+              )
+            : null);
         if (b) drawDim(measureDraft.a, b, "#00bcd4");
         else {
           ctx2.fillStyle = "#00bcd4";
@@ -3341,6 +3492,91 @@ var ProjetoEletrico = (() => {
           ctx2.arc(measureDraft.a.x * ppm, measureDraft.a.y * ppm, 4, 0, Math.PI * 2);
           ctx2.fill();
         }
+      }
+
+      // Referências de aresta (travinhas) — estilo SketchUp/CAD
+      if (tool === "measure" || tool === "line") {
+        collectInferencePoints().forEach((p) => {
+          if (p.kind !== "end" && p.kind !== "mid") return;
+          // evita poluir: só extremidades e meios de porta/trena/parede
+          if (p.seg?.source === "guide") return;
+          const px = p.x * ppm;
+          const py = p.y * ppm;
+          ctx2.save();
+          if (p.kind === "mid") {
+            ctx2.strokeStyle = "rgba(0, 188, 212, 0.55)";
+            ctx2.lineWidth = 1.5;
+            ctx2.beginPath();
+            ctx2.moveTo(px, py - 4);
+            ctx2.lineTo(px + 4, py);
+            ctx2.lineTo(px, py + 4);
+            ctx2.lineTo(px - 4, py);
+            ctx2.closePath();
+            ctx2.stroke();
+          } else {
+            ctx2.fillStyle = "rgba(0, 200, 83, 0.35)";
+            ctx2.strokeStyle = "rgba(0, 160, 70, 0.9)";
+            ctx2.lineWidth = 1.2;
+            ctx2.fillRect(px - 3, py - 3, 6, 6);
+            ctx2.strokeRect(px - 3, py - 3, 6, 6);
+          }
+          ctx2.restore();
+        });
+      }
+
+      if (inferSnap && inferSnap.kind !== "grid") {
+        const px = inferSnap.x * ppm;
+        const py = inferSnap.y * ppm;
+        ctx2.save();
+        if (inferSnap.kind === "end") {
+          // quadrado verde — extremidade (SketchUp)
+          ctx2.fillStyle = "rgba(0, 230, 118, 0.35)";
+          ctx2.strokeStyle = "#00c853";
+          ctx2.lineWidth = 2.2;
+          ctx2.fillRect(px - 6, py - 6, 12, 12);
+          ctx2.strokeRect(px - 6, py - 6, 12, 12);
+        } else if (inferSnap.kind === "mid") {
+          // losango ciano — meio
+          ctx2.fillStyle = "rgba(0, 229, 255, 0.35)";
+          ctx2.strokeStyle = "#00e5ff";
+          ctx2.lineWidth = 2.2;
+          ctx2.beginPath();
+          ctx2.moveTo(px, py - 8);
+          ctx2.lineTo(px + 8, py);
+          ctx2.lineTo(px, py + 8);
+          ctx2.lineTo(px - 8, py);
+          ctx2.closePath();
+          ctx2.fill();
+          ctx2.stroke();
+        } else {
+          // travinha vermelha — sobre a aresta
+          ctx2.strokeStyle = "#ff1744";
+          ctx2.lineWidth = 2;
+          let tx = 7;
+          let ty = 0;
+          if (inferSnap.seg) {
+            const dx = inferSnap.seg.b.x - inferSnap.seg.a.x;
+            const dy = inferSnap.seg.b.y - inferSnap.seg.a.y;
+            const L = Math.hypot(dx, dy) || 1;
+            tx = (-dy / L) * 7;
+            ty = (dx / L) * 7;
+          }
+          ctx2.beginPath();
+          ctx2.moveTo(px - tx, py - ty);
+          ctx2.lineTo(px + tx, py + ty);
+          ctx2.stroke();
+          ctx2.beginPath();
+          ctx2.arc(px, py, 3, 0, Math.PI * 2);
+          ctx2.fillStyle = "#ff1744";
+          ctx2.fill();
+        }
+        if (inferSnap.label) {
+          ctx2.fillStyle = "#00695c";
+          ctx2.font = "bold 10px Segoe UI, sans-serif";
+          ctx2.textAlign = "left";
+          ctx2.fillText(inferSnap.label, px + 10, py - 8);
+        }
+        ctx2.restore();
       }
 
       ctx2.restore();
