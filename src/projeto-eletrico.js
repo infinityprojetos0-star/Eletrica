@@ -9,10 +9,35 @@ var ProjetoEletrico = (() => {
   const PPM_MIN = 8;
   const PPM_MAX = 480;
   const SNAP_M = 0.35;
-  const WALL_SNAP_M = 0.3;
-  const GRID_M = 0.5;
-  const DRAG_CLICK_M = 0.15;
-  const ERASE_M = 0.2;
+  const WALL_SNAP_M = 0.08;
+  const SEG_SNAP_M = 0.12;
+  const GRID_M = 0.01; // snap / grade lógica: 1 cm
+  const ROOM_MIN_M = 0.5;
+  const DRAG_CLICK_M = 0.05;
+  const ERASE_M = 0.12;
+  const HOTKEY_STORAGE = "voltes-pe-hotkeys";
+  const DEFAULT_HOTKEYS = {
+    select: "v",
+    room: "c",
+    line: "l",
+    measure: "t",
+    erase: "b",
+    conduit: "u",
+    porta: "p",
+    janela: "j",
+    delete: "x"
+  };
+  const HOTKEY_DEFS = [
+    { id: "select", label: "Mover", tool: "select" },
+    { id: "room", label: "Cômodo", tool: "room" },
+    { id: "line", label: "Linha", tool: "line" },
+    { id: "measure", label: "Trena", tool: "measure" },
+    { id: "erase", label: "Borracha", tool: "erase" },
+    { id: "conduit", label: "Conduíte", tool: "conduit" },
+    { id: "porta", label: "Porta", tool: "arch", arch: "porta" },
+    { id: "janela", label: "Janela", tool: "arch", arch: "janela" },
+    { id: "delete", label: "Apagar", tool: "delete" }
+  ];
 
   const CORES_CIRCUITO = [
     "#e53935",
@@ -1195,19 +1220,51 @@ var ProjetoEletrico = (() => {
     let selectedKind = null;
     let hover = null;
     let spacePan = false;
+    let lengthBuffer = "";
+    let hotkeys = loadHotkeys();
+    let capturingHotkeyId = null;
 
     const save = () => {
       projeto.updatedAt = Date.now();
       ctx.onSave?.(projeto);
     };
 
+    function loadHotkeys() {
+      try {
+        const raw = localStorage.getItem(HOTKEY_STORAGE);
+        if (!raw) return { ...DEFAULT_HOTKEYS };
+        return { ...DEFAULT_HOTKEYS, ...JSON.parse(raw) };
+      } catch {
+        return { ...DEFAULT_HOTKEYS };
+      }
+    }
+
+    function persistHotkeys() {
+      try {
+        localStorage.setItem(HOTKEY_STORAGE, JSON.stringify(hotkeys));
+      } catch {
+        /* ignore */
+      }
+    }
+
+    function roundCm(v) {
+      return Math.round(Number(v) / GRID_M) * GRID_M;
+    }
+
+    function visualGridStep() {
+      const minPx = 9;
+      const steps = [0.01, 0.02, 0.05, 0.1, 0.25, 0.5, 1, 2, 5];
+      for (const s of steps) if (s * ppm >= minPx) return s;
+      return 5;
+    }
+
     const worldFromEvent = (e, canvas) => {
       const r = canvas.getBoundingClientRect();
       const x = (e.clientX - r.left - pan.x) / ppm;
       const y = (e.clientY - r.top - pan.y) / ppm;
       return {
-        x: Math.round(x / GRID_M) * GRID_M,
-        y: Math.round(y / GRID_M) * GRID_M,
+        x: roundCm(x),
+        y: roundCm(y),
         rawX: x,
         rawY: y
       };
@@ -1322,7 +1379,8 @@ var ProjetoEletrico = (() => {
           <div class="pe-body">
             <div class="pe-canvas-wrap">
               <canvas id="peCanvas" width="900" height="560"></canvas>
-              <div class="pe-hint" id="peHint">Grade ${GRID_M} m · Clique = selecionar · Arraste = mover · Edite no painel à direita</div>
+              <div class="pe-hint" id="peHint">Grade 1 cm · Clique = selecionar · Arraste = mover · Edite no painel à direita</div>
+              <div class="pe-vcb" id="peVcb" hidden title="Digite a distância e Enter (ex: 1.2 ou 80cm)"></div>
             </div>
             <aside class="pe-side" id="peSide"></aside>
           </div>
@@ -1354,18 +1412,27 @@ var ProjetoEletrico = (() => {
       const labels = {
         select: "clique seleciona · arraste para mover · paredes magnetizam · edição no painel",
         room: "cômodo — arraste para desenhar (bordas se encaixam nas vizinhas)",
-        arch: `${tipoArch(placeArch).label} — clique para inserir (R = girar)`,
-        line: "linha — vértices; Enter ou duplo clique termina",
-        measure: "trena — 1º clique ancora · 2º mede (H/V cria guia) · Esc limpa",
-        conduit: "conduíte — vértices; Enter ou duplo clique termina",
+        arch: `${tipoArch(placeArch).label} — clique na parede (cola) · pontas laranja · R = girar`,
+        line: "linha — vértices; digite distância + Enter; Enter/duplo clique termina",
+        measure: "trena — clique ancora · mova · digite distância (1.2 ou 80cm) + Enter · 2º clique também mede",
+        conduit: "conduíte — vértices; digite distância + Enter; Enter/duplo clique termina",
         erase: "borracha — clique/arraste sobre linha, guia ou cota",
         place: `${tipoPonto(placeTipo).label} — escolha a variante nos botões ao lado e clique no grid`,
         delete: "apagar — clique no elemento inteiro"
       };
       const hint = root.querySelector("#peHint");
-      if (hint) hint.textContent = `Grade ${GRID_M} m · ${labels[tool] || tool}`;
+      if (hint) {
+        const hk = HOTKEY_DEFS.find(
+          (d) =>
+            d.tool === tool &&
+            (tool !== "arch" || d.arch === placeArch)
+        );
+        const key = hk && hotkeys[hk.id] ? ` [${String(hotkeys[hk.id]).toUpperCase()}]` : "";
+        hint.textContent = `Grade 1 cm · ${labels[tool] || tool}${key}`;
+      }
       const wrap = root.querySelector(".pe-canvas-wrap");
       if (wrap) wrap.classList.toggle("pe-erase-cursor", tool === "erase");
+      clearLengthBuffer();
       renderToolbarVariants();
       paint();
     }
@@ -1510,19 +1577,89 @@ var ProjetoEletrico = (() => {
 
     function onKey(e) {
       if (!document.body.contains(root)) return;
-      if (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA" || document.activeElement?.tagName === "SELECT")
+      const tag = document.activeElement?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      // Captura de atalho no painel
+      if (capturingHotkeyId) {
+        e.preventDefault();
+        if (e.key === "Escape") {
+          capturingHotkeyId = null;
+          refreshSelectionUI();
+          return;
+        }
+        if (e.key.length === 1 && /[a-z0-9]/i.test(e.key)) {
+          const k = e.key.toLowerCase();
+          Object.keys(hotkeys).forEach((id) => {
+            if (hotkeys[id] === k && id !== capturingHotkeyId) hotkeys[id] = "";
+          });
+          hotkeys[capturingHotkeyId] = k;
+          persistHotkeys();
+          capturingHotkeyId = null;
+          refreshSelectionUI();
+          ctx.toast?.("Atalho salvo");
+        }
         return;
-      if (e.key === "Enter" && tool === "conduit" && conduitDraft?.points?.length >= 2) finishConduit();
-      if (e.key === "Enter" && tool === "line" && lineDraft?.points?.length >= 2) finishLine();
+      }
+
+      // Digitação de distância (SketchUp): 1.5 / 80cm / 1200mm
+      const typingLen =
+        (tool === "measure" && measureDraft?.a) ||
+        (tool === "line" && lineDraft?.points?.length) ||
+        (tool === "conduit" && conduitDraft?.points?.length);
+      if (typingLen) {
+        if (/^[0-9]$/.test(e.key) || e.key === "." || e.key === ",") {
+          e.preventDefault();
+          lengthBuffer += e.key === "," ? "." : e.key;
+          updateVcb();
+          // preview na trena
+          if (tool === "measure" && measureDraft?.a) {
+            const len = parseLengthInput(lengthBuffer);
+            if (len != null) {
+              const dir = directionFrom(
+                measureDraft.a,
+                hover ? { x: hover.x, y: hover.y } : measureDraft.b
+              );
+              measureDraft.b = {
+                x: roundCm(measureDraft.a.x + dir.x * len),
+                y: roundCm(measureDraft.a.y + dir.y * len)
+              };
+              paint();
+            }
+          }
+          return;
+        }
+        if (e.key === "Backspace" && lengthBuffer) {
+          e.preventDefault();
+          lengthBuffer = lengthBuffer.slice(0, -1);
+          updateVcb();
+          paint();
+          return;
+        }
+        if (e.key === "Enter" && lengthBuffer) {
+          e.preventDefault();
+          if (applyTypedLength()) return;
+        }
+      }
+
+      if (e.key === "Enter" && !lengthBuffer && tool === "conduit" && conduitDraft?.points?.length >= 2)
+        finishConduit();
+      if (e.key === "Enter" && !lengthBuffer && tool === "line" && lineDraft?.points?.length >= 2)
+        finishLine();
       if (e.key === "Escape") {
         conduitDraft = null;
         lineDraft = null;
         measureDraft = null;
         snapGuides = null;
         drag = null;
+        clearLengthBuffer();
         paint();
+        return;
       }
-      if (e.key === " ") spacePan = true;
+      if (e.key === " ") {
+        spacePan = true;
+        return;
+      }
       if ((e.key === "r" || e.key === "R") && selectedKind === "arch" && selectedId) {
         const a = projeto.arch.find((x) => x.id === selectedId);
         if (a) {
@@ -1531,8 +1668,23 @@ var ProjetoEletrico = (() => {
           paint();
           refreshSelectionUI();
         }
+        return;
       }
-      if ((e.key === "Delete" || e.key === "Backspace") && selectedId) deleteSelected();
+      if ((e.key === "Delete" || e.key === "Backspace") && selectedId && !lengthBuffer) {
+        deleteSelected();
+        return;
+      }
+
+      // Atalhos de ferramenta
+      if (e.key.length === 1 && /[a-z0-9]/i.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const k = e.key.toLowerCase();
+        const def = HOTKEY_DEFS.find((d) => (hotkeys[d.id] || "").toLowerCase() === k);
+        if (def) {
+          e.preventDefault();
+          clearLengthBuffer();
+          activateHotkey(def);
+        }
+      }
     }
 
     function finishConduit() {
@@ -1655,30 +1807,219 @@ var ProjetoEletrico = (() => {
       return r;
     }
 
-    function snapPointToEdges(pt) {
-      const { vertical, horizontal } = collectSnapEdges(null);
+    function collectSegments(excludeRoomId) {
+      const segs = [];
+      (projeto.rooms || []).forEach((r) => {
+        if (r.id === excludeRoomId) return;
+        const x2 = r.x + r.w;
+        const y2 = r.y + r.h;
+        segs.push(
+          { a: { x: r.x, y: r.y }, b: { x: x2, y: r.y } },
+          { a: { x: x2, y: r.y }, b: { x: x2, y: y2 } },
+          { a: { x: x2, y: y2 }, b: { x: r.x, y: y2 } },
+          { a: { x: r.x, y: y2 }, b: { x: r.x, y: r.y } }
+        );
+      });
+      (projeto.walls || []).forEach((wall) => {
+        const pts = wall.points || [];
+        for (let i = 1; i < pts.length; i++) segs.push({ a: pts[i - 1], b: pts[i] });
+      });
+      return segs;
+    }
+
+    function projectOnSeg(p, a, b) {
+      const l2 = (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
+      if (l2 < 1e-12) return { x: a.x, y: a.y, t: 0 };
+      let t = ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / l2;
+      t = Math.max(0, Math.min(1, t));
+      return { x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y), t };
+    }
+
+    function segAngleDeg(a, b) {
+      let ang = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
+      ang = ((ang % 360) + 360) % 360;
+      // porta/janela: normaliza para 0/90/180/270 (paredes ortogonais)
+      const snapped = Math.round(ang / 90) * 90;
+      return snapped % 360;
+    }
+
+    function archEndpoints(a) {
+      const ang = ((Number(a.angulo) || 0) * Math.PI) / 180;
+      const half = Math.max(0.1, Number(a.largura) || 0.8) / 2;
+      const dx = Math.cos(ang) * half;
+      const dy = Math.sin(ang) * half;
+      return [
+        { id: "a", x: a.x - dx, y: a.y - dy },
+        { id: "b", x: a.x + dx, y: a.y + dy }
+      ];
+    }
+
+    /** Snap em grade 1 cm + arestas/segmentos (pontas colam na parede). */
+    function snapToGeometry(pt, opts = {}) {
+      const thr = opts.thr ?? SEG_SNAP_M;
+      const segs = collectSegments(opts.excludeRoomId || null);
+      let best = null;
+      // prioridade: vértices (pontas)
+      segs.forEach((s) => {
+        [s.a, s.b].forEach((v) => {
+          const d = dist(pt, v);
+          if (d <= thr && (!best || d < best.d - 1e-9 || (Math.abs(d - best.d) < 1e-9 && best.kind !== "end"))) {
+            best = {
+              d,
+              x: v.x,
+              y: v.y,
+              kind: "end",
+              segAngle: segAngleDeg(s.a, s.b),
+              seg: s
+            };
+          }
+        });
+      });
+      segs.forEach((s) => {
+        const proj = projectOnSeg(pt, s.a, s.b);
+        const d = dist(pt, proj);
+        if (d <= thr && (!best || d < best.d - 1e-9)) {
+          best = {
+            d,
+            x: proj.x,
+            y: proj.y,
+            kind: "seg",
+            segAngle: segAngleDeg(s.a, s.b),
+            seg: s
+          };
+        }
+      });
+      const { vertical, horizontal } = collectSnapEdges(opts.excludeRoomId || null);
       const sx = nearestSnap(pt.x, vertical, WALL_SNAP_M);
       const sy = nearestSnap(pt.y, horizontal, WALL_SNAP_M);
-      const out = { x: pt.x, y: pt.y };
       const guides = { v: [], h: [] };
-      if (sx) {
-        out.x = sx.t;
-        guides.v.push(sx.t);
-      }
-      if (sy) {
-        out.y = sy.t;
-        guides.h.push(sy.t);
+      let out = { x: roundCm(pt.x), y: roundCm(pt.y), segAngle: null, kind: "grid" };
+      if (best) {
+        out = {
+          x: roundCm(best.x),
+          y: roundCm(best.y),
+          segAngle: best.segAngle,
+          kind: best.kind,
+          seg: best.seg
+        };
+        if (Math.abs(best.seg.a.x - best.seg.b.x) < 1e-6) guides.v.push(best.seg.a.x);
+        if (Math.abs(best.seg.a.y - best.seg.b.y) < 1e-6) guides.h.push(best.seg.a.y);
+      } else {
+        if (sx) {
+          out.x = sx.t;
+          guides.v.push(sx.t);
+          out.kind = "edge";
+        }
+        if (sy) {
+          out.y = sy.t;
+          guides.h.push(sy.t);
+          out.kind = "edge";
+        }
       }
       snapGuides = guides.v.length || guides.h.length ? guides : null;
       return out;
     }
 
+    function snapPointToEdges(pt) {
+      return snapToGeometry(pt);
+    }
+
     function axisAlignPoint(from, to) {
       const dx = Math.abs(to.x - from.x);
       const dy = Math.abs(to.y - from.y);
-      if (dx < WALL_SNAP_M && dy >= dx) return { x: from.x, y: to.y };
-      if (dy < WALL_SNAP_M && dx > dy) return { x: to.x, y: from.y };
+      const thr = Math.max(WALL_SNAP_M, GRID_M * 2);
+      if (dx < thr && dy >= dx) return { x: from.x, y: to.y };
+      if (dy < thr && dx > dy) return { x: to.x, y: from.y };
       return { x: to.x, y: to.y };
+    }
+
+    function parseLengthInput(s) {
+      const t = String(s || "")
+        .trim()
+        .toLowerCase()
+        .replace(",", ".");
+      if (!t) return null;
+      const m = t.match(/^(-?\d+(?:\.\d+)?)\s*(mm|cm|m)?$/i);
+      if (!m) return null;
+      let v = Number(m[1]);
+      if (!Number.isFinite(v) || v <= 0) return null;
+      const u = (m[2] || "m").toLowerCase();
+      if (u === "mm") v /= 1000;
+      else if (u === "cm") v /= 100;
+      return v;
+    }
+
+    function updateVcb() {
+      const el = root.querySelector("#peVcb");
+      if (!el) return;
+      if (!lengthBuffer) {
+        el.hidden = true;
+        el.textContent = "";
+        return;
+      }
+      el.hidden = false;
+      el.textContent = lengthBuffer;
+    }
+
+    function clearLengthBuffer() {
+      lengthBuffer = "";
+      updateVcb();
+    }
+
+    function directionFrom(from, toward) {
+      if (!toward) return { x: 1, y: 0 };
+      const aligned = axisAlignPoint(from, toward);
+      let dx = aligned.x - from.x;
+      let dy = aligned.y - from.y;
+      const d = Math.hypot(dx, dy);
+      if (d < 1e-9) return { x: 1, y: 0 };
+      return { x: dx / d, y: dy / d };
+    }
+
+    /** Digitar distância (estilo SketchUp VCB) na trena ou linha. */
+    function applyTypedLength() {
+      const len = parseLengthInput(lengthBuffer);
+      if (len == null) return false;
+      if (tool === "measure" && measureDraft?.a) {
+        const dir = directionFrom(
+          measureDraft.a,
+          measureDraft.b || (hover ? { x: hover.x, y: hover.y } : null)
+        );
+        const b = {
+          x: roundCm(measureDraft.a.x + dir.x * len),
+          y: roundCm(measureDraft.a.y + dir.y * len)
+        };
+        clearLengthBuffer();
+        finishMeasure(b);
+        return true;
+      }
+      if (tool === "line" && lineDraft?.points?.length) {
+        const last = lineDraft.points[lineDraft.points.length - 1];
+        const dir = directionFrom(last, hover ? { x: hover.x, y: hover.y } : null);
+        const next = { x: roundCm(last.x + dir.x * len), y: roundCm(last.y + dir.y * len) };
+        if (dist(last, next) > 0.005) lineDraft.points.push(next);
+        clearLengthBuffer();
+        paint();
+        ctx.toast?.(`Linha: ${len.toFixed(2)} m`);
+        return true;
+      }
+      if (tool === "conduit" && conduitDraft?.points?.length) {
+        const last = conduitDraft.points[conduitDraft.points.length - 1];
+        const dir = directionFrom(last, hover ? { x: hover.x, y: hover.y } : null);
+        const next = { x: roundCm(last.x + dir.x * len), y: roundCm(last.y + dir.y * len) };
+        if (dist(last, next) > 0.005) conduitDraft.points.push(next);
+        clearLengthBuffer();
+        paint();
+        return true;
+      }
+      return false;
+    }
+
+    function activateHotkey(def) {
+      if (!def) return;
+      if (def.tool === "arch") setTool("arch", null, def.arch);
+      else setTool(def.tool);
+      ctx.toast?.(`${def.label} (${(hotkeys[def.id] || "").toUpperCase()})`);
     }
 
     function removePolylineSegment(list, makeItem, w, thr, seen) {
@@ -1785,6 +2126,7 @@ var ProjetoEletrico = (() => {
       if (Math.abs(aligned.x - a.x) < 1e-6) addGuide("v", a.x);
       if (Math.abs(aligned.y - a.y) < 1e-6) addGuide("h", a.y);
       measureDraft = null;
+      clearLengthBuffer();
       save();
       paint();
       renderSide();
@@ -1792,7 +2134,7 @@ var ProjetoEletrico = (() => {
     }
 
     function roomHandle(r, w) {
-      const hs = 0.25;
+      const hs = 0.12;
       const corners = [
         { id: "nw", x: r.x, y: r.y },
         { id: "ne", x: r.x + r.w, y: r.y },
@@ -1811,9 +2153,23 @@ var ProjetoEletrico = (() => {
         const hitR = SYM_M.hit * clampEscala(p.escala) * clampEscala(projeto.symbolScale);
         if (dist(p, { x: w.rawX, y: w.rawY }) <= hitR) return { kind: "point", item: p };
       }
+      if (selectedKind === "arch" && selectedId) {
+        const selA = (projeto.arch || []).find((x) => x.id === selectedId);
+        if (selA) {
+          for (const ep of archEndpoints(selA)) {
+            if (dist(ep, { x: w.rawX, y: w.rawY }) <= 0.12)
+              return { kind: "arch-end", item: selA, handle: ep.id };
+          }
+        }
+      }
       for (let i = (projeto.arch || []).length - 1; i >= 0; i--) {
         const a = projeto.arch[i];
-        if (dist(a, { x: w.rawX, y: w.rawY }) <= 0.4) return { kind: "arch", item: a };
+        const hitR = Math.max(0.25, (Number(a.largura) || 0.8) / 2);
+        if (dist(a, { x: w.rawX, y: w.rawY }) <= hitR) return { kind: "arch", item: a };
+        for (const ep of archEndpoints(a)) {
+          if (dist(ep, { x: w.rawX, y: w.rawY }) <= 0.1)
+            return { kind: "arch-end", item: a, handle: ep.id };
+        }
       }
       for (let i = (projeto.walls || []).length - 1; i >= 0; i--) {
         const wall = projeto.walls[i];
@@ -1879,23 +2235,25 @@ var ProjetoEletrico = (() => {
         return;
       }
       if (tool === "line") {
-        const snapped = snapPointToEdges({ x: w.x, y: w.y });
-        if (!lineDraft) lineDraft = { points: [snapped] };
+        const snapped = snapToGeometry({ x: w.rawX, y: w.rawY });
+        if (!lineDraft) lineDraft = { points: [{ x: snapped.x, y: snapped.y }] };
         else {
           const last = lineDraft.points[lineDraft.points.length - 1];
-          const next = axisAlignPoint(last, snapped);
-          if (dist(last, next) > 0.05) lineDraft.points.push(next);
+          const next = axisAlignPoint(last, { x: snapped.x, y: snapped.y });
+          if (dist(last, next) > GRID_M) lineDraft.points.push({ x: next.x, y: next.y });
         }
+        clearLengthBuffer();
         paint();
         return;
       }
       if (tool === "measure") {
-        const snapped = snapPointToEdges({ x: w.x, y: w.y });
+        const snapped = snapToGeometry({ x: w.rawX, y: w.rawY });
         if (!measureDraft?.a) {
-          measureDraft = { a: snapped, b: null };
+          measureDraft = { a: { x: snapped.x, y: snapped.y }, b: null };
+          clearLengthBuffer();
           paint();
         } else {
-          finishMeasure(snapped);
+          finishMeasure({ x: snapped.x, y: snapped.y });
         }
         return;
       }
@@ -1906,14 +2264,14 @@ var ProjetoEletrico = (() => {
       }
       if (tool === "arch") {
         const meta = tipoArch(placeArch);
-        const snapped = snapPointToEdges({ x: w.x, y: w.y });
+        const snapped = snapToGeometry({ x: w.rawX, y: w.rawY });
         const item = {
           id: typeof uid === "function" ? uid("ar") : `ar-${Date.now()}`,
           tipo: placeArch,
           x: snapped.x,
           y: snapped.y,
           largura: meta.larguraDefault,
-          angulo: 0
+          angulo: snapped.segAngle != null ? snapped.segAngle : 0
         };
         projeto.arch.push(item);
         selectedId = item.id;
@@ -1921,6 +2279,11 @@ var ProjetoEletrico = (() => {
         save();
         paint();
         refreshSelectionUI();
+        ctx.toast?.(
+          snapped.kind === "seg" || snapped.kind === "end"
+            ? "Encaixado na parede"
+            : "Aproxime da parede para colar a ponta"
+        );
         return;
       }
       if (tool === "place") {
@@ -1977,8 +2340,24 @@ var ProjetoEletrico = (() => {
         return;
       }
 
+      if (hit.kind === "arch-end") {
+        selectedId = hit.item.id;
+        selectedKind = "arch";
+        drag = {
+          type: "move-arch-end",
+          id: hit.item.id,
+          handle: hit.handle,
+          startX: w.x,
+          startY: w.y,
+          moved: false
+        };
+        paint();
+        refreshSelectionUI();
+        return;
+      }
+
       selectedId = hit.item.id;
-      selectedKind = hit.kind;
+      selectedKind = hit.kind === "arch-end" ? "arch" : hit.kind;
 
       if (hit.kind === "room") {
         drag = {
@@ -2060,8 +2439,8 @@ var ProjetoEletrico = (() => {
         if (drag.handle.includes("e")) x2 = w.x;
         r.x = Math.min(x1, x2);
         r.y = Math.min(y1, y2);
-        r.w = Math.max(GRID_M, Math.abs(x2 - x1));
-        r.h = Math.max(GRID_M, Math.abs(y2 - y1));
+        r.w = Math.max(ROOM_MIN_M, Math.abs(x2 - x1));
+        r.h = Math.max(ROOM_MIN_M, Math.abs(y2 - y1));
         // Snap das arestas movidas
         const { vertical, horizontal } = collectSnapEdges(r.id);
         if (drag.handle.includes("w")) {
@@ -2069,14 +2448,14 @@ var ProjetoEletrico = (() => {
           if (s) {
             const right = r.x + r.w;
             r.x = s.t;
-            r.w = Math.max(GRID_M, right - r.x);
+            r.w = Math.max(ROOM_MIN_M, right - r.x);
             snapGuides = { v: [s.t], h: [] };
           }
         }
         if (drag.handle.includes("e")) {
           const s = nearestSnap(r.x + r.w, vertical, WALL_SNAP_M);
           if (s) {
-            r.w = Math.max(GRID_M, s.t - r.x);
+            r.w = Math.max(ROOM_MIN_M, s.t - r.x);
             snapGuides = { v: [s.t], h: snapGuides?.h || [] };
           }
         }
@@ -2085,14 +2464,14 @@ var ProjetoEletrico = (() => {
           if (s) {
             const bottom = r.y + r.h;
             r.y = s.t;
-            r.h = Math.max(GRID_M, bottom - r.y);
+            r.h = Math.max(ROOM_MIN_M, bottom - r.y);
             snapGuides = { v: snapGuides?.v || [], h: [s.t] };
           }
         }
         if (drag.handle.includes("s")) {
           const s = nearestSnap(r.y + r.h, horizontal, WALL_SNAP_M);
           if (s) {
-            r.h = Math.max(GRID_M, s.t - r.y);
+            r.h = Math.max(ROOM_MIN_M, s.t - r.y);
             snapGuides = { v: snapGuides?.v || [], h: [s.t] };
           }
         }
@@ -2114,9 +2493,24 @@ var ProjetoEletrico = (() => {
       if (drag?.type === "move-arch") {
         const a = projeto.arch.find((x) => x.id === drag.id);
         if (a) {
-          const sn = snapPointToEdges({ x: w.x, y: w.y });
+          const sn = snapToGeometry({ x: w.rawX, y: w.rawY });
           a.x = sn.x;
           a.y = sn.y;
+          if (sn.segAngle != null) a.angulo = sn.segAngle;
+          if (dist({ x: w.x, y: w.y }, { x: drag.startX, y: drag.startY }) > DRAG_CLICK_M)
+            drag.moved = true;
+          paint();
+        }
+        return;
+      }
+      if (drag?.type === "move-arch-end") {
+        const a = projeto.arch.find((x) => x.id === drag.id);
+        if (a) {
+          const sn = snapToGeometry({ x: w.rawX, y: w.rawY });
+          if (sn.segAngle != null) a.angulo = sn.segAngle;
+          const tip = archEndpoints(a).find((ep) => ep.id === drag.handle) || archEndpoints(a)[0];
+          a.x = roundCm(a.x + (sn.x - tip.x));
+          a.y = roundCm(a.y + (sn.y - tip.y));
           if (dist({ x: w.x, y: w.y }, { x: drag.startX, y: drag.startY }) > DRAG_CLICK_M)
             drag.moved = true;
           paint();
@@ -2138,7 +2532,7 @@ var ProjetoEletrico = (() => {
         const y = Math.min(drag.y0, drag.y1);
         const ww = Math.abs(drag.x1 - drag.x0);
         const hh = Math.abs(drag.y1 - drag.y0);
-        if (ww >= GRID_M && hh >= GRID_M) {
+        if (ww >= ROOM_MIN_M && hh >= ROOM_MIN_M) {
           const room = {
             id: typeof uid === "function" ? uid("rm") : `rm-${Date.now()}`,
             nome: "Cômodo",
@@ -2158,6 +2552,7 @@ var ProjetoEletrico = (() => {
         drag.type === "resize-room" ||
         drag.type === "move-point" ||
         drag.type === "move-arch" ||
+        drag.type === "move-arch-end" ||
         drag.type === "erase" ||
         drag.type === "pan"
       ) {
@@ -2209,16 +2604,27 @@ var ProjetoEletrico = (() => {
     function inspectorHtml() {
       if (!selectedId || !selectedKind) {
         const g = clampEscala(projeto.symbolScale);
+        const hkRows = HOTKEY_DEFS.map((d) => {
+          const k = (hotkeys[d.id] || "—").toUpperCase();
+          const cap = capturingHotkeyId === d.id;
+          return `<div class="pe-hotkey-row">
+            <span>${escapeHtml(d.label)}</span>
+            <button type="button" class="btn btn-secondary btn-sm pe-hotkey-btn ${cap ? "active" : ""}" data-hotkey="${d.id}">${cap ? "…" : k}</button>
+          </div>`;
+        }).join("");
         return `<div class="pe-side-block pe-inspector">
           <h3>Propriedades</h3>
-          <p class="hint">Clique em um objeto no grid para selecionar. Segure e arraste para mover. A edição fica neste painel.</p>
+          <p class="hint">Clique em um objeto no grid para selecionar. Porta/janela: arraste as <strong>pontas laranja</strong> para colar na parede.</p>
           <div class="pe-size-row">
             <span>Tamanho dos símbolos</span>
             <button type="button" class="btn btn-secondary btn-sm" id="peGlobalScaleDown">−</button>
             <strong id="peGlobalScaleVal">${Math.round(g * 100)}%</strong>
             <button type="button" class="btn btn-secondary btn-sm" id="peGlobalScaleUp">+</button>
           </div>
-          <p class="hint">Ajusta todos os símbolos da planta (independente do zoom).</p>
+          <h3 style="margin-top:14px">Atalhos do teclado</h3>
+          <div class="pe-hotkeys">${hkRows}</div>
+          <p class="hint">Clique na tecla e pressione a letra desejada. Trena/Linha: digite a distância (ex. <strong>1.2</strong> ou <strong>80cm</strong>) + Enter.</p>
+          <button type="button" class="btn btn-ghost btn-sm" id="peHotkeysReset">Restaurar atalhos</button>
         </div>`;
       }
 
@@ -2416,6 +2822,20 @@ var ProjetoEletrico = (() => {
 
       side.querySelector("#peGlobalScaleDown")?.addEventListener("click", () => bumpSymbolScale(-0.1));
       side.querySelector("#peGlobalScaleUp")?.addEventListener("click", () => bumpSymbolScale(0.1));
+      side.querySelectorAll("[data-hotkey]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          capturingHotkeyId = btn.dataset.hotkey;
+          refreshSelectionUI();
+          ctx.toast?.("Pressione a tecla do atalho…");
+        });
+      });
+      side.querySelector("#peHotkeysReset")?.addEventListener("click", () => {
+        hotkeys = { ...DEFAULT_HOTKEYS };
+        persistHotkeys();
+        capturingHotkeyId = null;
+        refreshSelectionUI();
+        ctx.toast?.("Atalhos restaurados");
+      });
 
       if (selectedKind === "point") {
         side.querySelector("#pePtScaleDown")?.addEventListener("click", () => bumpPointScale(-0.1));
@@ -2525,8 +2945,8 @@ var ProjetoEletrico = (() => {
           const r = projeto.rooms.find((x) => x.id === selectedId);
           if (!r) return;
           r.nome = document.getElementById("peRmNome").value.trim() || "Cômodo";
-          r.w = Math.max(GRID_M, Number(document.getElementById("peRmW").value) || GRID_M);
-          r.h = Math.max(GRID_M, Number(document.getElementById("peRmH").value) || GRID_M);
+          r.w = Math.max(ROOM_MIN_M, Number(document.getElementById("peRmW").value) || ROOM_MIN_M);
+          r.h = Math.max(ROOM_MIN_M, Number(document.getElementById("peRmH").value) || ROOM_MIN_M);
           save();
           paint();
           refreshSelectionUI();
@@ -2638,18 +3058,26 @@ var ProjetoEletrico = (() => {
 
       ctx2.save();
       ctx2.translate(pan.x, pan.y);
-      ctx2.strokeStyle = "#e2e5ea";
-      ctx2.lineWidth = 1;
-      const g = GRID_M * ppm;
+      const stepM = visualGridStep();
+      const g = stepM * ppm;
+      const majorEvery = stepM <= 0.01 ? 10 : stepM <= 0.05 ? 10 : stepM <= 0.1 ? 5 : 2;
       const x0 = -pan.x;
       const y0 = -pan.y;
-      for (let x = Math.floor(x0 / g) * g; x < x0 + W; x += g) {
+      const xStart = Math.floor(x0 / g) * g;
+      const yStart = Math.floor(y0 / g) * g;
+      for (let x = xStart, i = Math.round(xStart / g); x < x0 + W; x += g, i++) {
+        const major = i % majorEvery === 0;
+        ctx2.strokeStyle = major ? "#d0d5dd" : "#e8ebf0";
+        ctx2.lineWidth = major ? 1.1 : 1;
         ctx2.beginPath();
         ctx2.moveTo(x, y0);
         ctx2.lineTo(x, y0 + H);
         ctx2.stroke();
       }
-      for (let y = Math.floor(y0 / g) * g; y < y0 + H; y += g) {
+      for (let y = yStart, i = Math.round(yStart / g); y < y0 + H; y += g, i++) {
+        const major = i % majorEvery === 0;
+        ctx2.strokeStyle = major ? "#d0d5dd" : "#e8ebf0";
+        ctx2.lineWidth = major ? 1.1 : 1;
         ctx2.beginPath();
         ctx2.moveTo(x0, y);
         ctx2.lineTo(x0 + W, y);
@@ -2763,7 +3191,20 @@ var ProjetoEletrico = (() => {
         }
       }
 
-      (projeto.arch || []).forEach((a) => drawArch(ctx2, a));
+      (projeto.arch || []).forEach((a) => {
+        drawArch(ctx2, a);
+        if (selectedKind === "arch" && selectedId === a.id) {
+          archEndpoints(a).forEach((ep) => {
+            ctx2.fillStyle = "#f57c00";
+            ctx2.strokeStyle = "#fff";
+            ctx2.lineWidth = 1.5;
+            ctx2.beginPath();
+            ctx2.arc(ep.x * ppm, ep.y * ppm, 5, 0, Math.PI * 2);
+            ctx2.fill();
+            ctx2.stroke();
+          });
+        }
+      });
 
       projeto.conduits.forEach((c) => {
         const sel = selectedKind === "conduit" && selectedId === c.id;

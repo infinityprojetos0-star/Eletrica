@@ -1114,6 +1114,46 @@ tr:hover td { background: rgba(61,180,255,0.03); }
   cursor: crosshair;
   background: #f7f8fa;
 }
+.pe-vcb {
+  position: absolute;
+  left: 50%;
+  bottom: 36px;
+  transform: translateX(-50%);
+  min-width: 88px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: #111827;
+  color: #fbbf24;
+  font: 700 15px/1.2 Consolas, "Segoe UI", monospace;
+  text-align: center;
+  letter-spacing: 0.04em;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+  z-index: 3;
+  pointer-events: none;
+}
+.pe-vcb[hidden] { display: none !important; }
+.pe-hotkeys {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+}
+.pe-hotkey-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.82rem;
+}
+.pe-hotkey-btn {
+  min-width: 2.4rem;
+  font-weight: 700;
+  font-family: Consolas, monospace;
+}
+.pe-hotkey-btn.active {
+  border-color: #f57c00;
+  color: #f57c00;
+}
 .pe-hint {
   position: absolute;
   left: 10px;
