@@ -1148,59 +1148,31 @@ tr:hover td { background: rgba(61,180,255,0.03); }
   justify-content: flex-end;
   margin-top: 4px;
 }
-.pe-variants {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background: rgba(255,255,255,0.04);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+.pe-tools-sep {
+  width: 1px;
+  align-self: stretch;
+  min-height: 28px;
+  background: var(--border);
+  margin: 0 4px;
 }
-.pe-variants[hidden] { display: none !important; }
-.pe-variants-label {
-  font-size: 0.75rem;
-  font-weight: 700;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-.pe-variants-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  flex: 1;
-}
-.pe-var-btn {
+.pe-tools-sep[hidden],
+.pe-tools-variants[hidden] { display: none !important; }
+.pe-tools-variants {
   display: inline-flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
-  border: 1px solid var(--border);
-  background: rgba(255,255,255,0.05);
-  color: var(--text);
-  border-radius: 8px;
-  padding: 5px 9px;
-  cursor: pointer;
-  max-width: 160px;
-  text-align: left;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
 }
-.pe-var-btn strong { font-size: 0.78rem; }
-.pe-var-btn span {
-  font-size: 0.65rem;
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 140px;
+.pe-tool-var {
+  min-width: 34px;
+  font-weight: 700;
+  background: rgba(255, 167, 38, 0.12);
+  border-color: rgba(255, 167, 38, 0.35);
 }
-.pe-var-btn:hover { border-color: rgba(61,180,255,0.5); }
-.pe-var-btn.active {
-  background: rgba(61,180,255,0.2);
-  border-color: rgba(61,180,255,0.65);
-  color: #fff;
+.pe-tool-var.active {
+  background: rgba(255, 167, 38, 0.35);
+  border-color: rgba(255, 167, 38, 0.75);
 }
-.pe-var-btn.active span { color: rgba(255,255,255,0.75); }
 .pe-circ {
   padding: 8px 10px;
   margin-bottom: 8px;

@@ -950,6 +950,8 @@ var ProjetoEletrico = (() => {
               <button type="button" data-tool="place" data-tipo="sensor" class="pe-tool" title="Sensor">Sensor</button>
               <button type="button" data-tool="place" data-tipo="qdc" class="pe-tool" title="QDC">QDC</button>
               <button type="button" data-tool="delete" class="pe-tool danger" title="Apagar">Apagar</button>
+              <span class="pe-tools-sep" id="peToolsSep" hidden></span>
+              <span class="pe-tools-variants" id="peVariants" hidden></span>
             </div>
             <div class="pe-actions">
               <button type="button" class="btn btn-secondary btn-sm" id="peZoomOut">−</button>
@@ -957,11 +959,10 @@ var ProjetoEletrico = (() => {
               <button type="button" class="btn btn-primary btn-sm" id="peAnalisar">Analisar NBR 5410</button>
             </div>
           </div>
-          <div class="pe-variants" id="peVariants" hidden></div>
           <div class="pe-body">
             <div class="pe-canvas-wrap">
               <canvas id="peCanvas" width="900" height="560"></canvas>
-              <div class="pe-hint" id="peHint">Grade ${GRID_M} m · Clique = selecionar · Arraste = mover · Variantes na barra de cima</div>
+              <div class="pe-hint" id="peHint">Grade ${GRID_M} m · Clique = selecionar · Arraste = mover · Edite no painel à direita</div>
             </div>
             <aside class="pe-side" id="peSide"></aside>
           </div>
@@ -992,25 +993,12 @@ var ProjetoEletrico = (() => {
         room: "cômodo — arraste para desenhar",
         arch: `${tipoArch(placeArch).label} — clique para inserir (R = girar)`,
         conduit: "conduíte — vértices; Enter ou duplo clique termina",
-        place: `${tipoPonto(placeTipo).label} — escolha a variante na barra e clique no grid`,
+        place: `${tipoPonto(placeTipo).label} — escolha a variante nos botões ao lado e clique no grid`,
         delete: "apagar — clique no elemento"
       };
       const hint = root.querySelector("#peHint");
       if (hint) hint.textContent = `Grade ${GRID_M} m · ${labels[tool] || tool}`;
-      renderVariantsBar();
-    }
-
-    function variantsContext() {
-      if (selectedKind === "point" && selectedId) {
-        const pt = projeto.points.find((p) => p.id === selectedId);
-        if (pt && ["tomada", "interruptor", "conjugado", "lampada"].includes(pt.tipo)) {
-          return { tipo: pt.tipo, mode: "selected", pt };
-        }
-      }
-      if (tool === "place" && ["tomada", "interruptor", "conjugado", "lampada"].includes(placeTipo)) {
-        return { tipo: placeTipo, mode: "place", pt: null };
-      }
-      return null;
+      renderToolbarVariants();
     }
 
     function presetsForTipo(tipo) {
@@ -1060,71 +1048,38 @@ var ProjetoEletrico = (() => {
       return [];
     }
 
-    function isPresetActive(preset, ctxVar) {
-      if (!ctxVar) return placePreset && placePreset.id === preset.id;
-      if (ctxVar.mode === "place") return placePreset && placePreset.id === preset.id;
-      const n = normalizePoint(ctxVar.pt);
-      if (preset.group === "tomada")
-        return n.tipo === "tomada" && n.modulos === preset.modulos && Number(n.amperagem) === preset.amp;
-      if (preset.group === "interruptor")
-        return n.tipo === "interruptor" && n.variante === preset.variante;
-      if (preset.group === "conjugado")
-        return n.tipo === "conjugado" && n.conjugadoId === preset.conjugadoId;
-      if (preset.group === "lampada")
-        return n.tipo === "lampada" && n.variante === preset.variante;
-      return false;
-    }
-
-    function renderVariantsBar() {
+    /** Variantes só na toolbar de cima, ao escolher ferramenta de inserção — não ao selecionar no grid */
+    function renderToolbarVariants() {
       const bar = root.querySelector("#peVariants");
+      const sep = root.querySelector("#peToolsSep");
       if (!bar) return;
-      const ctxVar = variantsContext();
-      if (!ctxVar) {
+      const show =
+        tool === "place" &&
+        ["tomada", "interruptor", "conjugado", "lampada"].includes(placeTipo);
+      if (!show) {
         bar.hidden = true;
         bar.innerHTML = "";
+        if (sep) sep.hidden = true;
         return;
       }
-      const presets = presetsForTipo(ctxVar.tipo);
-      const titles = {
-        tomada: "Variantes de tomada",
-        interruptor: "Variantes de interruptor",
-        conjugado: "Conjugados (interruptor + tomada)",
-        lampada: "Tipos de iluminação"
-      };
+      const presets = presetsForTipo(placeTipo);
+      if (!placePreset && presets[0]) placePreset = presets[0];
+      if (sep) sep.hidden = false;
       bar.hidden = false;
-      bar.innerHTML = `
-        <span class="pe-variants-label">${titles[ctxVar.tipo] || "Variantes"}</span>
-        <div class="pe-variants-list">
-          ${presets
-            .map(
-              (pr) =>
-                `<button type="button" class="pe-var-btn ${isPresetActive(pr, ctxVar) ? "active" : ""}" data-preset="${escapeHtml(pr.id)}" title="${escapeHtml(pr.label)}">
-                  <strong>${escapeHtml(pr.short)}</strong>
-                  <span>${escapeHtml(pr.label)}</span>
-                </button>`
-            )
-            .join("")}
-        </div>
-      `;
+      bar.innerHTML = presets
+        .map(
+          (pr) =>
+            `<button type="button" class="pe-tool pe-tool-var ${placePreset && placePreset.id === pr.id ? "active" : ""}" data-preset="${escapeHtml(pr.id)}" title="${escapeHtml(pr.label)}">${escapeHtml(pr.short)}</button>`
+        )
+        .join("");
       bar.onclick = (e) => {
         const btn = e.target.closest("[data-preset]");
         if (!btn) return;
+        e.stopPropagation();
         const preset = presets.find((p) => p.id === btn.dataset.preset);
         if (!preset) return;
-        if (ctxVar.mode === "selected" && ctxVar.pt) {
-          const p = projeto.points.find((x) => x.id === ctxVar.pt.id);
-          if (!p) return;
-          applyPointPreset(p, preset);
-          Object.assign(p, normalizePoint(p));
-          save();
-          paint();
-          refreshSelectionUI();
-          ctx.toast?.(preset.label);
-        } else {
-          placePreset = preset;
-          renderVariantsBar();
-          ctx.toast?.(`Próximo ponto: ${preset.label}`);
-        }
+        placePreset = preset;
+        renderToolbarVariants();
       };
     }
 
@@ -1532,7 +1487,7 @@ var ProjetoEletrico = (() => {
 
     function refreshSelectionUI() {
       renderSide();
-      renderVariantsBar();
+      // Variantes ficam só na toolbar ao inserir — seleção edita no painel lateral
     }
 
     function inspectorHtml() {
