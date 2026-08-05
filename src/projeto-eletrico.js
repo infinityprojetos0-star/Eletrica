@@ -6,6 +6,8 @@
  */
 var ProjetoEletrico = (() => {
   const PPM_DEFAULT = 48;
+  const PPM_MIN = 8;
+  const PPM_MAX = 480;
   const SNAP_M = 0.35;
   const GRID_M = 0.5;
   const DRAG_CLICK_M = 0.15;
@@ -460,7 +462,9 @@ var ProjetoEletrico = (() => {
     ctx.lineCap = "round";
 
     if (n.tipo === "lampada") {
-      const r = n.variante === "arandela" ? 9 : 12;
+      // Ponto de luz (estilo planta / WOCA): círculo com diâmetro horizontal
+      // cima = potência (VA) · baixo = circuito + comando (letra)
+      const r = n.variante === "arandela" ? 11 : 15;
       ctx.beginPath();
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.fillStyle = "#fff";
@@ -468,18 +472,24 @@ var ProjetoEletrico = (() => {
       ctx.lineWidth = lw;
       ctx.fill();
       ctx.stroke();
-      // ponto de luz no teto: cruz leve (uso comum em plantas NBR)
-      if (n.variante !== "arandela") {
-        ctx.beginPath();
-        ctx.moveTo(cx - r * 0.45, cy);
-        ctx.lineTo(cx + r * 0.45, cy);
-        ctx.moveTo(cx, cy - r * 0.45);
-        ctx.lineTo(cx, cy + r * 0.45);
-        ctx.stroke();
-      }
+      ctx.beginPath();
+      ctx.moveTo(cx - r, cy);
+      ctx.lineTo(cx + r, cy);
+      ctx.stroke();
+      const pot = Math.round(Number(n.potenciaVA) || 20);
+      const circNum = n.circuitoId ? String(n.circuitoId).replace(/^C/i, "") : "";
+      const cmd = String(n.interruptor || "").toLowerCase();
+      const bot = [circNum, cmd].filter(Boolean).join(" ");
+      ctx.fillStyle = stroke;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = `bold ${Math.max(8, Math.round(r * 0.55))}px Segoe UI, sans-serif`;
+      ctx.fillText(String(pot), cx, cy - r * 0.38);
+      ctx.font = `${Math.max(7, Math.round(r * 0.48))}px Segoe UI, sans-serif`;
+      ctx.fillText(bot || "·", cx, cy + r * 0.4);
       if (n.variante === "emergencia") {
         ctx.beginPath();
-        ctx.arc(cx, cy, r * 0.35, 0, Math.PI * 2);
+        ctx.arc(cx + r * 0.7, cy - r * 0.7, 3, 0, Math.PI * 2);
         ctx.stroke();
       }
     } else if (n.tipo === "interruptor") {
@@ -595,24 +605,31 @@ var ProjetoEletrico = (() => {
       ctx.stroke();
     }
 
-    // Legenda NBR: potência / circuito / comando
-    ctx.fillStyle = selected ? "#c45c00" : "#222";
-    ctx.font = "9px Segoe UI, sans-serif";
-    ctx.textAlign = "left";
-    ctx.textBaseline = "alphabetic";
-    const circNum = n.circuitoId ? String(n.circuitoId).replace(/^C/i, "") : "";
-    const parts = [];
-    if (n.tipo === "lampada" || n.tipo === "tomada" || n.tipo === "conjugado" || n.tipo === "chuveiro" || n.tipo === "ar") {
-      if (n.potenciaVA) parts.push(String(Math.round(n.potenciaVA)));
+    // Legenda ao lado (exceto lâmpada — dados já vão dentro do círculo, estilo WOCA)
+    if (n.tipo !== "lampada") {
+      ctx.fillStyle = selected ? "#c45c00" : "#222";
+      ctx.font = "9px Segoe UI, sans-serif";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
+      const circNum = n.circuitoId ? String(n.circuitoId).replace(/^C/i, "") : "";
+      const parts = [];
+      if (n.tipo === "tomada" || n.tipo === "conjugado" || n.tipo === "chuveiro" || n.tipo === "ar") {
+        if (n.potenciaVA) parts.push(String(Math.round(n.potenciaVA)));
+      }
+      if (circNum) parts.push(circNum);
+      if (n.interruptor) parts.push(String(n.interruptor).toLowerCase());
+      if (n.tipo === "interruptor" && n.variante && n.variante !== "simples") {
+        /* letra de comando já cobre */
+      }
+      if (n.usoTue) {
+        const u = usoTueById(n.usoTue);
+        if (u) parts.push(u.label.split(" ")[0]);
+      }
+      const tag = parts.join(" ");
+      if (tag) ctx.fillText(tag, cx + 12, cy - 4);
+      else if (n.tipo === "interruptor" && n.interruptor)
+        ctx.fillText(String(n.interruptor).toLowerCase(), cx + 10, cy + 3);
     }
-    if (circNum) parts.push(circNum);
-    if (n.interruptor) parts.push(String(n.interruptor).toLowerCase());
-    if (n.usoTue) {
-      const u = usoTueById(n.usoTue);
-      if (u) parts.push(u.label.split(" ")[0]);
-    }
-    const tag = parts.join(" ");
-    if (tag) ctx.fillText(tag, cx + 14, cy - 6);
     ctx.restore();
   }
 
@@ -1164,6 +1181,23 @@ var ProjetoEletrico = (() => {
       };
     };
 
+    /** Zoom apontando para o cursor (mundo sob o mouse permanece fixo na tela) */
+    function zoomAt(clientX, clientY, factor) {
+      const canvas = root.querySelector("#peCanvas");
+      if (!canvas) return;
+      const r = canvas.getBoundingClientRect();
+      const mx = clientX - r.left;
+      const my = clientY - r.top;
+      const worldX = (mx - pan.x) / ppm;
+      const worldY = (my - pan.y) / ppm;
+      const next = Math.max(PPM_MIN, Math.min(PPM_MAX, ppm * factor));
+      if (Math.abs(next - ppm) < 1e-6) return;
+      ppm = next;
+      pan.x = mx - worldX * ppm;
+      pan.y = my - worldY * ppm;
+      paint();
+    }
+
     function runAnalise() {
       const analise = analisar(projeto, {
         produtos: ctx.produtos,
@@ -1365,12 +1399,16 @@ var ProjetoEletrico = (() => {
         setTool(btn.dataset.tool, btn.dataset.tipo, btn.dataset.arch);
       };
       root.querySelector("#peZoomIn").onclick = () => {
-        ppm = Math.min(120, ppm * 1.15);
-        paint();
+        const canvas = root.querySelector("#peCanvas");
+        if (!canvas) return;
+        const r = canvas.getBoundingClientRect();
+        zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1.2);
       };
       root.querySelector("#peZoomOut").onclick = () => {
-        ppm = Math.max(16, ppm / 1.15);
-        paint();
+        const canvas = root.querySelector("#peCanvas");
+        if (!canvas) return;
+        const r = canvas.getBoundingClientRect();
+        zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1 / 1.2);
       };
       root.querySelector("#peAnalisar").onclick = runAnalise;
 
@@ -1384,8 +1422,8 @@ var ProjetoEletrico = (() => {
         "wheel",
         (e) => {
           e.preventDefault();
-          ppm = Math.max(16, Math.min(120, ppm * (e.deltaY > 0 ? 0.9 : 1.1)));
-          paint();
+          const factor = e.deltaY > 0 ? 1 / 1.12 : 1.12;
+          zoomAt(e.clientX, e.clientY, factor);
         },
         { passive: false }
       );
