@@ -1066,7 +1066,33 @@ tr:hover td { background: rgba(61,180,255,0.03); }
   color: #fff;
 }
 .pe-tool.danger { color: #ff8a80; }
-.pe-actions { display: flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+.pe-actions { display: flex; gap: 6px; margin-left: auto; flex-wrap: wrap; align-items: center; }
+.pe-sym-scale {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 4px;
+}
+.pe-sym-scale-val {
+  min-width: 2.6rem;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.pe-size-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0 4px;
+  font-size: 0.82rem;
+}
+.pe-size-row strong {
+  min-width: 3rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
 .pe-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;

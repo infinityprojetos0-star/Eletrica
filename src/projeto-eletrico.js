@@ -158,9 +158,17 @@ var ProjetoEletrico = (() => {
   }
 
   /** Compatível com projetos antigos (tug/tue) */
+  /** Escala visual do símbolo na planta (0,4× … 2,5×). Independente do zoom. */
+  function clampEscala(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return 1;
+    return Math.round(Math.max(0.4, Math.min(2.5, n)) * 10) / 10;
+  }
+
   function normalizePoint(p) {
     if (!p) return p;
     const out = { ...p };
+    out.escala = clampEscala(out.escala == null ? 1 : out.escala);
     if (out.tipo === "tug") {
       out.tipo = "tomada";
       out.amperagem = out.amperagem || 10;
@@ -356,7 +364,8 @@ var ProjetoEletrico = (() => {
       modulos: "simples",
       amperagem: 10,
       usoCircuito: "tug",
-      alturaM: tipo === "lampada" ? 2.5 : 0.3
+      alturaM: tipo === "lampada" ? 2.5 : 0.3,
+      escala: 1
     };
     if (tipo === "tomada") {
       base.amperagem = 10;
@@ -396,6 +405,7 @@ var ProjetoEletrico = (() => {
       arch: [],
       points: [],
       conduits: [],
+      symbolScale: 1,
       lastAnalise: null,
       criadoEm: typeof todayISO === "function" ? todayISO() : new Date().toISOString().slice(0, 10),
       updatedAt: Date.now()
@@ -463,20 +473,21 @@ var ProjetoEletrico = (() => {
     }
   }
 
-  function drawNbrSymbol(ctx, pt, ppm, selected, strokeColor) {
+  function drawNbrSymbol(ctx, pt, ppm, selected, strokeColor, globalScale = 1) {
     const n = normalizePoint(pt);
+    const esc = clampEscala(n.escala) * clampEscala(globalScale);
     const cx = n.x * ppm;
     const cy = n.y * ppm;
     const stroke = selected ? "#f57c00" : strokeColor || "#111";
-    const lw = Math.max(1.1, Math.min(2.6, ppm * 0.028)) * (selected ? 1.35 : 1);
-    const fontPx = (m) => Math.max(7, Math.min(18, Math.round(m * ppm * 0.9)));
+    const lw = Math.max(1.1, Math.min(2.8, ppm * 0.028 * Math.sqrt(esc))) * (selected ? 1.35 : 1);
+    const px = (m) => m * esc * ppm;
+    const fontPx = (m) => Math.max(7, Math.min(22, Math.round(px(m) * 0.9)));
     ctx.save();
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
 
     if (n.tipo === "lampada") {
-      // Ponto de luz estilo WOCA: Ø fixo em metros · linha · potência / circuito+comando
-      const r = (n.variante === "arandela" ? SYM_M.arandelaR : SYM_M.luzR) * ppm;
+      const r = px(n.variante === "arandela" ? SYM_M.arandelaR : SYM_M.luzR);
       ctx.beginPath();
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.fillStyle = "#fff";
@@ -500,7 +511,7 @@ var ProjetoEletrico = (() => {
       ctx.font = `${Math.max(7, fontPx(SYM_M.luzR) - 1)}px Segoe UI, sans-serif`;
       ctx.fillText(bot || "·", cx, cy + r * 0.4);
     } else if (n.tipo === "interruptor") {
-      const r = SYM_M.intR * ppm;
+      const r = px(SYM_M.intR);
       const tick = r * 0.45;
       ctx.beginPath();
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
@@ -535,7 +546,7 @@ var ProjetoEletrico = (() => {
       }
       ctx.stroke();
     } else if (n.tipo === "tomada") {
-      const size = SYM_M.tomada * ppm;
+      const size = px(SYM_M.tomada);
       drawTrianguloTomada(ctx, cx, cy, size, nivelTomada(n.alturaM), stroke, lw);
       if (Number(n.amperagem) >= 20 || n.usoCircuito === "tue") {
         ctx.fillStyle = stroke;
@@ -545,8 +556,8 @@ var ProjetoEletrico = (() => {
         ctx.fillText("20", cx, cy + size * 0.55);
       }
     } else if (n.tipo === "conjugado") {
-      const size = SYM_M.conjTom * ppm;
-      const ri = SYM_M.conjIntR * ppm;
+      const size = px(SYM_M.conjTom);
+      const ri = px(SYM_M.conjIntR);
       drawTrianguloTomada(ctx, cx + ri * 0.55, cy + ri * 0.25, size, nivelTomada(n.alturaM), stroke, lw);
       ctx.beginPath();
       ctx.arc(cx - ri * 0.7, cy - ri * 0.5, ri, 0, Math.PI * 2);
@@ -560,8 +571,8 @@ var ProjetoEletrico = (() => {
       ctx.lineTo(cx - ri * 0.2, cy - ri * 0.5);
       ctx.stroke();
     } else if (n.tipo === "qdc") {
-      const w = SYM_M.qdcW * ppm;
-      const h = SYM_M.qdcH * ppm;
+      const w = px(SYM_M.qdcW);
+      const h = px(SYM_M.qdcH);
       ctx.fillStyle = "#fff";
       ctx.strokeStyle = stroke;
       ctx.lineWidth = lw;
@@ -577,7 +588,7 @@ var ProjetoEletrico = (() => {
       ctx.textBaseline = "bottom";
       ctx.fillText("QD", cx, cy - h / 2 - 2);
     } else if (n.tipo === "chuveiro" || n.tipo === "torneira") {
-      const size = SYM_M.carga * ppm;
+      const size = px(SYM_M.carga);
       drawTrianguloTomada(ctx, cx, cy, size, "alta", stroke, lw);
       ctx.fillStyle = stroke;
       ctx.font = `bold ${fontPx(0.12)}px Segoe UI, sans-serif`;
@@ -585,7 +596,7 @@ var ProjetoEletrico = (() => {
       ctx.textBaseline = "top";
       ctx.fillText("CH", cx, cy + size * 0.55);
     } else if (n.tipo === "ar" || n.tipo === "fogao" || n.tipo === "exaustor") {
-      const size = SYM_M.carga * ppm;
+      const size = px(SYM_M.carga);
       drawTrianguloTomada(ctx, cx, cy, size, "alta", stroke, lw);
       ctx.fillStyle = stroke;
       ctx.font = `bold ${fontPx(0.12)}px Segoe UI, sans-serif`;
@@ -593,7 +604,7 @@ var ProjetoEletrico = (() => {
       ctx.textBaseline = "top";
       ctx.fillText(n.tipo === "ar" ? "AC" : n.tipo === "fogao" ? "FG" : "EX", cx, cy + size * 0.55);
     } else if (n.tipo === "sensor" || n.tipo === "campainha") {
-      const r = SYM_M.intR * ppm;
+      const r = px(SYM_M.intR);
       ctx.beginPath();
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.fillStyle = "#fff";
@@ -607,7 +618,7 @@ var ProjetoEletrico = (() => {
       ctx.textBaseline = "middle";
       ctx.fillText(n.tipo === "sensor" ? "S" : "C", cx, cy);
     } else {
-      const r = SYM_M.intR * ppm;
+      const r = px(SYM_M.intR);
       ctx.beginPath();
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.fillStyle = "#fff";
@@ -634,10 +645,10 @@ var ProjetoEletrico = (() => {
         if (u) parts.push(u.label.split(" ")[0]);
       }
       const tag = parts.join(" ");
-      const ox = SYM_M.tomada * ppm * 0.55;
+      const ox = px(SYM_M.tomada) * 0.55;
       if (tag) ctx.fillText(tag, cx + ox, cy - 2);
       else if (n.tipo === "interruptor" && n.interruptor)
-        ctx.fillText(String(n.interruptor).toLowerCase(), cx + SYM_M.intR * ppm + 4, cy + 3);
+        ctx.fillText(String(n.interruptor).toLowerCase(), cx + px(SYM_M.intR) + 4, cy + 3);
     }
     ctx.restore();
   }
@@ -1158,6 +1169,7 @@ var ProjetoEletrico = (() => {
   function mount(root, ctx) {
     let projeto = JSON.parse(JSON.stringify(ctx.projeto));
     if (!Array.isArray(projeto.arch)) projeto.arch = [];
+    projeto.symbolScale = clampEscala(projeto.symbolScale == null ? 1 : projeto.symbolScale);
     projeto.points = (projeto.points || []).map(normalizePoint);
 
     let tool = "select";
@@ -1205,6 +1217,29 @@ var ProjetoEletrico = (() => {
       pan.x = mx - worldX * ppm;
       pan.y = my - worldY * ppm;
       paint();
+    }
+
+    function updateSymbolScaleLabel() {
+      const el = root.querySelector("#peSymVal");
+      if (el) el.textContent = `${Math.round(clampEscala(projeto.symbolScale) * 100)}%`;
+    }
+
+    function bumpSymbolScale(delta) {
+      projeto.symbolScale = clampEscala(clampEscala(projeto.symbolScale) + delta);
+      updateSymbolScaleLabel();
+      save();
+      paint();
+      if (!selectedId || !selectedKind) refreshSelectionUI();
+    }
+
+    function bumpPointScale(delta) {
+      if (selectedKind !== "point" || !selectedId) return;
+      const p = projeto.points.find((x) => x.id === selectedId);
+      if (!p) return;
+      p.escala = clampEscala(clampEscala(p.escala) + delta);
+      save();
+      paint();
+      refreshSelectionUI();
     }
 
     function runAnalise() {
@@ -1260,8 +1295,13 @@ var ProjetoEletrico = (() => {
               <span class="pe-tools-variants" id="peVariants" hidden></span>
             </div>
             <div class="pe-actions">
-              <button type="button" class="btn btn-secondary btn-sm" id="peZoomOut">−</button>
-              <button type="button" class="btn btn-secondary btn-sm" id="peZoomIn">+</button>
+              <span class="pe-sym-scale" title="Tamanho dos símbolos na planta (não altera o zoom)">
+                <button type="button" class="btn btn-secondary btn-sm" id="peSymOut" aria-label="Diminuir símbolos">Símb −</button>
+                <span class="pe-sym-scale-val" id="peSymVal">100%</span>
+                <button type="button" class="btn btn-secondary btn-sm" id="peSymIn" aria-label="Aumentar símbolos">Símb +</button>
+              </span>
+              <button type="button" class="btn btn-secondary btn-sm" id="peZoomOut" title="Zoom out">−</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="peZoomIn" title="Zoom in">+</button>
               <button type="button" class="btn btn-primary btn-sm" id="peAnalisar">Analisar NBR 5410</button>
             </div>
           </div>
@@ -1419,6 +1459,9 @@ var ProjetoEletrico = (() => {
         const r = canvas.getBoundingClientRect();
         zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1 / 1.2);
       };
+      root.querySelector("#peSymIn").onclick = () => bumpSymbolScale(0.1);
+      root.querySelector("#peSymOut").onclick = () => bumpSymbolScale(-0.1);
+      updateSymbolScaleLabel();
       root.querySelector("#peAnalisar").onclick = runAnalise;
 
       const canvas = root.querySelector("#peCanvas");
@@ -1499,7 +1542,8 @@ var ProjetoEletrico = (() => {
     function hitTest(w) {
       for (let i = projeto.points.length - 1; i >= 0; i--) {
         const p = projeto.points[i];
-        if (dist(p, { x: w.rawX, y: w.rawY }) <= SYM_M.hit) return { kind: "point", item: p };
+        const hitR = SYM_M.hit * clampEscala(p.escala) * clampEscala(projeto.symbolScale);
+        if (dist(p, { x: w.rawX, y: w.rawY }) <= hitR) return { kind: "point", item: p };
       }
       for (let i = (projeto.arch || []).length - 1; i >= 0; i--) {
         const a = projeto.arch[i];
@@ -1802,9 +1846,17 @@ var ProjetoEletrico = (() => {
 
     function inspectorHtml() {
       if (!selectedId || !selectedKind) {
+        const g = clampEscala(projeto.symbolScale);
         return `<div class="pe-side-block pe-inspector">
           <h3>Propriedades</h3>
           <p class="hint">Clique em um objeto no grid para selecionar. Segure e arraste para mover. A edição fica neste painel.</p>
+          <div class="pe-size-row">
+            <span>Tamanho dos símbolos</span>
+            <button type="button" class="btn btn-secondary btn-sm" id="peGlobalScaleDown">−</button>
+            <strong id="peGlobalScaleVal">${Math.round(g * 100)}%</strong>
+            <button type="button" class="btn btn-secondary btn-sm" id="peGlobalScaleUp">+</button>
+          </div>
+          <p class="hint">Ajusta todos os símbolos da planta (independente do zoom).</p>
         </div>`;
       }
 
@@ -1900,6 +1952,13 @@ var ProjetoEletrico = (() => {
               </select>
             </label>
             <label>Altura (m)<input type="number" id="pePtAlt" step="0.1" value="${Number(pt.alturaM ?? 0.3)}" /></label>
+            <div class="pe-size-row">
+              <span>Tamanho no grid</span>
+              <button type="button" class="btn btn-secondary btn-sm" id="pePtScaleDown" title="Diminuir">−</button>
+              <strong id="pePtScaleVal">${Math.round(clampEscala(pt.escala) * 100)}%</strong>
+              <button type="button" class="btn btn-secondary btn-sm" id="pePtScaleUp" title="Aumentar">+</button>
+            </div>
+            <p class="hint">Tamanho visual deste símbolo (40%–250%). Não altera potências nem a NBR.</p>
             ${
               showTom
                 ? `<p class="hint">NBR 5444 — tomada: triângulo vazio ≈ baixa (0,30 m), meio cheio ≈ média (1,30 m), cheio ≈ alta (2,00 m). Ajuste pela altura.</p>`
@@ -1973,7 +2032,12 @@ var ProjetoEletrico = (() => {
       const side = root.querySelector("#peSide");
       if (!side) return;
 
+      side.querySelector("#peGlobalScaleDown")?.addEventListener("click", () => bumpSymbolScale(-0.1));
+      side.querySelector("#peGlobalScaleUp")?.addEventListener("click", () => bumpSymbolScale(0.1));
+
       if (selectedKind === "point") {
+        side.querySelector("#pePtScaleDown")?.addEventListener("click", () => bumpPointScale(-0.1));
+        side.querySelector("#pePtScaleUp")?.addEventListener("click", () => bumpPointScale(0.1));
         const apply = () => {
           const p = projeto.points.find((x) => x.id === selectedId);
           if (!p) return;
@@ -2283,7 +2347,7 @@ var ProjetoEletrico = (() => {
         const sel = selectedKind === "point" && selectedId === n.id;
         const circ = (projeto.lastAnalise?.circuits || []).find((x) => x.id === n.circuitoId);
         const stroke = circ?.cor || "#111";
-        drawNbrSymbol(ctx2, n, ppm, sel, stroke);
+        drawNbrSymbol(ctx2, n, ppm, sel, stroke, projeto.symbolScale);
       });
 
       ctx2.restore();
