@@ -1,0 +1,334 @@
+No momento eu não consigo gerar um arquivo `.txt` para download porque a ferramenta de criação de arquivos está indisponível nesta conversa.
+
+Se você quiser adiantar, abaixo está o conteúdo completo para salvar como **`VOLTES_UI_SPEC_v1.0.txt`** (basta copiar e colar em um Bloco de Notas e salvar com esse nome):
+
+```txt
+==================================================================
+VOLTES DESIGN SYSTEM
+Versão: 1.0
+Empresa: VoltES
+Segmento: Instalações e Manutenção Elétrica
+==================================================================
+
+OBJETIVO
+
+Criar um layout corporativo moderno, limpo e profissional para geração
+de orçamentos em PDF através de um PWA.
+
+==================================================================
+IDENTIDADE VISUAL
+==================================================================
+
+Nome:
+VoltES
+
+Conceito:
+A palavra VoltES é uma junção de "Volts" com "ES" (Espírito Santo).
+
+Estilo:
+Minimalista
+Corporativo
+Tecnologia
+Engenharia
+Profissional
+
+==================================================================
+CORES
+==================================================================
+
+Primary
+#0B2D5C
+
+Secondary
+#FF8A00
+
+Background
+#FFFFFF
+
+Text
+#1B1B1B
+
+Border
+#D9D9D9
+
+Light
+#F7F8FA
+
+Success
+#2E7D32
+
+==================================================================
+TIPOGRAFIA
+==================================================================
+
+Fonte Principal
+Inter
+
+Fallback
+Arial
+sans-serif
+
+Título
+36px
+700
+
+Subtítulo
+18px
+600
+
+Texto
+14px
+400
+
+Tabela
+13px
+
+Valor Total
+28px
+700
+
+==================================================================
+PÁGINA
+==================================================================
+
+Formato:
+A4 Retrato
+
+Tamanho
+
+210 mm
+297 mm
+
+Margens
+
+20 mm
+
+Espaçamento interno
+
+16 px
+
+Espaço entre seções
+
+20 px
+
+Border Radius
+
+10 px
+
+==================================================================
+CABEÇALHO
+==================================================================
+
+Logo VoltES
+
+lado esquerdo
+
+Título
+
+ORÇAMENTO
+
+lado direito
+
+Linha inferior azul
+
+2 px
+
+==================================================================
+DADOS DO CLIENTE
+==================================================================
+
+Cliente
+
+Telefone
+
+Endereço
+
+Cidade
+
+Data
+
+Número do orçamento
+
+==================================================================
+SERVIÇOS
+==================================================================
+
+Tabela largura total
+
+Colunas
+
+Item
+
+Descrição
+
+Sem preço unitário.
+
+O cliente visualizará apenas a descrição dos serviços.
+
+==================================================================
+MATERIAIS
+==================================================================
+
+Tabela largura total
+
+Colunas
+
+Item
+
+Descrição
+
+Quantidade
+
+Sem valores.
+
+Serve apenas para informar os materiais utilizados.
+
+==================================================================
+VALOR TOTAL
+==================================================================
+
+Caixa destacada
+
+Fundo
+
+#0B2D5C
+
+Texto branco
+
+Valor em destaque
+
+28px
+
+==================================================================
+OBSERVAÇÕES
+==================================================================
+
+Caixa com borda cinza.
+
+==================================================================
+RODAPÉ
+==================================================================
+
+Telefone
+
+(27) 99617-5219
+
+Sem QR Code.
+
+Sem Instagram.
+
+Sem e-mail.
+
+==================================================================
+ÍCONE
+==================================================================
+
+Minimalista
+
+Raio
+
+Azul
+
+Monocromático
+
+Formato quadrado
+
+Ideal para PWA.
+
+==================================================================
+ÍCONES
+==================================================================
+
+Biblioteca
+
+Lucide
+
+Ícones
+
+bolt
+
+wrench
+
+clipboard-list
+
+building-2
+
+==================================================================
+CSS
+==================================================================
+
+display:flex
+
+border-collapse:collapse
+
+box-sizing:border-box
+
+page-break-inside:avoid
+
+@media print
+
+html2pdf.js
+
+==================================================================
+ESTRUTURA HTML
+==================================================================
+
+header
+
+cliente
+
+servicos
+
+materiais
+
+valor_total
+
+observacoes
+
+footer
+
+==================================================================
+PROMPT PARA O CURSOR
+==================================================================
+
+Implemente exatamente esta especificação.
+
+Não altere:
+
+cores
+
+fontes
+
+espaçamentos
+
+bordas
+
+margens
+
+tamanhos
+
+A aparência deve ser corporativa e extremamente limpa.
+
+O PDF deve ocupar uma folha A4 em retrato.
+
+As tabelas devem possuir linhas discretas.
+
+O cabeçalho deve conter o logo da VoltES e o título ORÇAMENTO.
+
+A tabela de serviços deve possuir apenas Item e Descrição.
+
+A tabela de materiais deve possuir Item, Descrição e Quantidade.
+
+Não utilizar preço unitário.
+
+O cliente visualizará apenas o valor final.
+
+A identidade visual deve lembrar empresas como WEG, Siemens,
+Schneider Electric e ABB.
+
+==================================================================
+FIM DO DOCUMENTO
+==================================================================
+```
+
+Esse é um bom ponto de partida, mas eu consigo fazer algo muito mais completo: um documento de **1000+ linhas**, com especificação pixel a pixel, componentes, tokens de design, CSS completo e layout para o Cursor reproduzir o orçamento praticamente idêntico ao modelo que criamos. Esse tipo de documento costuma dar resultados muito melhores.

@@ -1,0 +1,243 @@
+==================================================================
+ÍCONES
+==================================================================
+
+Biblioteca obrigatória
+
+Lucide React
+
+npm install lucide-react
+
+Não utilizar Heroicons
+Não utilizar Material Icons
+Não utilizar FontAwesome
+Não utilizar Tabler
+Não utilizar Remix
+
+Todos os ícones devem ser exclusivamente da biblioteca Lucide.
+
+=========================================================
+ÍCONE DO CABEÇALHO
+=========================================================
+
+Nome
+
+BadgeCheck
+
+Tamanho
+
+20 px
+
+Stroke
+
+2
+
+Cor
+
+#0B2D5C
+
+Posição
+
+Alinhado horizontalmente ao texto.
+
+Espaço entre ícone e texto
+
+8 px
+
+=========================================================
+CLIENTE
+=========================================================
+
+Ícone
+
+UserRound
+
+18 px
+
+Stroke 2
+
+Cor
+
+#0B2D5C
+
+Margem direita
+
+8 px
+
+=========================================================
+ENDEREÇO
+=========================================================
+
+MapPinned
+
+18 px
+
+Stroke 2
+
+Cor
+
+#0B2D5C
+
+=========================================================
+DATA
+=========================================================
+
+CalendarDays
+
+18 px
+
+Stroke 2
+
+=========================================================
+ORÇAMENTO
+=========================================================
+
+FileText
+
+20 px
+
+Stroke 2
+
+=========================================================
+SERVIÇOS
+=========================================================
+
+ClipboardList
+
+20 px
+
+Stroke 2
+
+=========================================================
+MATERIAIS
+=========================================================
+
+Package
+
+20 px
+
+Stroke 2
+
+=========================================================
+VALOR TOTAL
+=========================================================
+
+CircleDollarSign
+
+22 px
+
+Stroke 2
+
+Cor branca
+
+=========================================================
+OBSERVAÇÕES
+=========================================================
+
+NotebookPen
+
+20 px
+
+Stroke 2
+
+=========================================================
+TELEFONE
+=========================================================
+
+Phone
+
+18 px
+
+Stroke 2
+
+=========================================================
+LOGO
+=========================================================
+
+Não utilizar ícone da biblioteca.
+
+Utilizar exclusivamente o SVG oficial da VoltES.
+
+=========================================================
+ESPAÇAMENTOS
+=========================================================
+
+Ícone → Texto
+
+8 px
+
+Ícone → Borda esquerda
+
+16 px
+
+Título → Linha divisória
+
+20 px
+
+Linha divisória → Próxima seção
+
+24 px
+
+Entre seções
+
+20 px
+
+Padding interno
+
+16 px
+
+Tabela
+
+Padding vertical
+
+12 px
+
+Padding horizontal
+
+16 px
+
+=========================================================
+BORDAS
+=========================================================
+
+Radius
+
+10 px
+
+Espessura
+
+1 px
+
+Cor
+
+#D9D9D9
+
+=========================================================
+SOMBRAS
+=========================================================
+
+box-shadow
+
+0 2px 8px rgba(0,0,0,.06)
+
+=========================================================
+LINHAS DAS TABELAS
+=========================================================
+
+Cor
+
+#E5E7EB
+
+Espessura
+
+1 px
+
+=========================================================
+CURSOR
+=========================================================
+
+Jamais substituir os ícones acima por equivalentes.
+
+Utilizar exatamente os nomes informados da biblioteca Lucide.
+
+Caso um ícone não exista, interromper a geração e informar erro ao invés de escolher outro automaticamente.
