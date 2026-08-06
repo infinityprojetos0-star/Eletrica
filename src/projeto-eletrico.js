@@ -9,6 +9,10 @@ var ProjetoEletrico = (() => {
   const PPM_MIN = 8;
   const PPM_MAX = 480;
   const SNAP_M = 0.35;
+  /** Distância máx. para “pingar” um ponto/QDC no conduíte mais próximo (eixo do trecho). */
+  const POINT_LINK_M = 1.8;
+  /** Une extremidades de conduítes quase tocantes (rede contínua). */
+  const CONDUIT_JOIN_M = 0.25;
   const WALL_SNAP_M = 0.08;
   const SEG_SNAP_M = 0.12;
   const GRID_M = 0.01; // snap / grade lógica: 1 cm
@@ -523,6 +527,16 @@ var ProjetoEletrico = (() => {
     return Math.hypot(a.x - b.x, a.y - b.y);
   }
 
+  function projectOnSegGlobal(p, a, b) {
+    const l2 = (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
+    if (l2 < 1e-12) return { x: a.x, y: a.y, t: 0, d: dist(p, a) };
+    let t = ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / l2;
+    t = Math.max(0, Math.min(1, t));
+    const x = a.x + t * (b.x - a.x);
+    const y = a.y + t * (b.y - a.y);
+    return { x, y, t, d: dist(p, { x, y }) };
+  }
+
   /**
    * Simbologia NBR 5444 — tamanhos FIXOS em metros na planta
    * (escalam com o zoom junto com o cômodo, não “pulam” de tamanho na tela).
@@ -785,10 +799,14 @@ var ProjetoEletrico = (() => {
     return L;
   }
 
+  /**
+   * Grafo dos conduítes + ramais até cada ponto/QDC.
+   * Liga no eixo do trecho (não só nos vértices) e une pontas próximas.
+   */
   function buildGraph(projeto) {
     const nodes = [];
     const edges = [];
-    const key = (p) => `${p.x.toFixed(3)},${p.y.toFixed(3)}`;
+    const key = (p) => `${Number(p.x).toFixed(3)},${Number(p.y).toFixed(3)}`;
     const indexOf = (p) => {
       const k = key(p);
       let i = nodes.findIndex((n) => key(n) === k);
@@ -799,28 +817,118 @@ var ProjetoEletrico = (() => {
       return i;
     };
 
+    // 1) Trechos dos conduítes
     (projeto.conduits || []).forEach((c) => {
       const verts = c.points || [];
       for (let i = 1; i < verts.length; i++) {
         const a = indexOf(verts[i - 1]);
         const b = indexOf(verts[i]);
-        edges.push({ a, b, len: dist(verts[i - 1], verts[i]), conduitId: c.id });
+        if (a === b) continue;
+        edges.push({
+          a,
+          b,
+          len: dist(nodes[a], nodes[b]),
+          conduitId: c.id
+        });
       }
     });
 
-    const snap = {};
-    (projeto.points || []).forEach((pt) => {
-      let best = -1;
-      let bestD = SNAP_M;
-      nodes.forEach((n, i) => {
-        const d = dist(pt, n);
-        if (d < bestD) {
-          bestD = d;
-          best = i;
+    // 2) Junta extremidades quase tocantes (conduítes desenhados em pedaços)
+    const nConduitNodes = nodes.length;
+    for (let i = 0; i < nConduitNodes; i++) {
+      for (let j = i + 1; j < nConduitNodes; j++) {
+        const d = dist(nodes[i], nodes[j]);
+        if (d > 0 && d <= CONDUIT_JOIN_M) {
+          const already = edges.some(
+            (e) => (e.a === i && e.b === j) || (e.a === j && e.b === i)
+          );
+          if (!already) {
+            edges.push({ a: i, b: j, len: Math.max(d, 0.01), conduitId: null, bridge: true });
+          }
         }
-      });
-      if (best < 0) best = indexOf(pt);
-      snap[pt.id] = best;
+      }
+    }
+
+    const snap = {};
+
+    // 3) Cada ponto elétrico “pinga” no conduíte mais próximo (projeção no segmento)
+    (projeto.points || []).forEach((pt) => {
+      const ptIdx = indexOf(pt);
+      let best = null;
+
+      // cópia do comprimento atual — splits só olham arestas de conduíte existentes
+      const edgeCount = edges.length;
+      for (let ei = 0; ei < edgeCount; ei++) {
+        const e = edges[ei];
+        if (e.bridge || e.ramal) continue;
+        const proj = projectOnSegGlobal(pt, nodes[e.a], nodes[e.b]);
+        if (!best || proj.d < best.d) {
+          best = { ...proj, ei, e };
+        }
+      }
+
+      // fallback: nó de conduíte próximo (vértice)
+      if (!best || best.d > POINT_LINK_M) {
+        let bestNode = -1;
+        let bestD = POINT_LINK_M;
+        for (let i = 0; i < nConduitNodes; i++) {
+          const d = dist(pt, nodes[i]);
+          if (d < bestD) {
+            bestD = d;
+            bestNode = i;
+          }
+        }
+        if (bestNode >= 0) {
+          if (ptIdx !== bestNode) {
+            edges.push({
+              a: ptIdx,
+              b: bestNode,
+              len: Math.max(bestD, 0.01),
+              conduitId: null,
+              ramal: true
+            });
+          }
+          snap[pt.id] = ptIdx;
+          return;
+        }
+        // sem conduíte perto: nó isolado (sem caminho até o QDC)
+        snap[pt.id] = ptIdx;
+        return;
+      }
+
+      let attachIdx;
+      if (best.t <= 0.02) attachIdx = best.e.a;
+      else if (best.t >= 0.98) attachIdx = best.e.b;
+      else {
+        attachIdx = indexOf({ x: best.x, y: best.y });
+        // divide o trecho no ponto de projeção
+        const old = edges[best.ei];
+        if (attachIdx !== old.a && attachIdx !== old.b) {
+          edges[best.ei] = {
+            a: old.a,
+            b: attachIdx,
+            len: dist(nodes[old.a], nodes[attachIdx]),
+            conduitId: old.conduitId
+          };
+          edges.push({
+            a: attachIdx,
+            b: old.b,
+            len: dist(nodes[attachIdx], nodes[old.b]),
+            conduitId: old.conduitId
+          });
+        }
+      }
+
+      if (ptIdx !== attachIdx) {
+        edges.push({
+          a: ptIdx,
+          b: attachIdx,
+          len: Math.max(best.d, 0.01),
+          conduitId: best.e.conduitId,
+          ramal: true
+        });
+      }
+      snap[pt.id] = ptIdx;
     });
 
     return { nodes, edges, snap };
@@ -1448,6 +1556,7 @@ var ProjetoEletrico = (() => {
     }
 
     function runAnalise() {
+      selectedCircuitId = null;
       const analise = analisar(projeto, {
         produtos: ctx.produtos,
         modoPreco: ctx.precoModo
@@ -1458,7 +1567,14 @@ var ProjetoEletrico = (() => {
       save();
       paint();
       refreshSelectionUI();
-      ctx.toast?.(`Análise NBR 5410: ${analise.circuits.length} circuito(s)`);
+      const comPath = (analise.circuits || []).filter((c) => (c.caminhos || []).length).length;
+      const semPath = (analise.circuits || []).length - comPath;
+      const fiosN = (analise.conduits || []).reduce((n, c) => n + (c.fios?.length || 0), 0);
+      ctx.toast?.(
+        semPath > 0
+          ? `Circuitos refeitos: ${analise.circuits.length} · ${comPath} com caminho · ${semPath} sem conduíte até o QDC`
+          : `Circuitos refeitos: ${analise.circuits.length} · ${fiosN} fio(s) nos conduítes`
+      );
     }
 
     function escapeHtml(s) {
@@ -3815,11 +3931,21 @@ var ProjetoEletrico = (() => {
       // Caminho contínuo do fio: QDC → cada ponto do circuito selecionado
       if (hasCircFilter) {
         const circ = (projeto.lastAnalise?.circuits || []).find((x) => x.id === selectedCircuitId);
-        (circ?.caminhos || []).forEach((cam) => {
+        const caminhos = circ?.caminhos || [];
+        caminhos.forEach((cam) => {
           if (cam.pontos?.length >= 2) {
             drawConduitPath(cam.pontos, circ.cor || "#1565c0", true, false);
           }
         });
+        // Sem caminho no grafo: tracejado QDC→ponto (pede conduíte / reanalisar)
+        if (!caminhos.length && circ?.pontos?.length) {
+          const qdcPt = (projeto.points || []).find((p) => p.tipo === "qdc");
+          circ.pontos.forEach((pid) => {
+            const pt = (projeto.points || []).find((p) => p.id === pid);
+            if (!qdcPt || !pt) return;
+            drawPoly([qdcPt, pt], circ.cor || "#e53935", 2.5, [8, 6], 0.85);
+          });
+        }
       }
 
       if (conduitDraft) {
@@ -4015,18 +4141,23 @@ var ProjetoEletrico = (() => {
       const circHtml = a?.circuits?.length
         ? `<p class="hint" style="margin-bottom:8px">${
             selectedCircuitId
-              ? `Caminho do fio <strong>${escapeHtml(selectedCircuitId)}</strong> (QDC → pontos). Clique de novo para ver todos os fios nos conduítes.`
-              : "Sem filtro: cada conduíte mostra os fios que passam nele. Clique num circuito para seguir só aquele caminho."
+              ? `Caminho do fio <strong>${escapeHtml(selectedCircuitId)}</strong> (QDC → pontos). Clique de novo para ver todos. Se aparecer tracejado, o conduíte não chega ao QDC — ligue e clique em <strong>Analisar NBR 5410</strong> de novo (refaz os circuitos).`
+              : "Clique em <strong>Analisar NBR 5410</strong> para refazer circuitos e fios nos conduítes. Depois, clique num circuito para ver o caminho."
           }</p>
           ${a.circuits
             .map((c) => {
               const active = selectedCircuitId === c.id;
               const nCam = c.caminhos?.length || 0;
               const nCd = c.conduitesIds?.length || 0;
+              const pathHint =
+                nCam === 0
+                  ? `<div class="hint" style="color:#e53935">Sem caminho no conduíte até o QDC — ligue o conduíte e analise de novo.</div>`
+                  : "";
               return `<button type="button" class="pe-circ ${active ? "active" : ""}" data-circ="${escapeHtml(c.id)}" style="border-left:4px solid ${c.cor}">
             <strong>${escapeHtml(c.id)}</strong> · ${escapeHtml(c.dimensionamento?.tipo?.label || c.tipoId || "")}
             <div class="hint">${c.pontos.length} ponto(s) · ${nCam} caminho(s) · ${nCd} conduíte(s) · L≈${c.comprimentoM?.toFixed?.(1) || "—"} m</div>
             <div>${c.bitola || "—"} mm² · DJ ${c.disjuntor || "—"}A · queda ${c.quedaPct != null ? c.quedaPct.toFixed(2) + "%" : "—"} · ${c.potenciaVA} VA/W</div>
+            ${pathHint}
           </button>`;
             })
             .join("")}`
