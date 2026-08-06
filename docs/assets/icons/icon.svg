@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="VoltES">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4ec0ff"/>
+      <stop offset="100%" stop-color="#1a86e8"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#0d1420"/>
+  <rect x="36" y="36" width="440" height="440" rx="96" fill="url(#g)" opacity="0.18"/>
+  <path d="M292 72L148 278h98l-26 162 184-246h-98L292 72z" fill="url(#g)"/>
+</svg>

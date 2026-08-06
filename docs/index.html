@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a1628" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="description" content="VoltES — orçamentos elétricos residenciais e comerciais para o Espírito Santo." />
+  <meta name="application-name" content="VoltES" />
+  <meta name="voltes-version" content="2.0.1" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="VoltES" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>VoltES — Orçamentos Elétricos</title>
+
+  <link rel="icon" href="/Eletrica/assets/icon-192-DSYwYHoI.png" type="image/png" sizes="192x192" />
+  <link rel="icon" href="/Eletrica/assets/icon-512-D-ixNCH9.png" type="image/png" sizes="512x512" />
+  <link rel="apple-touch-icon" href="/Eletrica/assets/apple-touch-icon-DrmdwmSO.png" />
+  <link rel="manifest" href="/Eletrica/assets/manifest-0ALqTUI8.webmanifest" />
+
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("voltes-theme");
+        if (t !== "light" && t !== "dark") {
+          t = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+        }
+        document.documentElement.setAttribute("data-theme", t);
+      } catch (e) {
+        document.documentElement.setAttribute("data-theme", "dark");
+      }
+    })();
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <script type="module" crossorigin src="/Eletrica/assets/index-DTF2PF8u.js"></script>
+  <link rel="stylesheet" crossorigin href="/Eletrica/assets/index-BtHMG5ah.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <img class="brand-logo" src="/Eletrica/assets/logo-sidebar-L2IeX_B-.png" alt="VoltES" width="64" height="64" />
+        <div class="brand-text">
+          <strong>VoltES</strong>
+          <span>Espírito Santo</span>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <button class="nav-item active" data-view="dashboard">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+          Dashboard
+        </button>
+        <button class="nav-item" data-view="clientes">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          Clientes
+        </button>
+        <button class="nav-item" data-view="orcamentos">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
+          Orçamentos
+        </button>
+        <button class="nav-item" data-view="servicos">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+          Serviços
+        </button>
+        <button class="nav-item" data-view="produtos">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7L12 12l8.7-5M12 22V12"/></svg>
+          Materiais
+        </button>
+        <button class="nav-item" data-view="financeiro">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          Financeiro
+        </button>
+        <button class="nav-item" data-view="calculadoras">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h8M8 10h8M8 14h3M13 14h3M8 18h3M13 18h3"/></svg>
+          Calculadoras
+        </button>
+        <button class="nav-item" data-view="projeto">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/><path d="M10 6.5h4M17.5 10v4M10 17.5h4M6.5 10v4"/></svg>
+          Projeto elétrico
+        </button>
+        <button class="nav-item" data-view="contratos">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          Contratos
+        </button>
+        <button class="nav-item" data-view="notas">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
+          Notas fiscais
+        </button>
+        <button class="nav-item" data-view="empresa">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4M9 9v.01M9 12v.01M9 15v.01M9 18v.01"/></svg>
+          Empresa
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button class="btn btn-secondary btn-sm install-pwa" id="installPwaBtn" type="button" hidden>
+          Instalar app
+        </button>
+        <div class="sync-chip" id="syncChip" title="Status da nuvem Firebase">
+          <span class="dot"></span>
+          <span id="syncLabel">Sincronizando…</span>
+        </div>
+        <div class="region-chip">
+          <span class="dot"></span>
+          Preços ES · mercado 2026
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px">
+          <div class="app-version" id="appVersion" title="Versão do app / cache">v2.0.1</div>
+          <button type="button" class="theme-toggle" id="themeToggle" title="Alternar tema claro/escuro" aria-label="Alternar tema">
+            <svg class="theme-icon-dark" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+            <svg class="theme-icon-light" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" hidden><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <div class="main-wrap">
+      <header class="topbar">
+        <button class="icon-btn mobile-toggle" id="menuToggle" aria-label="Menu">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
+        <div class="topbar-title">
+          <h1 id="pageTitle">Dashboard</h1>
+          <p id="pageSubtitle">Visão geral do seu negócio elétrico</p>
+        </div>
+        <div class="topbar-actions">
+          <div class="price-mode" title="Valor usado nos orçamentos e catálogos">
+            <span class="price-mode-label">Preço</span>
+            <div class="segmented" id="precoModoSeg">
+              <button type="button" data-modo="minimo">Mínimo</button>
+              <button type="button" data-modo="medio" class="active">Médio</button>
+              <button type="button" data-modo="maximo">Máximo</button>
+            </div>
+          </div>
+          <div class="search-box">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+            <input type="search" id="globalSearch" placeholder="Buscar..." />
+          </div>
+          <button class="btn btn-primary" id="quickOrcamento">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+            Novo orçamento
+          </button>
+        </div>
+      </header>
+
+      <main class="content" id="content"></main>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modalBackdrop" hidden>
+    <div class="modal" id="modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h2 id="modalTitle">Modal</h2>
+        <button class="icon-btn" id="modalClose" aria-label="Fechar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+      <div class="modal-footer" id="modalFooter"></div>
+    </div>
+  </div>
+
+  <div class="toast-stack" id="toastStack"></div>
+
+</body>
+</html>
