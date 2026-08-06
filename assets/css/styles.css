@@ -1240,12 +1240,41 @@ tr:hover td { background: rgba(61,180,255,0.03); }
   background: rgba(255, 167, 38, 0.35);
   border-color: rgba(255, 167, 38, 0.75);
 }
-.pe-circ {
+.pe-mod-block {
+  border: 1px solid var(--border);
+  border-radius: 10px;
   padding: 8px 10px;
-  margin-bottom: 8px;
+  margin: 8px 0;
   background: rgba(255,255,255,0.03);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pe-mod-block strong {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.pe-circ {
+  display: block;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  background: rgba(255,255,255,0.03);
+  color: inherit;
+  border: 1px solid transparent;
   border-radius: 8px;
+  margin-bottom: 6px;
+  padding: 8px 10px;
   font-size: 0.82rem;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.pe-circ:hover {
+  background: rgba(61, 180, 255, 0.08);
+  border-color: rgba(61, 180, 255, 0.25);
+}
+.pe-circ.active {
+  background: rgba(61, 180, 255, 0.14);
+  border-color: rgba(61, 180, 255, 0.45);
 }
 .pe-mat { width: 100%; font-size: 0.78rem; border-collapse: collapse; }
 .pe-mat th, .pe-mat td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--border); vertical-align: top; }

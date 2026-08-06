@@ -102,15 +102,75 @@ var ProjetoEletrico = (() => {
   }
 
   const VAR_INTERRUPTOR = [
-    { id: "simples", label: "Simples", simb: "S" },
-    { id: "duplo", label: "Duplo", simb: "S2" },
-    { id: "paralelo", label: "Paralelo (three-way)", simb: "S3" },
-    { id: "intermediario", label: "Intermediário (four-way)", simb: "S4" },
-    { id: "bipolar", label: "Bipolar", simb: "SB" },
-    { id: "dimmer", label: "Dimmer / variador", simb: "D" },
-    { id: "pulsador", label: "Pulsador", simb: "P" },
-    { id: "sensor_embutido", label: "Com sensor embutido", simb: "SS" }
+    { id: "simples", label: "Simples (1 tecla)", simb: "S", teclas: 1 },
+    { id: "duplo", label: "Duplo (2 teclas)", simb: "S2", teclas: 2 },
+    { id: "triplo", label: "Triplo (3 teclas)", simb: "S3", teclas: 3 },
+    { id: "paralelo", label: "Paralelo (three-way)", simb: "S3w", teclas: 1 },
+    { id: "intermediario", label: "Intermediário (four-way)", simb: "S4", teclas: 1 },
+    { id: "bipolar", label: "Bipolar", simb: "SB", teclas: 2 },
+    { id: "dimmer", label: "Dimmer / variador", simb: "D", teclas: 1 },
+    { id: "pulsador", label: "Pulsador", simb: "P", teclas: 1 },
+    { id: "sensor_embutido", label: "Com sensor embutido", simb: "SS", teclas: 1 }
   ];
+
+  function teclasDoInterruptor(variante) {
+    const v = varInterruptor(variante);
+    return Math.max(1, Number(v.teclas) || 1);
+  }
+
+  /** Letras de comando por tecla (a, b, c…) — ligam à lâmpada com a mesma letra. */
+  function syncComandos(pt) {
+    if (!pt) return [];
+    const n = teclasDoInterruptor(pt.variante || "simples");
+    let cmds = Array.isArray(pt.comandos)
+      ? pt.comandos.map((c) => String(c || "").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 2))
+      : [];
+    if (!cmds.length && pt.interruptor) {
+      cmds = String(pt.interruptor)
+        .toLowerCase()
+        .split(/[\/,;\s]+/)
+        .map((c) => c.replace(/[^a-z0-9]/g, "").slice(0, 2))
+        .filter(Boolean);
+    }
+    while (cmds.length < n) {
+      cmds.push(String.fromCharCode(97 + (cmds.length % 26)));
+    }
+    pt.comandos = cmds.slice(0, n);
+    pt.interruptor = pt.comandos.join("/");
+    return pt.comandos;
+  }
+
+  /** Config individual de cada módulo de tomada (dupla/tripla). */
+  function syncModulosConfig(pt) {
+    if (!pt || (pt.tipo !== "tomada" && pt.tipo !== "conjugado")) return [];
+    const n = modulosTomada(pt.modulos).modulos;
+    let cfg = Array.isArray(pt.modulosConfig) ? pt.modulosConfig.map((m) => ({ ...m })) : [];
+    while (cfg.length < n) {
+      cfg.push({
+        amperagem: Number(pt.amperagem) === 20 ? 20 : 10,
+        usoCircuito: pt.usoCircuito === "tue" ? "tue" : "tug",
+        circuitoId: pt.circuitoId || "",
+        usoTue: pt.usoTue || ""
+      });
+    }
+    cfg = cfg.slice(0, n).map((m) => ({
+      amperagem: Number(m.amperagem) === 20 ? 20 : 10,
+      usoCircuito: m.usoCircuito === "tue" || Number(m.amperagem) >= 20 ? "tue" : "tug",
+      circuitoId: m.circuitoId || "",
+      usoTue: m.usoTue || ""
+    }));
+    pt.modulosConfig = cfg;
+    pt.interruptor = ""; // tomada não comanda iluminação
+    // agregados do ponto (análise / resumo)
+    pt.amperagem = cfg.some((m) => m.amperagem >= 20) ? 20 : 10;
+    pt.usoCircuito = cfg.some((m) => m.usoCircuito === "tue") ? "tue" : "tug";
+    const firstCirc = cfg.find((m) => m.circuitoId)?.circuitoId || "";
+    if (firstCirc) {
+      pt.circuitoId = firstCirc;
+      pt.circuitoManual = true;
+    }
+    return cfg;
+  }
 
   const VAR_LAMPADA = [
     { id: "ponto", label: "Ponto de luz", pot: 20, simb: "L" },
@@ -218,8 +278,13 @@ var ProjetoEletrico = (() => {
       } else {
         out.usoTue = "";
       }
+      out.interruptor = "";
+      syncModulosConfig(out);
     }
-    if (out.tipo === "interruptor") out.variante = out.variante || "simples";
+    if (out.tipo === "interruptor") {
+      out.variante = out.variante || "simples";
+      syncComandos(out);
+    }
     if (out.tipo === "lampada") out.variante = out.variante || "ponto";
     if (out.tipo === "conjugado") {
       const cj = conjugadoById(out.conjugadoId || "s1_t1");
@@ -228,6 +293,8 @@ var ProjetoEletrico = (() => {
       out.modulos = out.modulos || cj.tomMod;
       out.amperagem = Number(out.amperagem) === 20 ? 20 : cj.amp === 20 ? 20 : Number(out.amperagem) || cj.amp;
       out.usoCircuito = out.usoCircuito || (out.amperagem >= 20 ? "tue" : "tug");
+      syncComandos(out);
+      syncModulosConfig(out);
     }
     return out;
   }
@@ -248,6 +315,16 @@ var ProjetoEletrico = (() => {
   function cargaPonto(p) {
     const n = normalizePoint(p);
     if (n.tipo === "tomada" || n.tipo === "conjugado") {
+      if (Array.isArray(n.modulosConfig) && n.modulosConfig.length) {
+        return n.modulosConfig.reduce((sum, m) => {
+          if (m.usoTue) {
+            const uso = usoTueById(m.usoTue);
+            if (uso) return sum + uso.pot;
+          }
+          const amp = AMP_TOMADA.find((a) => a.id === Number(m.amperagem)) || AMP_TOMADA[0];
+          return sum + amp.potModulo;
+        }, 0);
+      }
       if (n.usoTue) {
         const uso = usoTueById(n.usoTue);
         if (uso && !(Number(n.potenciaVA) > 0)) return uso.pot;
@@ -543,6 +620,7 @@ var ProjetoEletrico = (() => {
     } else if (n.tipo === "interruptor") {
       const r = px(SYM_M.intR);
       const tick = r * 0.45;
+      const cmds = syncComandos(n);
       ctx.beginPath();
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.fillStyle = "#fff";
@@ -552,21 +630,23 @@ var ProjetoEletrico = (() => {
       ctx.stroke();
       const v = n.variante || "simples";
       ctx.beginPath();
-      if (v === "duplo") {
+      if (v === "duplo" || v === "bipolar") {
         ctx.moveTo(cx - tick, cy - tick * 0.45);
         ctx.lineTo(cx + tick, cy - tick * 0.45);
         ctx.moveTo(cx - tick, cy + tick * 0.45);
         ctx.lineTo(cx + tick, cy + tick * 0.45);
+      } else if (v === "triplo") {
+        ctx.moveTo(cx - tick, cy - tick * 0.55);
+        ctx.lineTo(cx + tick, cy - tick * 0.55);
+        ctx.moveTo(cx - tick, cy);
+        ctx.lineTo(cx + tick, cy);
+        ctx.moveTo(cx - tick, cy + tick * 0.55);
+        ctx.lineTo(cx + tick, cy + tick * 0.55);
       } else if (v === "paralelo" || v === "intermediario") {
         ctx.moveTo(cx - tick, cy);
         ctx.lineTo(cx + tick, cy);
         ctx.moveTo(cx, cy - tick);
         ctx.lineTo(cx, cy + tick);
-      } else if (v === "bipolar") {
-        ctx.moveTo(cx - tick, cy - tick * 0.35);
-        ctx.lineTo(cx + tick, cy - tick * 0.35);
-        ctx.moveTo(cx - tick, cy + tick * 0.35);
-        ctx.lineTo(cx + tick, cy + tick * 0.35);
       } else if (v === "dimmer") {
         ctx.moveTo(cx - tick, cy + tick * 0.5);
         ctx.lineTo(cx + tick, cy - tick * 0.5);
@@ -575,16 +655,23 @@ var ProjetoEletrico = (() => {
         ctx.lineTo(cx + tick, cy);
       }
       ctx.stroke();
+      // letras de comando ao lado (a / a·b / a·b·c)
+      ctx.fillStyle = selected ? "#c45c00" : "#222";
+      ctx.font = `bold ${fontPx(0.13)}px Segoe UI, sans-serif`;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText(cmds.join("·"), cx + r + 3, cy);
     } else if (n.tipo === "tomada") {
       const size = px(SYM_M.tomada);
+      const cfg = syncModulosConfig(n);
       drawTrianguloTomada(ctx, cx, cy, size, nivelTomada(n.alturaM), stroke, lw);
-      if (Number(n.amperagem) >= 20 || n.usoCircuito === "tue") {
-        ctx.fillStyle = stroke;
-        ctx.font = `bold ${fontPx(0.12)}px Segoe UI, sans-serif`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "top";
-        ctx.fillText("20", cx, cy + size * 0.55);
-      }
+      const nMod = cfg.length || 1;
+      ctx.fillStyle = stroke;
+      ctx.font = `bold ${fontPx(0.11)}px Segoe UI, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      const ampTag = cfg.some((m) => m.amperagem >= 20) ? "20" : "";
+      ctx.fillText(nMod > 1 ? `T${nMod}${ampTag}` : ampTag || "", cx, cy + size * 0.55);
     } else if (n.tipo === "conjugado") {
       const size = px(SYM_M.conjTom);
       const ri = px(SYM_M.conjIntR);
@@ -658,27 +745,36 @@ var ProjetoEletrico = (() => {
       ctx.stroke();
     }
 
-    if (n.tipo !== "lampada") {
+    if (n.tipo !== "lampada" && n.tipo !== "interruptor") {
       ctx.fillStyle = selected ? "#c45c00" : "#222";
       ctx.font = `${fontPx(0.14)}px Segoe UI, sans-serif`;
       ctx.textAlign = "left";
       ctx.textBaseline = "alphabetic";
-      const circNum = n.circuitoId ? String(n.circuitoId).replace(/^C/i, "") : "";
       const parts = [];
-      if (n.tipo === "tomada" || n.tipo === "conjugado" || n.tipo === "chuveiro" || n.tipo === "ar") {
-        if (n.potenciaVA) parts.push(String(Math.round(n.potenciaVA)));
-      }
-      if (circNum) parts.push(circNum);
-      if (n.interruptor) parts.push(String(n.interruptor).toLowerCase());
-      if (n.usoTue) {
-        const u = usoTueById(n.usoTue);
-        if (u) parts.push(u.label.split(" ")[0]);
+      if (n.tipo === "tomada") {
+        const cfg = n.modulosConfig || [];
+        const circs = cfg.map((m) => (m.circuitoId || "").replace(/^C/i, "")).filter(Boolean);
+        if (circs.length) parts.push(circs.join("/"));
+        else if (n.circuitoId) parts.push(String(n.circuitoId).replace(/^C/i, ""));
+        // sem letra de comando — tomada não comanda iluminação
+      } else if (n.tipo === "conjugado") {
+        const cmds = syncComandos(n);
+        if (cmds.length) parts.push(cmds.join("·"));
+        if (n.circuitoId) parts.push(String(n.circuitoId).replace(/^C/i, ""));
+      } else {
+        const circNum = n.circuitoId ? String(n.circuitoId).replace(/^C/i, "") : "";
+        if (n.tipo === "chuveiro" || n.tipo === "ar") {
+          if (n.potenciaVA) parts.push(String(Math.round(n.potenciaVA)));
+        }
+        if (circNum) parts.push(circNum);
+        if (n.usoTue) {
+          const u = usoTueById(n.usoTue);
+          if (u) parts.push(u.label.split(" ")[0]);
+        }
       }
       const tag = parts.join(" ");
       const ox = px(SYM_M.tomada) * 0.55;
       if (tag) ctx.fillText(tag, cx + ox, cy - 2);
-      else if (n.tipo === "interruptor" && n.interruptor)
-        ctx.fillText(String(n.interruptor).toLowerCase(), cx + px(SYM_M.intR) + 4, cy + 3);
     }
     ctx.restore();
   }
@@ -1219,6 +1315,7 @@ var ProjetoEletrico = (() => {
     let inferSnap = null; // {x,y,kind,seg} — travinha SketchUp
     let selectedId = null;
     let selectedKind = null;
+    let selectedCircuitId = null; // highlight de caminho do circuito
     let hover = null;
     let lengthBuffer = "";
     let hotkeys = loadHotkeys();
@@ -2846,7 +2943,64 @@ var ProjetoEletrico = (() => {
           .join("");
         const showTom = pt.tipo === "tomada" || pt.tipo === "conjugado";
         const showInt = pt.tipo === "interruptor" || pt.tipo === "conjugado";
-        const isTue = showTom && (pt.usoCircuito === "tue" || Number(pt.amperagem) >= 20);
+        const cmds = showInt ? syncComandos(pt) : [];
+        const modCfg = showTom && pt.tipo === "tomada" ? syncModulosConfig(pt) : [];
+        const cmdFields = cmds
+          .map(
+            (c, i) =>
+              `<label>Tecla ${i + 1} → iluminação (letra)
+                <input class="pe-cmd-letter" data-cmd="${i}" maxlength="2" value="${escapeHtml(c)}" placeholder="a" />
+              </label>`
+          )
+          .join("");
+        const modFields =
+          pt.tipo === "tomada"
+            ? modCfg
+                .map((m, i) => {
+                  const isTueM = m.usoCircuito === "tue" || m.amperagem >= 20;
+                  return `<div class="pe-mod-block">
+              <strong>Módulo ${i + 1}</strong>
+              <label>Amperagem
+                <select class="pe-mod-amp" data-mod="${i}">
+                  ${AMP_TOMADA.map(
+                    (a) =>
+                      `<option value="${a.id}" ${Number(m.amperagem) === a.id ? "selected" : ""}>${a.label}</option>`
+                  ).join("")}
+                </select>
+              </label>
+              <label>Uso
+                <select class="pe-mod-uso" data-mod="${i}">
+                  <option value="tug" ${!isTueM ? "selected" : ""}>TUG</option>
+                  <option value="tue" ${isTueM ? "selected" : ""}>TUE</option>
+                </select>
+              </label>
+              <label>Circuito
+                <select class="pe-mod-circ" data-mod="${i}">
+                  ${["", "C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C10", "C11", "C12"]
+                    .map(
+                      (c) =>
+                        `<option value="${c}" ${m.circuitoId === c ? "selected" : ""}>${c || "Automático"}</option>`
+                    )
+                    .join("")}
+                </select>
+              </label>
+              ${
+                isTueM
+                  ? `<label>Equipamento TUE
+                <select class="pe-mod-tue" data-mod="${i}">
+                  <option value="">—</option>
+                  ${USOS_TUE.map(
+                    (u) =>
+                      `<option value="${u.id}" ${m.usoTue === u.id ? "selected" : ""}>${u.label}</option>`
+                  ).join("")}
+                </select>
+              </label>`
+                  : ""
+              }
+            </div>`;
+                })
+                .join("")
+            : "";
         return `<div class="pe-side-block pe-inspector">
           <h3>${escapeHtml(meta.label)}</h3>
           <div class="pe-insp-form">
@@ -2858,44 +3012,14 @@ var ProjetoEletrico = (() => {
               ).join("")}</select>
             </label>
             ${
-              showTom
+              pt.tipo === "tomada"
                 ? `<label>Módulos tomada
               <select id="pePtMod">${MODULOS_TOMADA.map(
                 (m) =>
                   `<option value="${m.id}" ${pt.modulos === m.id ? "selected" : ""}>${m.label}</option>`
               ).join("")}</select></label>
-              <label>Amperagem
-              <select id="pePtAmp">${AMP_TOMADA.map(
-                (a) =>
-                  `<option value="${a.id}" ${Number(pt.amperagem) === a.id ? "selected" : ""}>${a.label}</option>`
-              ).join("")}</select></label>
-              <label>Uso circuito
-              <select id="pePtUso">
-                <option value="tug" ${pt.usoCircuito !== "tue" ? "selected" : ""}>TUG</option>
-                <option value="tue" ${pt.usoCircuito === "tue" ? "selected" : ""}>TUE</option>
-              </select></label>
-              ${
-                isTue
-                  ? `<label>Uso da TUE (equipamento)
-              <select id="pePtUsoTue">
-                <option value="">— Selecione o uso —</option>
-                ${USOS_TUE.map(
-                  (u) =>
-                    `<option value="${u.id}" ${pt.usoTue === u.id ? "selected" : ""}>${u.label} (~${u.pot} W)</option>`
-                ).join("")}
-              </select></label>
-              <p class="hint">Ao escolher o uso, a potência média é preenchida automaticamente (pode ajustar depois).</p>`
-                  : ""
-              }`
-                : ""
-            }
-            ${
-              showInt
-                ? `<label>Interruptor
-              <select id="pePtVarInt">${VAR_INTERRUPTOR.map(
-                (v) =>
-                  `<option value="${v.id}" ${pt.variante === v.id ? "selected" : ""}>${v.label}</option>`
-              ).join("")}</select></label>`
+              <p class="hint">Cada módulo se configura abaixo. Tomada <strong>não</strong> tem letra de comando (não comanda luz).</p>
+              ${modFields}`
                 : ""
             }
             ${
@@ -2904,7 +3028,23 @@ var ProjetoEletrico = (() => {
               <select id="pePtConj">${PRESETS_CONJUGADO.map(
                 (c) =>
                   `<option value="${c.id}" ${pt.conjugadoId === c.id ? "selected" : ""}>${c.label}</option>`
+              ).join("")}</select></label>
+              <label>Módulos tomada
+              <select id="pePtMod">${MODULOS_TOMADA.map(
+                (m) =>
+                  `<option value="${m.id}" ${pt.modulos === m.id ? "selected" : ""}>${m.label}</option>`
               ).join("")}</select></label>`
+                : ""
+            }
+            ${
+              showInt
+                ? `<label>Tipo interruptor
+              <select id="pePtVarInt">${VAR_INTERRUPTOR.map(
+                (v) =>
+                  `<option value="${v.id}" ${pt.variante === v.id ? "selected" : ""}>${v.label}</option>`
+              ).join("")}</select></label>
+              <p class="hint">Cada tecla tem uma letra — a mesma letra no ponto de luz liga o comando.</p>
+              ${cmdFields}`
                 : ""
             }
             ${
@@ -2914,18 +3054,21 @@ var ProjetoEletrico = (() => {
                 (v) =>
                   `<option value="${v.id}" ${pt.variante === v.id ? "selected" : ""}>${v.label}</option>`
               ).join("")}</select></label>
-              <label>Comando (letra)<input id="pePtInt" maxlength="2" value="${escapeHtml(pt.interruptor || "")}" /></label>`
-                : pt.tipo === "lampada" || pt.tipo === "conjugado" || pt.tipo === "interruptor"
-                  ? ""
-                  : `<label>Comando (letra)<input id="pePtInt" maxlength="2" value="${escapeHtml(pt.interruptor || "")}" /></label>`
+              <label>Comando (letra)<input id="pePtInt" maxlength="2" value="${escapeHtml(pt.interruptor || "")}" /></label>
+              <p class="hint">Use a mesma letra do interruptor (ex.: tecla <strong>a</strong> → luz <strong>a</strong>).</p>`
+                : ""
             }
-            <label>Potência (VA/W)<input type="number" id="pePtPot" min="0" value="${Number(pt.potenciaVA || 0)}" /></label>
+            ${
+              pt.tipo !== "tomada"
+                ? `<label>Potência (VA/W)<input type="number" id="pePtPot" min="0" value="${Number(pt.potenciaVA || 0)}" /></label>
             <label>Tensão
               <select id="pePtV">
                 <option value="127" ${Number(pt.tensaoV) === 127 ? "selected" : ""}>127 V</option>
                 <option value="220" ${Number(pt.tensaoV) === 220 ? "selected" : ""}>220 V</option>
               </select>
-            </label>
+            </label>`
+                : `<p class="hint">Potência total ≈ <strong>${Math.round(cargaPonto(pt))}</strong> W (soma dos módulos).</p>`
+            }
             <label>Altura (m)<input type="number" id="pePtAlt" step="0.1" value="${Number(pt.alturaM ?? 0.3)}" /></label>
             <div class="pe-size-row">
               <span>Tamanho no grid</span>
@@ -2933,18 +3076,20 @@ var ProjetoEletrico = (() => {
               <strong id="pePtScaleVal">${Math.round(clampEscala(pt.escala) * 100)}%</strong>
               <button type="button" class="btn btn-secondary btn-sm" id="pePtScaleUp" title="Aumentar">+</button>
             </div>
-            <p class="hint">Tamanho visual deste símbolo (40%–250%). Não altera potências nem a NBR.</p>
             ${
               showTom
-                ? `<p class="hint">NBR 5444 — tomada: triângulo vazio ≈ baixa (0,30 m), meio cheio ≈ média (1,30 m), cheio ≈ alta (2,00 m). Ajuste pela altura.</p>`
+                ? `<p class="hint">NBR 5444 — tomada: triângulo vazio ≈ baixa, meio ≈ média, cheio ≈ alta (pela altura).</p>`
                 : ""
             }
-            <label>Circuito<select id="pePtCirc">${circOpts}</select></label>
+            ${
+              pt.tipo !== "tomada"
+                ? `<label>Circuito<select id="pePtCirc">${circOpts}</select></label>`
+                : ""
+            }
             <div class="pe-insp-actions">
               <button type="button" class="btn btn-danger btn-sm" id="pePtDel">Excluir</button>
               <button type="button" class="btn btn-primary btn-sm" id="pePtOk">Atualizar</button>
             </div>
-            <p class="hint">Símbolos conforme <strong>NBR 5444</strong> (círculo, triângulo, quadrado). TUE: escolha o equipamento para potência média automática.</p>
           </div>
         </div>`;
       }
@@ -3052,47 +3197,62 @@ var ProjetoEletrico = (() => {
           if (!p) return;
           p.tipo = document.getElementById("pePtTipo")?.value || p.tipo;
           p.label = document.getElementById("pePtLabel")?.value.trim() || tipoPonto(p.tipo).label;
-          p.potenciaVA = Math.max(0, Number(document.getElementById("pePtPot")?.value) || 0);
-          p.tensaoV = Number(document.getElementById("pePtV")?.value) || 127;
           p.alturaM = Math.max(0, Number(document.getElementById("pePtAlt")?.value) || 0);
-          const intEl = document.getElementById("pePtInt");
-          if (intEl) p.interruptor = intEl.value.trim();
-          if (p.tipo === "tomada" || p.tipo === "conjugado") {
-            p.modulos = document.getElementById("pePtMod")?.value || "simples";
-            p.amperagem = Number(document.getElementById("pePtAmp")?.value) || 10;
-            p.usoCircuito = document.getElementById("pePtUso")?.value || "tug";
-            const usoTue = document.getElementById("pePtUsoTue")?.value || "";
-            if (p.usoCircuito === "tue" || p.amperagem >= 20) {
-              if (usoTue) {
-                p.usoTue = usoTue;
-                const uso = usoTueById(usoTue);
-                if (uso && !(document.getElementById("pePtLabel")?.value || "").trim())
-                  p.label = `TUE · ${uso.label}`;
-              } else p.usoTue = "";
-            } else {
-              p.usoTue = "";
-            }
-            // potência/tensão do formulário prevalecem (já preenchidas pelo uso TUE)
-            p.potenciaVA = Math.max(0, Number(document.getElementById("pePtPot")?.value) || 0);
-            p.tensaoV = Number(document.getElementById("pePtV")?.value) || p.tensaoV;
-          }
+          const potEl = document.getElementById("pePtPot");
+          const tenEl = document.getElementById("pePtV");
+          if (potEl) p.potenciaVA = Math.max(0, Number(potEl.value) || 0);
+          if (tenEl) p.tensaoV = Number(tenEl.value) || 127;
+
           if (p.tipo === "interruptor" || p.tipo === "conjugado") {
             p.variante = document.getElementById("pePtVarInt")?.value || p.variante || "simples";
+            const letters = [...side.querySelectorAll(".pe-cmd-letter")].map((el) =>
+              el.value.trim().toLowerCase().slice(0, 2)
+            );
+            p.comandos = letters;
+            syncComandos(p);
+          }
+          if (p.tipo === "tomada") {
+            p.modulos = document.getElementById("pePtMod")?.value || "simples";
+            const n = modulosTomada(p.modulos).modulos;
+            const cfg = [];
+            for (let i = 0; i < n; i++) {
+              const amp = Number(side.querySelector(`.pe-mod-amp[data-mod="${i}"]`)?.value) || 10;
+              let uso = side.querySelector(`.pe-mod-uso[data-mod="${i}"]`)?.value || "tug";
+              if (amp >= 20) uso = "tue";
+              cfg.push({
+                amperagem: amp,
+                usoCircuito: uso,
+                circuitoId: side.querySelector(`.pe-mod-circ[data-mod="${i}"]`)?.value || "",
+                usoTue: side.querySelector(`.pe-mod-tue[data-mod="${i}"]`)?.value || ""
+              });
+            }
+            p.modulosConfig = cfg;
+            p.interruptor = "";
+            syncModulosConfig(p);
+            p.potenciaVA = cargaPonto(p);
+            p.tensaoV = p.amperagem >= 20 ? 220 : 127;
           }
           if (p.tipo === "conjugado") {
             const cid = document.getElementById("pePtConj")?.value;
             if (cid) applyPointPreset(p, { group: "conjugado", conjugadoId: cid, id: cid });
+            p.modulos = document.getElementById("pePtMod")?.value || p.modulos;
+            syncComandos(p);
+            syncModulosConfig(p);
           }
           if (p.tipo === "lampada") {
             p.variante = document.getElementById("pePtVar")?.value || "ponto";
+            const intEl = document.getElementById("pePtInt");
+            if (intEl) p.interruptor = intEl.value.trim().toLowerCase();
           }
           const circ = document.getElementById("pePtCirc")?.value;
-          if (circ) {
-            p.circuitoId = circ;
-            p.circuitoManual = true;
-          } else {
-            p.circuitoManual = false;
-            p.circuitoId = null;
+          if (p.tipo !== "tomada") {
+            if (circ) {
+              p.circuitoId = circ;
+              p.circuitoManual = true;
+            } else {
+              p.circuitoManual = false;
+              p.circuitoId = null;
+            }
           }
           Object.assign(p, normalizePoint(p));
           p.label = document.getElementById("pePtLabel")?.value.trim() || labelPonto(p);
@@ -3107,40 +3267,35 @@ var ProjetoEletrico = (() => {
           if (!p) return;
           p.tipo = document.getElementById("pePtTipo").value;
           if (p.tipo === "conjugado") applyPointPreset(p, { group: "conjugado", conjugadoId: "s1_t1", id: "s1_t1" });
+          if (p.tipo === "interruptor") syncComandos(p);
+          if (p.tipo === "tomada") {
+            p.interruptor = "";
+            syncModulosConfig(p);
+          }
           Object.assign(p, normalizePoint(p));
           save();
           refreshSelectionUI();
         });
-        const syncTueFields = () => {
+        side.querySelector("#pePtVarInt")?.addEventListener("change", () => {
           const p = projeto.points.find((x) => x.id === selectedId);
           if (!p) return;
-          p.amperagem = Number(document.getElementById("pePtAmp")?.value) || p.amperagem;
-          p.usoCircuito = document.getElementById("pePtUso")?.value || p.usoCircuito;
-          if (p.usoCircuito === "tue" && Number(p.amperagem) < 20) p.amperagem = 20;
+          p.variante = document.getElementById("pePtVarInt").value;
+          syncComandos(p);
           save();
           refreshSelectionUI();
-        };
-        side.querySelector("#pePtUso")?.addEventListener("change", syncTueFields);
-        side.querySelector("#pePtAmp")?.addEventListener("change", syncTueFields);
-        side.querySelector("#pePtUsoTue")?.addEventListener("change", () => {
+        });
+        side.querySelector("#pePtMod")?.addEventListener("change", () => {
           const p = projeto.points.find((x) => x.id === selectedId);
-          const usoId = document.getElementById("pePtUsoTue")?.value;
           if (!p) return;
-          if (usoId) {
-            applyUsoTue(p, usoId);
-            const pot = document.getElementById("pePtPot");
-            const ten = document.getElementById("pePtV");
-            const lab = document.getElementById("pePtLabel");
-            if (pot) pot.value = String(p.potenciaVA);
-            if (ten) ten.value = String(p.tensaoV);
-            if (lab) lab.value = p.label;
-            save();
-            paint();
-            ctx.toast?.(`${usoTueById(usoId).label}: ~${p.potenciaVA} W`);
-          } else {
-            p.usoTue = "";
-            save();
-          }
+          p.modulos = document.getElementById("pePtMod").value;
+          syncModulosConfig(p);
+          save();
+          refreshSelectionUI();
+        });
+        side.querySelectorAll(".pe-mod-uso, .pe-mod-amp").forEach((el) => {
+          el.addEventListener("change", () => {
+            apply();
+          });
         });
         side.querySelector("#pePtDel")?.addEventListener("click", () => {
           deleteSelected();
@@ -3371,8 +3526,10 @@ var ProjetoEletrico = (() => {
         ctx2.setLineDash([]);
       }
 
-      const drawPoly = (pts, color, width, dash) => {
+      const drawPoly = (pts, color, width, dash, alpha) => {
         if (!pts?.length) return;
+        ctx2.save();
+        if (alpha != null) ctx2.globalAlpha = alpha;
         ctx2.beginPath();
         ctx2.strokeStyle = color;
         ctx2.lineWidth = width;
@@ -3383,6 +3540,46 @@ var ProjetoEletrico = (() => {
         for (let i = 1; i < pts.length; i++) ctx2.lineTo(pts[i].x * ppm, pts[i].y * ppm);
         ctx2.stroke();
         ctx2.setLineDash([]);
+        ctx2.restore();
+      };
+
+      const drawConduitPath = (pts, color, hi, dimmed) => {
+        if (!pts?.length) return;
+        const w = hi ? 5.5 : dimmed ? 1.6 : 3.2;
+        const alpha = dimmed ? 0.22 : 1;
+        // halo claro sob a linha
+        if (!dimmed) drawPoly(pts, "#fff", w + 3.5, null, 0.55);
+        drawPoly(pts, color, w, null, alpha);
+        // nós / vértices
+        if (!dimmed) {
+          pts.forEach((p, i) => {
+            ctx2.beginPath();
+            ctx2.fillStyle = color;
+            ctx2.strokeStyle = "#fff";
+            ctx2.lineWidth = 1.2;
+            ctx2.arc(p.x * ppm, p.y * ppm, hi ? 4.5 : i === 0 || i === pts.length - 1 ? 3.5 : 2.5, 0, Math.PI * 2);
+            ctx2.fill();
+            ctx2.stroke();
+          });
+        }
+        // seta no fim do trecho
+        if (!dimmed && pts.length >= 2) {
+          const a = pts[pts.length - 2];
+          const b = pts[pts.length - 1];
+          const ang = Math.atan2(b.y - a.y, b.x - a.x);
+          const s = 8;
+          ctx2.save();
+          ctx2.translate(b.x * ppm, b.y * ppm);
+          ctx2.rotate(ang);
+          ctx2.fillStyle = color;
+          ctx2.beginPath();
+          ctx2.moveTo(0, 0);
+          ctx2.lineTo(-s, -s * 0.45);
+          ctx2.lineTo(-s, s * 0.45);
+          ctx2.closePath();
+          ctx2.fill();
+          ctx2.restore();
+        }
       };
 
       (projeto.walls || []).forEach((wall) => {
@@ -3413,25 +3610,33 @@ var ProjetoEletrico = (() => {
         }
       });
 
+      // Conduítes: todos organizados por cor; clique no circuito destaca só o caminho
+      const hasCircFilter = !!selectedCircuitId;
       projeto.conduits.forEach((c) => {
-        const sel = selectedKind === "conduit" && selectedId === c.id;
         const circ = (projeto.lastAnalise?.circuits || []).find((x) => x.id === c.circuitoId);
-        const color = circ?.cor || c.cor || "#222";
-        drawPoly(c.points, color, sel ? 4 : 2.4);
+        const color = circ?.cor || c.cor || "#555";
+        const hi = hasCircFilter && c.circuitoId === selectedCircuitId;
+        const dimmed = hasCircFilter && c.circuitoId !== selectedCircuitId;
+        const selObj = selectedKind === "conduit" && selectedId === c.id;
+        drawConduitPath(c.points, selObj ? "#f57c00" : color, hi || selObj, dimmed);
         const pts = c.points || [];
-        if (pts.length >= 2 && c.circuitoId) {
+        if (!dimmed && pts.length >= 2 && c.circuitoId) {
           const mid = pts[Math.floor(pts.length / 2)];
           ctx2.fillStyle = color;
-          ctx2.font = "bold 11px Segoe UI, sans-serif";
-          const bit = circ?.bitola ? ` ${circ.bitola}` : "";
-          ctx2.fillText(`${c.circuitoId}${bit}`, mid.x * ppm + 4, mid.y * ppm - 4);
+          ctx2.strokeStyle = "#fff";
+          ctx2.lineWidth = 3;
+          ctx2.font = `bold ${hi ? 13 : 11}px Segoe UI, sans-serif`;
+          const bit = circ?.bitola ? ` · ${circ.bitola}mm²` : "";
+          const label = `${c.circuitoId}${bit}`;
+          ctx2.strokeText(label, mid.x * ppm + 6, mid.y * ppm - 6);
+          ctx2.fillText(label, mid.x * ppm + 6, mid.y * ppm - 6);
         }
       });
       if (conduitDraft) {
-        drawPoly(conduitDraft.points, "#f57c00", 2, [5, 4]);
+        drawConduitPath(conduitDraft.points, "#f57c00", true, false);
         if (hover && conduitDraft.points.length) {
           const last = conduitDraft.points[conduitDraft.points.length - 1];
-          drawPoly([last, hover], "#f57c00", 1.5, [3, 3]);
+          drawPoly([last, hover], "#f57c00", 2, [4, 4]);
         }
       }
 
@@ -3439,8 +3644,39 @@ var ProjetoEletrico = (() => {
         const n = normalizePoint(p);
         const sel = selectedKind === "point" && selectedId === n.id;
         const circ = (projeto.lastAnalise?.circuits || []).find((x) => x.id === n.circuitoId);
-        const stroke = circ?.cor || "#111";
-        drawNbrSymbol(ctx2, n, ppm, sel, stroke, projeto.symbolScale);
+        let stroke = circ?.cor || "#111";
+        let highlight = sel;
+        if (hasCircFilter) {
+          if (n.tipo === "interruptor") {
+            const cmds = syncComandos(n);
+            const linked = (projeto.points || []).some(
+              (lp) =>
+                lp.tipo === "lampada" &&
+                lp.circuitoId === selectedCircuitId &&
+                cmds.includes(String(lp.interruptor || "").toLowerCase())
+            );
+            if (!linked) {
+              ctx2.save();
+              ctx2.globalAlpha = 0.22;
+              drawNbrSymbol(ctx2, n, ppm, false, "#888", projeto.symbolScale);
+              ctx2.restore();
+              return;
+            }
+            stroke =
+              (projeto.lastAnalise?.circuits || []).find((x) => x.id === selectedCircuitId)?.cor ||
+              stroke;
+            highlight = true;
+          } else if (n.circuitoId !== selectedCircuitId) {
+            ctx2.save();
+            ctx2.globalAlpha = 0.22;
+            drawNbrSymbol(ctx2, n, ppm, false, "#888", projeto.symbolScale);
+            ctx2.restore();
+            return;
+          } else {
+            highlight = true;
+          }
+        }
+        drawNbrSymbol(ctx2, n, ppm, highlight, stroke, projeto.symbolScale);
       });
 
       const drawDim = (a, b, color) => {
@@ -3587,16 +3823,21 @@ var ProjetoEletrico = (() => {
       if (!side) return;
       const a = projeto.lastAnalise;
       const circHtml = a?.circuits?.length
-        ? a.circuits
-            .map(
-              (c) => `
-          <div class="pe-circ" style="border-left:4px solid ${c.cor}">
-            <strong>${c.id}</strong> · ${c.dimensionamento?.tipo?.label || c.tipoId}
+        ? `<p class="hint" style="margin-bottom:8px">${
+            selectedCircuitId
+              ? `Mostrando caminho de <strong>${escapeHtml(selectedCircuitId)}</strong> — clique de novo para ver todos.`
+              : "Clique em um circuito para ver só o caminho dele. Sem clique: todos os caminhos coloridos."
+          }</p>
+          ${a.circuits
+            .map((c) => {
+              const active = selectedCircuitId === c.id;
+              return `<button type="button" class="pe-circ ${active ? "active" : ""}" data-circ="${escapeHtml(c.id)}" style="border-left:4px solid ${c.cor}">
+            <strong>${escapeHtml(c.id)}</strong> · ${escapeHtml(c.dimensionamento?.tipo?.label || c.tipoId || "")}
             <div class="hint">${c.pontos.length} ponto(s) · ${c.potenciaVA} VA/W · L≈${c.comprimentoM?.toFixed?.(1) || "—"} m</div>
             <div>${c.bitola || "—"} mm² · DJ ${c.disjuntor || "—"}A · queda ${c.quedaPct != null ? c.quedaPct.toFixed(2) + "%" : "—"}</div>
-          </div>`
-            )
-            .join("")
+          </button>`;
+            })
+            .join("")}`
         : `<div class="empty"><strong>Sem análise</strong>Trace conduítes até o QDC e clique em Analisar NBR 5410.</div>`;
 
       const matHtml = a?.materiais?.length
@@ -3640,6 +3881,19 @@ var ProjetoEletrico = (() => {
       `;
 
       bindInspector();
+      side.querySelectorAll(".pe-circ[data-circ]").forEach((el) => {
+        el.onclick = () => {
+          const id = el.dataset.circ;
+          selectedCircuitId = selectedCircuitId === id ? null : id;
+          paint();
+          renderSide();
+          ctx.toast?.(
+            selectedCircuitId
+              ? `Caminho do ${selectedCircuitId}`
+              : "Todos os caminhos"
+          );
+        };
+      });
       const btnOrc = side.querySelector("#peOrc");
       if (btnOrc) btnOrc.onclick = () => ctx.onCreateOrcamento?.(projeto, a);
     }
