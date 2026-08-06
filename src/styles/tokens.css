@@ -1,0 +1,25 @@
+/**
+ * Tokens de marca VoltES (logo: raio laranja + ES azul + prata).
+ * Valores base; temas claro/escuro sobrescrevem superfícies em themes.css.
+ */
+:root {
+  --brand-orange: #f38d1f;
+  --brand-orange-deep: #e67e00;
+  --brand-blue: #1a5695;
+  --brand-blue-bright: #3d9ae8;
+  --brand-blue-deep: #0d3a6b;
+  --brand-silver: #c5d0de;
+  --brand-silver-dim: #8fa0b8;
+
+  --radius: 18px;
+  --radius-sm: 12px;
+  --shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  --sidebar: 272px;
+  --font: "DM Sans", system-ui, sans-serif;
+  --display: "Syne", "DM Sans", sans-serif;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --warn: #ffc14d;
+  --danger: #ff6274;
+  --success: #2ef0b0;
+}
