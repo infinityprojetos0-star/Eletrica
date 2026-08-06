@@ -800,8 +800,8 @@ var ProjetoEletrico = (() => {
   }
 
   /**
-   * Grafo dos conduítes + ramais até cada ponto/QDC.
-   * Liga no eixo do trecho (não só nos vértices) e une pontas próximas.
+   * Grafo só da rede de conduítes (Dijkstra = caminho mais curto).
+   * Pontos/QDC NÃO entram como nós — só “pingam” num ponto de ancoragem no eixo.
    */
   function buildGraph(projeto) {
     const nodes = [];
@@ -833,10 +833,10 @@ var ProjetoEletrico = (() => {
       }
     });
 
-    // 2) Junta extremidades quase tocantes (conduítes desenhados em pedaços)
-    const nConduitNodes = nodes.length;
-    for (let i = 0; i < nConduitNodes; i++) {
-      for (let j = i + 1; j < nConduitNodes; j++) {
+    // 2) Junta extremidades quase tocantes
+    const nBase = nodes.length;
+    for (let i = 0; i < nBase; i++) {
+      for (let j = i + 1; j < nBase; j++) {
         const d = dist(nodes[i], nodes[j]);
         if (d > 0 && d <= CONDUIT_JOIN_M) {
           const already = edges.some(
@@ -850,28 +850,23 @@ var ProjetoEletrico = (() => {
     }
 
     const snap = {};
+    const stub = {}; // ptId → comprimento do ramal até o conduíte
 
-    // 3) Cada ponto elétrico “pinga” no conduíte mais próximo (projeção no segmento)
+    // 3) Ancora cada ponto no eixo do conduíte (sem criar nó do ponto no grafo)
     (projeto.points || []).forEach((pt) => {
-      const ptIdx = indexOf(pt);
       let best = null;
-
-      // cópia do comprimento atual — splits só olham arestas de conduíte existentes
       const edgeCount = edges.length;
       for (let ei = 0; ei < edgeCount; ei++) {
         const e = edges[ei];
-        if (e.bridge || e.ramal) continue;
+        if (e.bridge) continue;
         const proj = projectOnSegGlobal(pt, nodes[e.a], nodes[e.b]);
-        if (!best || proj.d < best.d) {
-          best = { ...proj, ei, e };
-        }
+        if (!best || proj.d < best.d) best = { ...proj, ei, e };
       }
 
-      // fallback: nó de conduíte próximo (vértice)
       if (!best || best.d > POINT_LINK_M) {
         let bestNode = -1;
         let bestD = POINT_LINK_M;
-        for (let i = 0; i < nConduitNodes; i++) {
+        for (let i = 0; i < nodes.length; i++) {
           const d = dist(pt, nodes[i]);
           if (d < bestD) {
             bestD = d;
@@ -879,20 +874,12 @@ var ProjetoEletrico = (() => {
           }
         }
         if (bestNode >= 0) {
-          if (ptIdx !== bestNode) {
-            edges.push({
-              a: ptIdx,
-              b: bestNode,
-              len: Math.max(bestD, 0.01),
-              conduitId: null,
-              ramal: true
-            });
-          }
-          snap[pt.id] = ptIdx;
-          return;
+          snap[pt.id] = bestNode;
+          stub[pt.id] = bestD;
+        } else {
+          snap[pt.id] = -1;
+          stub[pt.id] = 0;
         }
-        // sem conduíte perto: nó isolado (sem caminho até o QDC)
-        snap[pt.id] = ptIdx;
         return;
       }
 
@@ -901,7 +888,6 @@ var ProjetoEletrico = (() => {
       else if (best.t >= 0.98) attachIdx = best.e.b;
       else {
         attachIdx = indexOf({ x: best.x, y: best.y });
-        // divide o trecho no ponto de projeção
         const old = edges[best.ei];
         if (attachIdx !== old.a && attachIdx !== old.b) {
           edges[best.ei] = {
@@ -919,19 +905,21 @@ var ProjetoEletrico = (() => {
         }
       }
 
-      if (ptIdx !== attachIdx) {
-        edges.push({
-          a: ptIdx,
-          b: attachIdx,
-          len: Math.max(best.d, 0.01),
-          conduitId: best.e.conduitId,
-          ramal: true
-        });
-      }
-      snap[pt.id] = ptIdx;
+      snap[pt.id] = attachIdx;
+      stub[pt.id] = best.d;
     });
 
-    return { nodes, edges, snap };
+    return { nodes, edges, snap, stub };
+  }
+
+  /** Remove vértices consecutivos quase iguais. */
+  function dedupePoly(pts) {
+    const out = [];
+    (pts || []).forEach((p) => {
+      const prev = out[out.length - 1];
+      if (!prev || dist(prev, p) > 0.02) out.push({ x: p.x, y: p.y });
+    });
+    return out;
   }
 
   function dijkstra(graph, startIdx) {
@@ -1117,6 +1105,7 @@ var ProjetoEletrico = (() => {
 
     const graph = buildGraph({ ...projeto, points });
     const qdcNode = qdc ? graph.snap[qdc.id] : -1;
+    const qdcStub = qdc ? graph.stub[qdc.id] || 0 : 0;
     const fromQdc =
       qdcNode >= 0 ? dijkstra(graph, qdcNode) : { distArr: [], prev: [], prevEdge: [] };
 
@@ -1125,15 +1114,17 @@ var ProjetoEletrico = (() => {
       let maxLen = 0;
       let sumLen = 0;
       let nPath = 0;
-      circ.caminhos = []; // polilinhas QDC→ponto (para desenhar cada fio)
+      circ.caminhos = []; // polilinhas QDC→ponto (caminho mais curto na rede)
       const conduitesDoCirc = new Set();
       circ.pontos.forEach((pid) => {
         const pt = byId[pid];
         if (!pt) return;
         const ni = graph.snap[pid];
+        const ptStub = graph.stub[pid] || 0;
         let len = 0;
         if (qdcNode >= 0 && ni >= 0 && fromQdc.distArr[ni] < Infinity) {
-          len = fromQdc.distArr[ni];
+          // só arestas da rede (mais curto); ramais QDC/ponto somados à parte
+          len = fromQdc.distArr[ni] + qdcStub + ptStub;
           pathEdgesFromPrev(fromQdc.prev, fromQdc.prevEdge, ni).forEach((e) => {
             if (!e.conduitId) return;
             if (!conduitUse[e.conduitId]) conduitUse[e.conduitId] = {};
@@ -1141,7 +1132,10 @@ var ProjetoEletrico = (() => {
               (conduitUse[e.conduitId][circ.id] || 0) + e.len;
             conduitesDoCirc.add(e.conduitId);
           });
-          const pathPts = pathPointsFromPrev(graph, fromQdc.prev, ni);
+          let pathPts = pathPointsFromPrev(graph, fromQdc.prev, ni);
+          if (qdc) pathPts = [{ x: qdc.x, y: qdc.y }, ...pathPts];
+          pathPts = [...pathPts, { x: pt.x, y: pt.y }];
+          pathPts = dedupePoly(pathPts);
           if (pathPts.length >= 2) {
             circ.caminhos.push({
               pontoId: pid,
@@ -3863,9 +3857,9 @@ var ProjetoEletrico = (() => {
         }
       });
 
-      // Conduítes: tubo + fios paralelos (cada circuito); filtro mostra caminho QDC→pontos
+      // Conduítes: tubo + fios; com filtro, só o caminho mais curto (não o conduíte inteiro)
       const hasCircFilter = !!selectedCircuitId;
-      const WIRE_GAP_M = 0.045; // afastamento visual entre fios no mesmo conduíte
+      const WIRE_GAP_M = 0.045;
 
       projeto.conduits.forEach((c) => {
         const pts = c.points || [];
@@ -3877,15 +3871,20 @@ var ProjetoEletrico = (() => {
         const dimmed = hasCircFilter && !carriesSelected;
         const selObj = selectedKind === "conduit" && selectedId === c.id;
 
-        // eletroduto (tubo)
-        drawPoly(pts, selObj ? "#ffb74d" : "#90a4ae", dimmed ? 2 : 5, null, dimmed ? 0.12 : 0.4);
+        // eletroduto (tubo) — com filtro fica só de fundo
+        drawPoly(
+          pts,
+          selObj ? "#ffb74d" : "#90a4ae",
+          hasCircFilter ? (dimmed ? 1.5 : 2.5) : 5,
+          null,
+          hasCircFilter ? (dimmed ? 0.1 : 0.28) : 0.4
+        );
 
         if (!hasCircFilter) {
-          // fios lado a lado — cada cor = um circuito no trecho
           if (!fios.length) {
             drawConduitPath(pts, selObj ? "#f57c00" : "#78909c", selObj, false, {
               thin: true,
-              noNodes: fios.length > 1
+              noNodes: false
             });
           } else {
             fios.forEach((fio, i) => {
@@ -3897,10 +3896,7 @@ var ProjetoEletrico = (() => {
                 noArrow: fios.length > 1
               });
             });
-            if (fios.length === 1) {
-              // seta/nós já no path único
-            } else {
-              // vértices só no eixo do tubo
+            if (fios.length > 1) {
               pts.forEach((p, i) => {
                 if (i !== 0 && i !== pts.length - 1) return;
                 ctx2.beginPath();
@@ -3915,29 +3911,22 @@ var ProjetoEletrico = (() => {
           }
           const mid = pts[Math.floor(pts.length / 2)];
           if (fios.length) drawFiosLabel(mid, fios, selObj);
-        } else if (carriesSelected) {
-          const fio = fios.find((f) => f.id === selectedCircuitId);
-          const cor =
-            fio?.cor ||
-            (projeto.lastAnalise?.circuits || []).find((x) => x.id === selectedCircuitId)?.cor ||
-            c.cor ||
-            "#555";
-          drawConduitPath(pts, selObj ? "#f57c00" : cor, true, false, { thin: true, noArrow: true });
-          const mid = pts[Math.floor(pts.length / 2)];
-          drawFiosLabel(mid, [{ id: selectedCircuitId, cor }], true);
+        } else if (selObj) {
+          drawConduitPath(pts, "#f57c00", true, false, { thin: true, noArrow: true });
         }
       });
 
-      // Caminho contínuo do fio: QDC → cada ponto do circuito selecionado
+      // Só o caminho mais curto QDC → ponto(s) do circuito
       if (hasCircFilter) {
         const circ = (projeto.lastAnalise?.circuits || []).find((x) => x.id === selectedCircuitId);
         const caminhos = circ?.caminhos || [];
         caminhos.forEach((cam) => {
           if (cam.pontos?.length >= 2) {
             drawConduitPath(cam.pontos, circ.cor || "#1565c0", true, false);
+            const mid = cam.pontos[Math.floor(cam.pontos.length / 2)];
+            drawFiosLabel(mid, [{ id: selectedCircuitId, cor: circ.cor }], true);
           }
         });
-        // Sem caminho no grafo: tracejado QDC→ponto (pede conduíte / reanalisar)
         if (!caminhos.length && circ?.pontos?.length) {
           const qdcPt = (projeto.points || []).find((p) => p.tipo === "qdc");
           circ.pontos.forEach((pid) => {
