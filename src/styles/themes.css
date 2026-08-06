@@ -150,6 +150,30 @@ html[data-theme="light"] .product-card {
   color: var(--text);
 }
 
+/* Banner hero — no claro fica branco com azul/laranja da logo */
+html[data-theme="light"] .hero-note {
+  background:
+    linear-gradient(115deg, rgba(26, 86, 149, 0.12), rgba(230, 126, 0, 0.08) 55%, #ffffff),
+    #ffffff;
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 8px 24px rgba(13, 58, 107, 0.08);
+  color: var(--text);
+}
+html[data-theme="light"] .hero-note::after {
+  background: radial-gradient(circle, rgba(26, 86, 149, 0.18), transparent 70%);
+}
+html[data-theme="light"] .hero-note h3 {
+  color: var(--accent-deep);
+}
+html[data-theme="light"] .hero-note p {
+  color: var(--text-muted);
+}
+html[data-theme="light"] .source-pill {
+  background: rgba(26, 86, 149, 0.1);
+  color: var(--brand-blue);
+  border-color: rgba(26, 86, 149, 0.22);
+}
+
 html[data-theme="light"] .field input,
 html[data-theme="light"] .field select,
 html[data-theme="light"] .field textarea,
