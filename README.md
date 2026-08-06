@@ -41,7 +41,9 @@ Botão sol/lua na sidebar. Preferência em `localStorage` (`voltes-theme`). Toke
 
 URL: https://infinityprojetos0-star.github.io/Eletrica/
 
-Publique o conteúdo de `dist/` (ou configure Action com `npm run build`).
+Deploy automático: push na `main` → Action **Deploy GitHub Pages** (`npm ci` + `npm run build` com `VITE_BASE=/Eletrica/` → publica `dist/`).
+
+Para republicar manualmente: Actions → Deploy GitHub Pages → Run workflow.
 
 ## Firebase
 

@@ -2,8 +2,11 @@
 import { VitePWA } from "vite-plugin-pwa";
 import { fileURLToPath, URL } from "node:url";
 
+/** Em GitHub Pages o site fica em /Eletrica/ (CI define VITE_BASE). */
+const base = process.env.VITE_BASE || "./";
+
 export default defineConfig({
-  base: "./",
+  base,
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url))
