@@ -254,7 +254,7 @@ img { max-width: 100%; display: block; }
   font-family: var(--display);
   font-size: 1.6rem;
   letter-spacing: -0.035em;
-  background: linear-gradient(90deg, #fff 40%, #9fd4ff);
+  background: linear-gradient(90deg, var(--title-grad-a, #fff) 40%, var(--title-grad-b, #9fd4ff));
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -326,13 +326,14 @@ img { max-width: 100%; display: block; }
   display: flex;
   align-items: center;
   gap: 8px;
-  background: rgba(18, 26, 38, 0.7);
+  background: var(--panel, rgba(18, 26, 38, 0.7));
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 10px 14px;
   min-width: 230px;
   backdrop-filter: blur(10px);
   transition: 0.2s ease;
+  color: var(--text);
 }
 .search-box:focus-within {
   border-color: rgba(61,180,255,0.45);
@@ -1023,9 +1024,10 @@ tr:hover td { background: rgba(61,180,255,0.03); }
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  background: rgba(18, 26, 38, 0.72);
+  background: var(--panel, rgba(18, 26, 38, 0.72));
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  color: var(--text);
 }
 .pe-title {
   min-width: 160px;
@@ -1053,7 +1055,7 @@ tr:hover td { background: rgba(61,180,255,0.03); }
 .pe-tool {
   border: 1px solid var(--border);
   background: rgba(255,255,255,0.04);
-  color: var(--text);
+  color: var(--tool-fg, var(--text));
   border-radius: 8px;
   padding: 6px 9px;
   font-size: 0.78rem;
@@ -1063,7 +1065,7 @@ tr:hover td { background: rgba(61,180,255,0.03); }
 .pe-tool.active {
   background: rgba(61,180,255,0.18);
   border-color: rgba(61,180,255,0.55);
-  color: #fff;
+  color: var(--tool-active-fg, #fff);
 }
 .pe-tool.danger { color: #ff8a80; }
 .pe-actions { display: flex; gap: 6px; margin-left: auto; flex-wrap: wrap; align-items: center; }
@@ -1174,10 +1176,11 @@ tr:hover td { background: rgba(61,180,255,0.03); }
   width: 300px;
 }
 .pe-side-block {
-  background: rgba(18, 26, 38, 0.72);
+  background: var(--panel, rgba(18, 26, 38, 0.72));
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 12px 14px;
+  color: var(--text);
 }
 .pe-side-block h3 {
   font-family: var(--display);
