@@ -41,14 +41,18 @@ Botão sol/lua na sidebar. Preferência em `localStorage` (`voltes-theme`). Toke
 
 URL: https://infinityprojetos0-star.github.io/Eletrica/
 
-O site público vem da branch **`gh-pages`** (conteúdo de `dist/` com `VITE_BASE=/Eletrica/`).
+O site público serve a pasta **`docs/`** da branch `main` (build Vite com `VITE_BASE=/Eletrica/`).
 
-Para republicar:
+Para republicar após mudanças:
 
-```bash
-$env:VITE_BASE="/Eletrica/"; npm run build   # PowerShell
-# ou: VITE_BASE=/Eletrica/ npm run build     # bash
-# depois: publicar a pasta dist/ na branch gh-pages
+```powershell
+$env:VITE_BASE="/Eletrica/"; npm run build
+Remove-Item -Recurse -Force docs -ErrorAction SilentlyContinue
+Copy-Item -Recurse dist docs
+Set-Content docs\.nojekyll ""
+git add docs
+git commit -m "Update GitHub Pages build"
+git push origin main
 ```
 
 ## Firebase
