@@ -870,6 +870,19 @@ var ProjetoEletrico = (() => {
     return list;
   }
 
+  /** Reconstrói a polilinha QDC → ponto (nós do grafo). */
+  function pathPointsFromPrev(graph, prev, targetIdx) {
+    const nodes = [];
+    let cur = targetIdx;
+    let g = 0;
+    while (cur >= 0 && g++ < 5000) {
+      nodes.push({ x: graph.nodes[cur].x, y: graph.nodes[cur].y });
+      if (prev[cur] < 0) break;
+      cur = prev[cur];
+    }
+    return nodes.reverse();
+  }
+
   function packCircuits(items, maxPeso, maxPotVA, tipoId, startNum) {
     const circuits = [];
     let cur = null;
@@ -1004,6 +1017,8 @@ var ProjetoEletrico = (() => {
       let maxLen = 0;
       let sumLen = 0;
       let nPath = 0;
+      circ.caminhos = []; // polilinhas QDC→ponto (para desenhar cada fio)
+      const conduitesDoCirc = new Set();
       circ.pontos.forEach((pid) => {
         const pt = byId[pid];
         if (!pt) return;
@@ -1016,7 +1031,16 @@ var ProjetoEletrico = (() => {
             if (!conduitUse[e.conduitId]) conduitUse[e.conduitId] = {};
             conduitUse[e.conduitId][circ.id] =
               (conduitUse[e.conduitId][circ.id] || 0) + e.len;
+            conduitesDoCirc.add(e.conduitId);
           });
+          const pathPts = pathPointsFromPrev(graph, fromQdc.prev, ni);
+          if (pathPts.length >= 2) {
+            circ.caminhos.push({
+              pontoId: pid,
+              pontos: pathPts,
+              label: labelPonto(pt)
+            });
+          }
           nPath++;
         } else if (qdc) {
           len = dist(pt, qdc) * 1.35;
@@ -1029,6 +1053,7 @@ var ProjetoEletrico = (() => {
         maxLen = Math.max(maxLen, len);
         sumLen += len;
       });
+      circ.conduitesIds = [...conduitesDoCirc];
       circ.comprimentoM = Math.max(maxLen, 1);
       circ.comprimentoTotalTrechosM = sumLen;
       circ.pontosComPath = nPath;
@@ -1071,14 +1096,29 @@ var ProjetoEletrico = (() => {
       const use = conduitUse[c.id] || {};
       let best = c.circuitoId || null;
       let bestM = 0;
-      Object.entries(use).forEach(([cid, m]) => {
-        if (m > bestM) {
-          bestM = m;
-          best = cid;
-        }
-      });
+      const fios = Object.entries(use)
+        .map(([cid, m]) => {
+          const circ = circuits.find((x) => x.id === cid);
+          if (m > bestM) {
+            bestM = m;
+            best = cid;
+          }
+          return {
+            id: cid,
+            cor: circ?.cor || "#222",
+            metros: Math.round(m * 100) / 100,
+            bitola: circ?.bitola || null,
+            tipo: circ?.dimensionamento?.tipo?.label || circ?.tipoId || ""
+          };
+        })
+        .sort((a, b) => a.id.localeCompare(b.id, "pt-BR", { numeric: true }));
       const circ = circuits.find((x) => x.id === best);
-      return { ...c, circuitoId: best, cor: circ?.cor || "#222" };
+      return {
+        ...c,
+        circuitoId: best,
+        cor: circ?.cor || "#222",
+        fios // todos os circuitos/fios que passam neste conduíte
+      };
     });
 
     const pointsOut = (projeto.points || []).map((orig) => {
@@ -3139,10 +3179,30 @@ var ProjetoEletrico = (() => {
       }
 
       if (selectedKind === "conduit") {
+        const cd = (projeto.conduits || []).find((c) => c.id === selectedId);
+        const fios = cd?.fios?.length
+          ? cd.fios
+          : cd?.circuitoId
+            ? [{ id: cd.circuitoId, cor: cd.cor, metros: null, bitola: null, tipo: "" }]
+            : [];
+        const fiosHtml = fios.length
+          ? `<ul class="pe-fios-list">${fios
+              .map(
+                (f) =>
+                  `<li style="border-left:4px solid ${escapeHtml(f.cor || "#555")}">
+                    <strong>${escapeHtml(f.id)}</strong>
+                    ${f.tipo ? ` · ${escapeHtml(f.tipo)}` : ""}
+                    ${f.bitola != null ? ` · ${escapeHtml(String(f.bitola))} mm²` : ""}
+                    ${f.metros != null ? `<div class="hint">~${f.metros} m neste trecho</div>` : ""}
+                  </li>`
+              )
+              .join("")}</ul>`
+          : `<p class="hint">Rode <strong>Analisar NBR 5410</strong> para ver quais fios passam neste conduíte.</p>`;
         return `<div class="pe-side-block pe-inspector">
           <h3>Conduíte</h3>
-          <p class="hint">Selecionado. Após analisar, recebe cor/rótulo do circuito.</p>
-          <button type="button" class="btn btn-danger btn-sm" id="peCdDel">Excluir conduíte</button>
+          <p class="hint">Fios / circuitos neste trecho (caminho após a análise):</p>
+          ${fiosHtml}
+          <button type="button" class="btn btn-danger btn-sm" id="peCdDel" style="margin-top:10px">Excluir conduíte</button>
         </div>`;
       }
       if (selectedKind === "wall") {
@@ -3543,27 +3603,69 @@ var ProjetoEletrico = (() => {
         ctx2.restore();
       };
 
-      const drawConduitPath = (pts, color, hi, dimmed) => {
+      const offsetPolyline = (pts, offsetM) => {
+        if (!pts?.length) return [];
+        if (pts.length < 2 || Math.abs(offsetM) < 1e-9) {
+          return pts.map((p) => ({ x: p.x, y: p.y }));
+        }
+        const out = [];
+        for (let i = 0; i < pts.length; i++) {
+          let nx;
+          let ny;
+          if (i === 0) {
+            const dx = pts[1].x - pts[0].x;
+            const dy = pts[1].y - pts[0].y;
+            const L = Math.hypot(dx, dy) || 1;
+            nx = -dy / L;
+            ny = dx / L;
+          } else if (i === pts.length - 1) {
+            const dx = pts[i].x - pts[i - 1].x;
+            const dy = pts[i].y - pts[i - 1].y;
+            const L = Math.hypot(dx, dy) || 1;
+            nx = -dy / L;
+            ny = dx / L;
+          } else {
+            const dx1 = pts[i].x - pts[i - 1].x;
+            const dy1 = pts[i].y - pts[i - 1].y;
+            const L1 = Math.hypot(dx1, dy1) || 1;
+            const dx2 = pts[i + 1].x - pts[i].x;
+            const dy2 = pts[i + 1].y - pts[i].y;
+            const L2 = Math.hypot(dx2, dy2) || 1;
+            nx = -dy1 / L1 - dy2 / L2;
+            ny = dx1 / L1 + dx2 / L2;
+            const nL = Math.hypot(nx, ny) || 1;
+            nx /= nL;
+            ny /= nL;
+          }
+          out.push({ x: pts[i].x + nx * offsetM, y: pts[i].y + ny * offsetM });
+        }
+        return out;
+      };
+
+      const drawConduitPath = (pts, color, hi, dimmed, opts = {}) => {
         if (!pts?.length) return;
-        const w = hi ? 5.5 : dimmed ? 1.6 : 3.2;
+        const w = hi ? 5.5 : dimmed ? 1.6 : opts.thin ? 2.2 : 3.2;
         const alpha = dimmed ? 0.22 : 1;
-        // halo claro sob a linha
         if (!dimmed) drawPoly(pts, "#fff", w + 3.5, null, 0.55);
         drawPoly(pts, color, w, null, alpha);
-        // nós / vértices
-        if (!dimmed) {
+        if (!dimmed && !opts.noNodes) {
           pts.forEach((p, i) => {
             ctx2.beginPath();
             ctx2.fillStyle = color;
             ctx2.strokeStyle = "#fff";
             ctx2.lineWidth = 1.2;
-            ctx2.arc(p.x * ppm, p.y * ppm, hi ? 4.5 : i === 0 || i === pts.length - 1 ? 3.5 : 2.5, 0, Math.PI * 2);
+            ctx2.arc(
+              p.x * ppm,
+              p.y * ppm,
+              hi ? 4.5 : i === 0 || i === pts.length - 1 ? 3.5 : 2.5,
+              0,
+              Math.PI * 2
+            );
             ctx2.fill();
             ctx2.stroke();
           });
         }
-        // seta no fim do trecho
-        if (!dimmed && pts.length >= 2) {
+        if (!dimmed && !opts.noArrow && pts.length >= 2) {
           const a = pts[pts.length - 2];
           const b = pts[pts.length - 1];
           const ang = Math.atan2(b.y - a.y, b.x - a.x);
@@ -3580,6 +3682,41 @@ var ProjetoEletrico = (() => {
           ctx2.fill();
           ctx2.restore();
         }
+      };
+
+      const drawFiosLabel = (mid, fios, hi) => {
+        if (!mid || !fios?.length) return;
+        let x = mid.x * ppm + 6;
+        const y = mid.y * ppm - 8;
+        ctx2.font = `bold ${hi ? 12 : 10}px Segoe UI, sans-serif`;
+        ctx2.textAlign = "left";
+        ctx2.textBaseline = "alphabetic";
+        fios.forEach((fio, i) => {
+          const circ = (projeto.lastAnalise?.circuits || []).find((x) => x.id === fio.id);
+          const bit = circ?.bitola ? `·${circ.bitola}` : "";
+          const text = `${fio.id}${bit}`;
+          if (i > 0) {
+            const sep = " · ";
+            ctx2.fillStyle = "#546e7a";
+            ctx2.fillText(sep, x, y);
+            x += ctx2.measureText(sep).width;
+          }
+          ctx2.strokeStyle = "#fff";
+          ctx2.lineWidth = 3.2;
+          ctx2.strokeText(text, x, y);
+          ctx2.fillStyle = fio.cor || "#222";
+          ctx2.fillText(text, x, y);
+          x += ctx2.measureText(text).width;
+        });
+      };
+
+      const fiosDoConduite = (c) => {
+        if (c.fios?.length) return c.fios;
+        if (c.circuitoId) {
+          const circ = (projeto.lastAnalise?.circuits || []).find((x) => x.id === c.circuitoId);
+          return [{ id: c.circuitoId, cor: circ?.cor || c.cor || "#555" }];
+        }
+        return [];
       };
 
       (projeto.walls || []).forEach((wall) => {
@@ -3610,28 +3747,81 @@ var ProjetoEletrico = (() => {
         }
       });
 
-      // Conduítes: todos organizados por cor; clique no circuito destaca só o caminho
+      // Conduítes: tubo + fios paralelos (cada circuito); filtro mostra caminho QDC→pontos
       const hasCircFilter = !!selectedCircuitId;
+      const WIRE_GAP_M = 0.045; // afastamento visual entre fios no mesmo conduíte
+
       projeto.conduits.forEach((c) => {
-        const circ = (projeto.lastAnalise?.circuits || []).find((x) => x.id === c.circuitoId);
-        const color = circ?.cor || c.cor || "#555";
-        const hi = hasCircFilter && c.circuitoId === selectedCircuitId;
-        const dimmed = hasCircFilter && c.circuitoId !== selectedCircuitId;
-        const selObj = selectedKind === "conduit" && selectedId === c.id;
-        drawConduitPath(c.points, selObj ? "#f57c00" : color, hi || selObj, dimmed);
         const pts = c.points || [];
-        if (!dimmed && pts.length >= 2 && c.circuitoId) {
+        if (pts.length < 2) return;
+        const fios = fiosDoConduite(c);
+        const carriesSelected =
+          hasCircFilter &&
+          (fios.some((f) => f.id === selectedCircuitId) || c.circuitoId === selectedCircuitId);
+        const dimmed = hasCircFilter && !carriesSelected;
+        const selObj = selectedKind === "conduit" && selectedId === c.id;
+
+        // eletroduto (tubo)
+        drawPoly(pts, selObj ? "#ffb74d" : "#90a4ae", dimmed ? 2 : 5, null, dimmed ? 0.12 : 0.4);
+
+        if (!hasCircFilter) {
+          // fios lado a lado — cada cor = um circuito no trecho
+          if (!fios.length) {
+            drawConduitPath(pts, selObj ? "#f57c00" : "#78909c", selObj, false, {
+              thin: true,
+              noNodes: fios.length > 1
+            });
+          } else {
+            fios.forEach((fio, i) => {
+              const off = (i - (fios.length - 1) / 2) * WIRE_GAP_M;
+              const wirePts = offsetPolyline(pts, off);
+              drawConduitPath(wirePts, selObj ? "#f57c00" : fio.cor, selObj, false, {
+                thin: fios.length > 1,
+                noNodes: fios.length > 1,
+                noArrow: fios.length > 1
+              });
+            });
+            if (fios.length === 1) {
+              // seta/nós já no path único
+            } else {
+              // vértices só no eixo do tubo
+              pts.forEach((p, i) => {
+                if (i !== 0 && i !== pts.length - 1) return;
+                ctx2.beginPath();
+                ctx2.fillStyle = "#546e7a";
+                ctx2.strokeStyle = "#fff";
+                ctx2.lineWidth = 1.2;
+                ctx2.arc(p.x * ppm, p.y * ppm, 3.2, 0, Math.PI * 2);
+                ctx2.fill();
+                ctx2.stroke();
+              });
+            }
+          }
           const mid = pts[Math.floor(pts.length / 2)];
-          ctx2.fillStyle = color;
-          ctx2.strokeStyle = "#fff";
-          ctx2.lineWidth = 3;
-          ctx2.font = `bold ${hi ? 13 : 11}px Segoe UI, sans-serif`;
-          const bit = circ?.bitola ? ` · ${circ.bitola}mm²` : "";
-          const label = `${c.circuitoId}${bit}`;
-          ctx2.strokeText(label, mid.x * ppm + 6, mid.y * ppm - 6);
-          ctx2.fillText(label, mid.x * ppm + 6, mid.y * ppm - 6);
+          if (fios.length) drawFiosLabel(mid, fios, selObj);
+        } else if (carriesSelected) {
+          const fio = fios.find((f) => f.id === selectedCircuitId);
+          const cor =
+            fio?.cor ||
+            (projeto.lastAnalise?.circuits || []).find((x) => x.id === selectedCircuitId)?.cor ||
+            c.cor ||
+            "#555";
+          drawConduitPath(pts, selObj ? "#f57c00" : cor, true, false, { thin: true, noArrow: true });
+          const mid = pts[Math.floor(pts.length / 2)];
+          drawFiosLabel(mid, [{ id: selectedCircuitId, cor }], true);
         }
       });
+
+      // Caminho contínuo do fio: QDC → cada ponto do circuito selecionado
+      if (hasCircFilter) {
+        const circ = (projeto.lastAnalise?.circuits || []).find((x) => x.id === selectedCircuitId);
+        (circ?.caminhos || []).forEach((cam) => {
+          if (cam.pontos?.length >= 2) {
+            drawConduitPath(cam.pontos, circ.cor || "#1565c0", true, false);
+          }
+        });
+      }
+
       if (conduitDraft) {
         drawConduitPath(conduitDraft.points, "#f57c00", true, false);
         if (hover && conduitDraft.points.length) {
@@ -3825,16 +4015,18 @@ var ProjetoEletrico = (() => {
       const circHtml = a?.circuits?.length
         ? `<p class="hint" style="margin-bottom:8px">${
             selectedCircuitId
-              ? `Mostrando caminho de <strong>${escapeHtml(selectedCircuitId)}</strong> — clique de novo para ver todos.`
-              : "Clique em um circuito para ver só o caminho dele. Sem clique: todos os caminhos coloridos."
+              ? `Caminho do fio <strong>${escapeHtml(selectedCircuitId)}</strong> (QDC → pontos). Clique de novo para ver todos os fios nos conduítes.`
+              : "Sem filtro: cada conduíte mostra os fios que passam nele. Clique num circuito para seguir só aquele caminho."
           }</p>
           ${a.circuits
             .map((c) => {
               const active = selectedCircuitId === c.id;
+              const nCam = c.caminhos?.length || 0;
+              const nCd = c.conduitesIds?.length || 0;
               return `<button type="button" class="pe-circ ${active ? "active" : ""}" data-circ="${escapeHtml(c.id)}" style="border-left:4px solid ${c.cor}">
             <strong>${escapeHtml(c.id)}</strong> · ${escapeHtml(c.dimensionamento?.tipo?.label || c.tipoId || "")}
-            <div class="hint">${c.pontos.length} ponto(s) · ${c.potenciaVA} VA/W · L≈${c.comprimentoM?.toFixed?.(1) || "—"} m</div>
-            <div>${c.bitola || "—"} mm² · DJ ${c.disjuntor || "—"}A · queda ${c.quedaPct != null ? c.quedaPct.toFixed(2) + "%" : "—"}</div>
+            <div class="hint">${c.pontos.length} ponto(s) · ${nCam} caminho(s) · ${nCd} conduíte(s) · L≈${c.comprimentoM?.toFixed?.(1) || "—"} m</div>
+            <div>${c.bitola || "—"} mm² · DJ ${c.disjuntor || "—"}A · queda ${c.quedaPct != null ? c.quedaPct.toFixed(2) + "%" : "—"} · ${c.potenciaVA} VA/W</div>
           </button>`;
             })
             .join("")}`
