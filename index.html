@@ -21,6 +21,11 @@
 
   <script>
     (function () {
+      /* file:// não carrega o app Vite — manda para o site publicado */
+      if (location.protocol === "file:") {
+        location.replace("https://infinityprojetos0-star.github.io/Eletrica/");
+        return;
+      }
       try {
         var t = localStorage.getItem("voltes-theme");
         if (t !== "light" && t !== "dark") {
