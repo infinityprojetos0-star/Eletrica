@@ -136,20 +136,16 @@ import {
         it && it.qtd !== "" && it.qtd != null
           ? `${it.qtd}${it.unidade ? ` ${it.unidade}` : ""}`
           : "";
-      rows += `<div class="ve-trow">
-        <div class="item"><span class="cell-txt c">${String(i + 1).padStart(2, "0")}</span></div>
-        <div class="desc"><span class="cell-txt">${it ? esc(it.nome) : ""}</span></div>
-        <div class="qty"><span class="cell-txt c">${esc(qtd)}</span></div>
-      </div>`;
+      rows += `<tr>
+        <td class="c">${String(i + 1).padStart(2, "0")}</td>
+        <td class="d">${it ? esc(it.nome) : ""}</td>
+        <td class="c">${esc(qtd)}</td>
+      </tr>`;
     }
-    return `<div class="ve-tbl">
-      <div class="ve-thead">
-        <div class="item"><span class="cell-txt">ITEM</span></div>
-        <div class="desc"><span class="cell-txt">DESCRIÇÃO</span></div>
-        <div class="qty"><span class="cell-txt">QUANTIDADE</span></div>
-      </div>
-      ${rows}
-    </div>`;
+    return `<table class="ve-tbl" cellspacing="0" cellpadding="0">
+      <thead><tr><th class="c">ITEM</th><th class="d">DESCRIÇÃO</th><th class="c">QUANTIDADE</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
   }
 
   function obsLines(text) {
@@ -258,75 +254,68 @@ ${fontFaceCss()}
   letter-spacing:0.3px;text-transform:uppercase;margin-bottom:3px;line-height:18px;
 }
 
-.ve-fields{display:flex;flex-direction:column;gap:3px;}
+.ve-fields{display:flex;flex-direction:column;gap:5px;}
 .ve-field{
-  display:flex;align-items:baseline;gap:6px;font-size:9px;min-height:15px;
+  display:flex;align-items:flex-end;gap:6px;
+  border-bottom:1px solid ${C.border};padding:0 0 3px;min-height:16px;
 }
-.ve-field label{
+.ve-field .lbl{
   font-weight:700;color:${C.text};white-space:nowrap;text-transform:uppercase;
-  line-height:14px;padding:0;flex-shrink:0;
+  font-size:9px;line-height:1;padding:0;flex-shrink:0;
 }
-.ve-field .line{
-  flex:1;border-bottom:1px solid ${C.border};
-  padding:0 3px 1px;font-weight:400;font-size:10px;color:${C.text};
-  line-height:14px;min-height:14px;
+.ve-field .val{
+  flex:1;font-weight:400;font-size:10px;color:${C.text};
+  line-height:1;padding:0;min-height:10px;
 }
 .ve-row2{display:flex;gap:10px;}
 .ve-row2 .ve-field{flex:1;}
 
-/* Células — texto completo com quebra de linha */
-.ve-tbl{margin:0 8px 7px;border:1px solid ${C.tableLine};border-radius:4px;overflow:visible;}
-.ve-thead{
-  display:flex;min-height:28px;height:28px;background:${C.primary};color:#fff;
-  border-radius:3px 3px 0 0;
+/* Tabela HTML — evita corte do html2canvas em flex */
+.ve-tbl{
+  width:calc(100% - 16px);margin:0 8px 7px;border-collapse:collapse;
+  border:1px solid ${C.tableLine};border-radius:4px;overflow:hidden;
+  table-layout:fixed;
 }
-.ve-thead > div{
-  display:flex;align-items:center;justify-content:center;
-  height:28px;box-sizing:border-box;padding:0 6px;
+.ve-tbl th,.ve-tbl td{
+  border-top:1px solid ${C.tableLine};
+  padding:6px 6px;font-size:9px;line-height:1.35;vertical-align:middle;
+  word-wrap:break-word;overflow-wrap:anywhere;
 }
-.ve-trow{
-  display:flex;align-items:stretch;min-height:22px;height:auto;
-  border-top:1px solid ${C.tableLine};background:#fff;
+.ve-tbl thead th{
+  background:${C.primary};color:#fff;font-weight:700;border-top:0;
+  padding:8px 6px;line-height:1.2;vertical-align:middle;
 }
-.ve-trow > div{
-  display:flex;align-items:center;min-height:22px;height:auto;
-  box-sizing:border-box;padding:4px 5px;min-width:0;
-}
-.ve-trow .desc{justify-content:flex-start;align-items:flex-start;}
-.ve-trow .item,.ve-trow .qty,.ve-thead .item,.ve-thead .qty{justify-content:center;}
-.cell-txt{
-  display:block;width:100%;
-  font-size:9px;line-height:1.3;font-weight:400;
-  color:${C.text};overflow:visible;white-space:normal;word-break:break-word;
-}
-.ve-thead .cell-txt{
-  color:#fff;font-weight:700;font-size:9px;line-height:28px;height:28px;
-  text-align:center;white-space:nowrap;overflow:visible;
-}
-.cell-txt.c{color:${C.primary};font-weight:600;text-align:center;}
-.ve-thead .item,.ve-trow .item{width:12%;flex-shrink:0;}
-.ve-thead .desc,.ve-trow .desc{width:62%;flex:1;min-width:0;}
-.ve-thead .qty,.ve-trow .qty{width:26%;flex-shrink:0;}
+.ve-tbl th.c,.ve-tbl td.c{text-align:center;color:${C.primary};font-weight:600;width:12%;}
+.ve-tbl th.c{color:#fff;}
+.ve-tbl th.d,.ve-tbl td.d{text-align:left;width:62%;color:${C.text};font-weight:400;}
+.ve-tbl th.d{color:#fff;text-align:center;}
+.ve-tbl td.c:last-child,.ve-tbl th.c:last-child{width:26%;}
+.ve-tbl tbody tr:first-child td{border-top:1px solid ${C.tableLine};}
 .ve-push{flex:1 1 auto;min-height:8px;}
 .ve-page-note{font-size:8px;color:${C.muted};margin:0 8px 6px;font-style:italic;}
 
 .ve-2col{display:flex;gap:5px;margin-bottom:5px;}
 .ve-2col > *{flex:1;min-width:0;}
 
-.ve-pay{display:flex;flex-wrap:wrap;gap:3px 12px;margin:2px 0 3px;font-size:8px;}
-.ve-chk{display:flex;align-items:center;gap:5px;color:${C.text};width:42%;}
+.ve-pay{display:flex;flex-wrap:wrap;gap:4px 14px;margin:4px 0 4px;font-size:8px;}
+.ve-chk{
+  display:flex;align-items:center;gap:6px;color:${C.text};width:42%;
+  line-height:12px;min-height:14px;
+}
 .ve-chk.wide{width:100%;}
 .ve-chk .box{
-  width:11px;height:11px;border:1.5px solid ${C.primary};
-  display:inline-block;position:relative;flex-shrink:0;
-  background:#fff;vertical-align:middle;box-sizing:border-box;
-  overflow:hidden;
+  width:12px;height:12px;border:1.5px solid ${C.primary};
+  display:inline-block;text-align:center;
+  flex-shrink:0;background:#fff;box-sizing:border-box;
+  font-size:10px;line-height:11px;color:transparent;font-weight:700;
+  vertical-align:middle;
 }
-.ve-chk .box .tick{
-  position:absolute;left:0;right:0;top:0;bottom:0;
-  display:flex;align-items:center;justify-content:center;
-  font-size:8px;line-height:1;color:${C.secondary};font-weight:700;
+.ve-chk .box.on{
+  color:#fff;
+  background:${C.secondary};
+  border-color:${C.secondary};
 }
+.ve-chk .lab{line-height:12px;display:inline-block;vertical-align:middle;}
 .ve-forma{font-size:8px;color:${C.muted};margin-top:1px;border-bottom:1px solid ${C.border};padding-bottom:1px;}
 .obs-line{border-bottom:1px solid ${C.border};min-height:10px;margin-top:5px;font-size:9px;color:${C.text};}
 .ve-garantia{font-size:7.5px;line-height:1.28;color:${C.text};font-weight:400;margin:2px 0 0;}
@@ -355,46 +344,43 @@ ${fontFaceCss()}
   display:flex;align-items:center;
 }
 .ve-contact .left,.ve-contact .right{
-  flex:1;display:flex;align-items:center;gap:8px;padding:4px 10px;min-height:28px;
+  flex:1;padding:2px 10px;min-height:30px;
 }
-.ve-contact .left{justify-content:center;border-right:1px solid ${C.border};}
-.ve-contact .right{justify-content:flex-start;}
-.ve-contact .pi{
-  color:${C.primary};display:inline-flex;align-items:center;justify-content:center;
-  width:18px;height:18px;flex-shrink:0;line-height:0;
+.ve-contact .left{border-right:1px solid ${C.border};}
+.ve-contact .pair{
+  width:100%;border-collapse:collapse;height:30px;
 }
-.ve-contact .pi svg{display:block;width:16px;height:16px;}
-.ve-contact .fone{
-  font-size:13px;font-weight:700;color:${C.primary};line-height:18px;
-  display:inline-flex;align-items:center;
-}
-.ve-contact .bolt{
-  display:inline-flex;align-items:center;justify-content:center;
-  width:26px;height:26px;flex-shrink:0;line-height:0;
-}
-.ve-contact .bolt svg{display:block;width:24px;height:24px;}
-.ve-contact .slogan{font-size:9px;font-weight:700;color:${C.primary};line-height:1.25;}
+.ve-contact .pair td{vertical-align:middle;padding:0;}
+.ve-contact .pair td.ico{width:28px;text-align:center;line-height:0;}
+.ve-contact .pair td.ico svg{display:block;margin:0 auto;}
+.ve-contact .pair td.txt{padding-left:8px;}
+.ve-contact .fone{font-size:13px;font-weight:700;color:${C.primary};line-height:1;display:block;}
+.ve-contact .slogan{font-size:9px;font-weight:700;color:${C.primary};line-height:1.25;display:block;}
 .ve-contact .slogan b{color:${C.secondary};font-size:10px;}
 
-/* Rodapé sempre na base da folha, largura total */
+/* Rodapé — ícone + texto centralizados na vertical */
 .ve-foot{
   position:absolute;left:0;right:0;bottom:0;
   width:100%;margin:0;height:52px;
   background:${C.primary};color:#fff;
-  display:flex;align-items:center;justify-content:stretch;
+  display:flex;align-items:stretch;justify-content:stretch;
   border-radius:0;
 }
 .ve-foot .cell{
-  flex:1;display:flex;align-items:center;justify-content:center;gap:7px;
-  padding:0 4px;height:100%;
+  flex:1;height:100%;
   border-right:1px solid rgba(255,255,255,0.28);
+  padding:0 4px;
 }
 .ve-foot .cell:last-child{border-right:none;}
-.ve-foot .fi{flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;}
-.ve-foot .fi svg{width:16px;height:16px;}
-.ve-foot .ft{
-  font-size:7.5px;font-weight:700;line-height:1.15;letter-spacing:0.15px;
-  text-transform:uppercase;text-align:left;
+.ve-foot .pair{
+  width:100%;height:100%;border-collapse:collapse;
+}
+.ve-foot .pair td{vertical-align:middle;padding:0;color:#fff;}
+.ve-foot .pair td.ico{width:22px;text-align:center;line-height:0;}
+.ve-foot .pair td.ico svg{display:block;margin:0 auto;width:16px;height:16px;}
+.ve-foot .pair td.txt{
+  padding-left:6px;font-size:7.5px;font-weight:700;line-height:1.15;
+  letter-spacing:0.15px;text-transform:uppercase;text-align:left;
 }
 `;
   }
@@ -419,32 +405,41 @@ ${fontFaceCss()}
   }
 
   function pageFooterHtml(fone) {
+    const footCell = (icon, lines) =>
+      `<div class="cell"><table class="pair"><tr>
+        <td class="ico">${svgIcon(icon, 16)}</td>
+        <td class="txt">${lines}</td>
+      </tr></table></div>`;
     return `
   <div class="ve-contact">
     <div class="left">
-      <span class="pi">${svgIcon("phone", 16)}</span>
-      <span class="fone">${esc(fone)}</span>
+      <table class="pair"><tr>
+        <td class="ico">${svgIcon("phone", 16)}</td>
+        <td class="txt"><span class="fone">${esc(fone)}</span></td>
+      </tr></table>
     </div>
     <div class="right">
-      <span class="bolt"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"><path fill="${C.secondary}" d="M13 2 3 14h8l-1 8 10-12h-8l1-8z"/></svg></span>
-      <div class="slogan">ENERGIA QUE CONECTA,<br/>QUALIDADE QUE <b>TRANSFORMA.</b></div>
+      <table class="pair"><tr>
+        <td class="ico"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="22" height="22"><path fill="${C.secondary}" d="M13 2 3 14h8l-1 8 10-12h-8l1-8z"/></svg></td>
+        <td class="txt"><span class="slogan">ENERGIA QUE CONECTA,<br/>QUALIDADE QUE <b>TRANSFORMA.</b></span></td>
+      </tr></table>
     </div>
   </div>
   </div>
 
   <div class="ve-foot">
-    <div class="cell"><span class="fi">${svgIcon("zap", 16)}</span><span class="ft">INSTALAÇÕES<br/>ELÉTRICAS</span></div>
-    <div class="cell"><span class="fi">${svgIcon("cog", 16)}</span><span class="ft">MANUTENÇÃO<br/>PREVENTIVA</span></div>
-    <div class="cell"><span class="fi">${svgIcon("file", 16)}</span><span class="ft">PROJETOS<br/>ELÉTRICOS</span></div>
-    <div class="cell"><span class="fi">${svgIcon("building", 16)}</span><span class="ft">ADEQUAÇÃO<br/>NBR 5410</span></div>
-    <div class="cell"><span class="fi">${svgIcon("badge", 16)}</span><span class="ft">SEGURANÇA E<br/>QUALIDADE</span></div>
-    <div class="cell"><span class="fi">${svgIcon("headset", 16)}</span><span class="ft">ATENDIMENTO<br/>ESPECIALIZADO</span></div>
+    ${footCell("zap", "INSTALAÇÕES<br/>ELÉTRICAS")}
+    ${footCell("cog", "MANUTENÇÃO<br/>PREVENTIVA")}
+    ${footCell("file", "PROJETOS<br/>ELÉTRICOS")}
+    ${footCell("building", "ADEQUAÇÃO<br/>NBR 5410")}
+    ${footCell("badge", "SEGURANÇA E<br/>QUALIDADE")}
+    ${footCell("headset", "ATENDIMENTO<br/>ESPECIALIZADO")}
   </div>`;
   }
 
-  function payCheck(formas, id) {
+  function payCheck(formas, id, label) {
     const on = (formas || []).includes(id);
-    return `<span class="box">${on ? '<span class="tick">✓</span>' : ""}</span>`;
+    return `<div class="ve-chk${id === "transferencia" ? " wide" : ""}"><span class="box${on ? " on" : ""}">${on ? "✓" : ""}</span><span class="lab">${label}</span></div>`;
   }
 
   function buildPageHtml(orc, cliente, empresa, bannerUrl) {
@@ -452,7 +447,8 @@ ${fontFaceCss()}
     const incluirValorMat = orc.incluirMateriaisNoPdf !== false;
     const servicos = (orc.itens || []).filter((i) => i.tipo === "servico");
     const materiais = (orc.itens || []).filter((i) => i.tipo !== "servico");
-    const formas = orc.formasPagamento || [];
+    const formas =
+      orc.formasPagamento && orc.formasPagamento.length ? orc.formasPagamento : ["pix"];
 
     const state = typeof getState === "function" ? getState() : undefined;
     const orcPdf = {
@@ -487,13 +483,13 @@ ${fontFaceCss()}
     <div class="ve-box ve-box-pad">
       <div class="ve-title">${badge("user", true)} DADOS DO CLIENTE</div>
       <div class="ve-fields">
-        <div class="ve-field"><label>NOME / EMPRESA</label><div class="line">${esc(cliente?.nome)}</div></div>
-        <div class="ve-field"><label>CPF / CNPJ</label><div class="line">${esc(cliente?.documento)}</div></div>
+        <div class="ve-field"><span class="lbl">NOME / EMPRESA</span><span class="val">${esc(cliente?.nome)}</span></div>
+        <div class="ve-field"><span class="lbl">CPF / CNPJ</span><span class="val">${esc(cliente?.documento)}</span></div>
         <div class="ve-row2">
-          <div class="ve-field"><label>TELEFONE</label><div class="line">${esc(cliente?.telefone)}</div></div>
-          <div class="ve-field"><label>E-MAIL</label><div class="line">${esc(cliente?.email)}</div></div>
+          <div class="ve-field"><span class="lbl">TELEFONE</span><span class="val">${esc(cliente?.telefone)}</span></div>
+          <div class="ve-field"><span class="lbl">E-MAIL</span><span class="val">${esc(cliente?.email)}</span></div>
         </div>
-        <div class="ve-field"><label>ENDEREÇO DA OBRA</label><div class="line">${esc(cliente?.endereco || orc.enderecoObra)}</div></div>
+        <div class="ve-field"><span class="lbl">ENDEREÇO DA OBRA</span><span class="val">${esc(cliente?.endereco || orc.enderecoObra)}</span></div>
       </div>
     </div>
 
@@ -515,11 +511,11 @@ ${fontFaceCss()}
       <div class="ve-box ve-box-pad">
         <div class="ve-title">${badge("dollar", false)} CONDIÇÕES DE PAGAMENTO</div>
         <div class="ve-pay">
-          <div class="ve-chk">${payCheck(formas, "pix")}PIX</div>
-          <div class="ve-chk">${payCheck(formas, "boleto")}BOLETO</div>
-          <div class="ve-chk">${payCheck(formas, "dinheiro")}DINHEIRO</div>
-          <div class="ve-chk">${payCheck(formas, "cartao")}CARTÃO</div>
-          <div class="ve-chk wide">${payCheck(formas, "transferencia")}TRANSFERÊNCIA BANCÁRIA</div>
+          ${payCheck(formas, "pix", "PIX")}
+          ${payCheck(formas, "boleto", "BOLETO")}
+          ${payCheck(formas, "dinheiro", "DINHEIRO")}
+          ${payCheck(formas, "cartao", "CARTÃO")}
+          ${payCheck(formas, "transferencia", "TRANSFERÊNCIA BANCÁRIA")}
         </div>
         <div class="ve-forma">FORMA DE PAGAMENTO: ${esc(orc.formaPagamentoObs || "____________________")}</div>
       </div>

@@ -26,6 +26,7 @@ import {
   despesasDoServico,
   despesasGlobaisAtivas,
   custoOcultoServico,
+  custoOcultoGlobal,
   precoClienteServico,
   faixaPreco
 } from "../data/catalog";
@@ -2739,7 +2740,14 @@ export function initApp() {
       notas: renderNotasFiscais,
       empresa: renderEmpresa
     };
-    map[currentView]();
+    try {
+      map[currentView]();
+    } catch (err) {
+      console.error(err);
+      const msg = String(err?.message || err || "Erro ao renderizar a tela");
+      content.innerHTML = `<div class="view-enter"><div class="empty">Erro ao abrir esta aba. Recarregue a página.</div></div>`;
+      toast(msg);
+    }
     refreshIcons();
   }
 
