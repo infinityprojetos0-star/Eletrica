@@ -227,21 +227,20 @@ import { getPrecoByModo } from "../data/catalog";
     }
 
     let disjuntorIn = escolherDisjuntor(ib, izCorrigida);
-    if (disjuntorIn > izCorrigida) {
-      avisos.push(
-        `Disjuntor ${disjuntorIn} A supera Iz corrigida (${izCorrigida.toFixed(1)} A). Aumente o cabo ou revise a carga.`
-      );
-      // tenta cabo maior para caber o disjuntor
-      for (const c of CABOS) {
-        if (c.secao < secao) continue;
-        const izc = c.iz * k;
-        if (izc >= disjuntorIn && izc >= ib) {
-          secao = c.secao;
-          izCorrigida = izc;
-          avisos.push(`Cabo ajustado para ${secao} mm² para comportar o disjuntor.`);
-          break;
-        }
+    // Garante cabo compatível com Ib e com o disjuntor (In ≤ Iz)
+    for (let guard = 0; guard < 8; guard++) {
+      if (disjuntorIn <= izCorrigida + 1e-9 && izCorrigida + 1e-9 >= ib) break;
+      const idx = CABOS.findIndex((c) => c.secao === secao);
+      const next = CABOS[idx + 1];
+      if (!next) {
+        avisos.push(
+          `Disjuntor ${disjuntorIn} A / Ib ${ib.toFixed(1)} A acima da tabela de cabos embutida.`
+        );
+        break;
       }
+      secao = next.secao;
+      izCorrigida = next.iz * k;
+      avisos.push(`Cabo ajustado para ${secao} mm² (Ib/disjuntor).`);
       disjuntorIn = escolherDisjuntor(ib, izCorrigida);
     }
 

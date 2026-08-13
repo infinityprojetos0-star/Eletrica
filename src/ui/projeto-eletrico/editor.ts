@@ -553,6 +553,7 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
 
     function setTool(t, tipo, arch) {
       tool = t;
+      if (t === "conduit") selectedCircuitId = null; // só conduítes, sem caminhos de circuito
       if (tipo) {
         placeTipo = tipo;
         placePreset = null;
@@ -2824,8 +2825,9 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
         }
       });
 
-      // Conduítes: tubo + fios; com filtro, só o caminho mais curto (não o conduíte inteiro)
-      const hasCircFilter = !!selectedCircuitId;
+      // Conduítes: no modo "conduíte" só o tubo (sem fios/caminhos de circuito)
+      const conduitMode = tool === "conduit" || !!conduitDraft;
+      const hasCircFilter = !!selectedCircuitId && !conduitMode;
       const WIRE_GAP_M = 0.045;
 
       projeto.conduits.forEach((c) => {
@@ -2838,14 +2840,23 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
         const dimmed = hasCircFilter && !carriesSelected;
         const selObj = selectedKind === "conduit" && selectedId === c.id;
 
-        // eletroduto (tubo) — com filtro fica só de fundo
+        // eletroduto (tubo)
         drawPoly(
           pts,
-          selObj ? "#ffb74d" : "#90a4ae",
-          hasCircFilter ? (dimmed ? 1.5 : 2.5) : 5,
+          selObj ? "#ffb74d" : conduitMode ? "#546e7a" : "#90a4ae",
+          conduitMode ? (selObj ? 7 : 5.5) : hasCircFilter ? (dimmed ? 1.5 : 2.5) : 5,
           null,
-          hasCircFilter ? (dimmed ? 0.1 : 0.28) : 0.4
+          conduitMode ? (selObj ? 0.85 : 0.65) : hasCircFilter ? (dimmed ? 0.1 : 0.28) : 0.4
         );
+
+        if (conduitMode) {
+          // Só o conduíte — sem fios coloridos de circuito
+          drawConduitPath(pts, selObj ? "#f57c00" : "#607d8b", selObj, false, {
+            thin: false,
+            noNodes: false
+          });
+          return;
+        }
 
         if (!hasCircFilter) {
           if (!fios.length) {
@@ -2883,8 +2894,8 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
         }
       });
 
-      // Só o caminho mais curto QDC → ponto(s) do circuito
-      if (hasCircFilter) {
+      // Caminhos de circuito — ocultos no modo conduíte
+      if (hasCircFilter && !conduitMode) {
         const circ = (projeto.lastAnalise?.circuits || []).find((x) => x.id === selectedCircuitId);
         const caminhos = circ?.caminhos || [];
         caminhos.forEach((cam) => {
@@ -3137,7 +3148,7 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
               return `<button type="button" class="pe-circ ${active ? "active" : ""}" data-circ="${escapeHtml(c.id)}" style="border-left:4px solid ${c.cor}">
             <strong>${escapeHtml(c.id)}</strong> · ${escapeHtml(c.dimensionamento?.tipo?.label || c.tipoId || "")}
             <div class="hint">${c.pontos.length} ponto(s) · ${nCam} caminho(s) · L≈${c.comprimentoM?.toFixed?.(1) || "—"} m · ${c.tensaoV || "—"} V · fase ${escapeHtml(c.fase || "—")}</div>
-            <div>${c.bitola || "—"} mm² · DJ ${polosLabel} ${c.disjuntor || "—"}A · queda ${c.quedaPct != null ? c.quedaPct.toFixed(2) + "%" : "—"} · ${c.potenciaVA} VA/W</div>
+            <div>${c.bitola || "—"} mm² · DJ ${polosLabel} ${c.disjuntor || "—"}A · Ib ${(c.ib != null ? Number(c.ib).toFixed(1) : "—")} A · queda ${c.quedaPct != null ? c.quedaPct.toFixed(2) + "%" : "—"} · ${Math.round(c.potenciaVA || 0)} W</div>
             ${pathHint}
           </button>`;
             })

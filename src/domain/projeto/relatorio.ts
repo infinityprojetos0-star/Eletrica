@@ -522,30 +522,85 @@ function condutoresColoridos(polos, incluiPe = true) {
 }
 
 /**
- * Comprimento 3D do circuito: planta + descidas (pé direito − altura do ponto).
- * peDireitoM padrão 2,80 m.
+ * Altura (Z) no trecho: ponto elétrico próximo → altura da caixa;
+ * lâmpada / junção de conduíte no forro → pé direito.
+ */
+function alturaNoTrecho(xy, projeto, pd, snapM = 0.4) {
+  const points = projeto.points || [];
+  let best = null;
+  let bestD = snapM;
+  for (const raw of points) {
+    const n = normalizePoint(raw);
+    if (n.tipo === "qdc") continue;
+    const d = Math.hypot(n.x - xy.x, n.y - xy.y);
+    if (d < bestD) {
+      bestD = d;
+      best = n;
+    }
+  }
+  if (best) {
+    if (best.tipo === "lampada") return pd;
+    const h = Number(best.alturaM);
+    return Number.isFinite(h) ? h : 0.3;
+  }
+  // QDC próximo
+  const qdc = points.find((p) => normalizePoint(p).tipo === "qdc");
+  if (qdc) {
+    const n = normalizePoint(qdc);
+    if (Math.hypot(n.x - xy.x, n.y - xy.y) < snapM) {
+      return Number(n.alturaM) || 1.4;
+    }
+  }
+  return pd; // eixo do conduíte no forro
+}
+
+/**
+ * Comprimento 3D ao longo do caminho: soma trechos horizontais na planta
+ * + desníveis (ex.: forro → caixa na parede) entre vértices.
+ * Ex.: luz no centro → conduíte até a parede (PD) → desce até a caixa.
+ */
+function comprimentoPath3D(pathPts, projeto, pd) {
+  const pts = pathPts || [];
+  if (pts.length < 2) return 0;
+  const pe = Math.max(2.2, Number(pd) || 2.8);
+  let len = 0;
+  let zPrev = alturaNoTrecho(pts[0], projeto, pe);
+  for (let i = 1; i < pts.length; i++) {
+    const horiz = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+    const z = alturaNoTrecho(pts[i], projeto, pe);
+    const vert = Math.abs(z - zPrev);
+    len += horiz + vert;
+    zPrev = z;
+  }
+  return len;
+}
+
+/**
+ * Comprimento 3D do circuito = maior caminho QDC→ponto (planta + sobe/desce).
  */
 function comprimentoCircuito3D(circ, projeto, byId) {
   const pd = Math.max(2.2, Number(projeto?.peDireitoM) || 2.8);
-  const plan = Number(circ.comprimentoM) || 0;
+  const caminhos = circ.caminhos || [];
+  let maxLen = 0;
+  caminhos.forEach((cam) => {
+    const L = comprimentoPath3D(cam.pontos, projeto, pd);
+    maxLen = Math.max(maxLen, L);
+  });
+  if (maxLen > 0) return Math.max(maxLen, 1);
+
+  // Fallback sem caminho: planta + descidas
+  const plan = Number(circ.comprimentoPlantaM || circ.comprimentoM) || 0;
   const qdc = (projeto.points || []).find((p) => normalizePoint(p).tipo === "qdc");
   const hQdc = qdc ? Number(normalizePoint(qdc).alturaM) || 1.4 : 1.4;
-  const dropQdc = Math.max(0, pd - hQdc);
-
-  let dropMax = 0;
+  let dropMax = Math.max(0, pd - hQdc);
   (circ.pontos || []).forEach((pid) => {
     const pt = byId?.[pid] || (projeto.points || []).find((x) => x.id === pid);
     if (!pt) return;
     const n = normalizePoint(pt);
-    const h = Number(n.alturaM);
-    const altura = Number.isFinite(h) ? h : n.tipo === "lampada" ? pd : 0.3;
-    // Lâmpada no teto: quase sem descida; parede: PD − altura
-    const drop = n.tipo === "lampada" ? Math.max(0, pd - Math.min(altura, pd)) : Math.max(0, pd - altura);
-    dropMax = Math.max(dropMax, drop);
+    const h = n.tipo === "lampada" ? pd : Number(n.alturaM) || 0.3;
+    dropMax = Math.max(dropMax, Math.abs(pd - h));
   });
-
-  // Pior ramo: planta + descida QDC + descida no ponto mais desfavorável
-  return Math.max(plan + dropQdc + dropMax, plan, 1);
+  return Math.max(plan + dropMax, plan, 1);
 }
 
 function lineProd(produtos, modo, refId, nome, qtd, unidade, nota, pred) {
@@ -706,6 +761,8 @@ export {
   pickWagoSize,
   condutoresColoridos,
   comprimentoCircuito3D,
+  comprimentoPath3D,
+  alturaNoTrecho,
   CORES_CABO_NBR,
   TENSOES_PONTO,
   balancearCargas,

@@ -332,32 +332,121 @@ import { todayISO, uid } from "../../data/catalog";
     return 1;
   }
 
+  /** Potência média (W) de um módulo de tomada — TUE usa aparelho; 20A sem uso ≈ 1500 W. */
+  function potenciaModuloW(m, pt) {
+    if (m?.usoTue) {
+      const uso = usoTueById(m.usoTue);
+      if (uso) return Number(uso.pot) || 0;
+    }
+    const amp = Number(m?.amperagem) || 10;
+    const isTue = m?.usoCircuito === "tue" || amp >= 20;
+    if (isTue) {
+      // fallback: uso do ponto (tomada simples com usoTue no ponto)
+      if (pt?.usoTue) {
+        const uso = usoTueById(pt.usoTue);
+        if (uso) return Number(uso.pot) || 0;
+      }
+      return 1500; // corrente/potência média TUE residencial
+    }
+    return 100; // TUG — convencional NBR (≈ 100 VA por ponto/módulo)
+  }
+
+  /** Tensão efetiva do ponto (TUE/chuveiro/ar → 220 V mesmo em monofásico). */
+  function tensaoEfetivaPonto(p) {
+    const n = normalizePoint(p);
+    if (n.tipo === "chuveiro" || n.tipo === "ar" || n.tipo === "fogao") {
+      return normalizeTensaoV(n.tensaoV != null ? n.tensaoV : 220, 220);
+    }
+    if (n.tipo === "tomada" || n.tipo === "conjugado") {
+      if (Array.isArray(n.modulosConfig)) {
+        for (const m of n.modulosConfig) {
+          if (m.usoTue) {
+            const uso = usoTueById(m.usoTue);
+            if (uso) return normalizeTensaoV(uso.tensao, 220);
+          }
+          if (Number(m.amperagem) >= 20 || m.usoCircuito === "tue") return 220;
+        }
+      }
+      if (n.usoTue) {
+        const uso = usoTueById(n.usoTue);
+        if (uso) return normalizeTensaoV(uso.tensao, 220);
+      }
+      if (Number(n.amperagem) >= 20 || n.usoCircuito === "tue") return 220;
+      return 127;
+    }
+    if (n.tipo === "lampada" || n.tipo === "interruptor") return 127;
+    return normalizeTensaoV(n.tensaoV != null ? n.tensaoV : 127, 127);
+  }
+
+  /** Correntes médias (A) por módulo — para somar no circuito. */
+  function correnteModuloA(m, pt) {
+    const pot = potenciaModuloW(m, pt);
+    const v = m?.usoTue
+      ? Number(usoTueById(m.usoTue)?.tensao) || tensaoEfetivaPonto(pt)
+      : Number(m?.amperagem) >= 20
+        ? 220
+        : tensaoEfetivaPonto(pt);
+    if (!v || !pot) return 0;
+    return pot / v;
+  }
+
   function cargaPonto(p) {
     const n = normalizePoint(p);
     if (n.tipo === "tomada" || n.tipo === "conjugado") {
       if (Array.isArray(n.modulosConfig) && n.modulosConfig.length) {
+        // Evita contar o mesmo usoTue do ponto em todos os módulos
+        let usedPointUso = false;
         return n.modulosConfig.reduce((sum, m) => {
-          if (m.usoTue) {
-            const uso = usoTueById(m.usoTue);
-            if (uso) return sum + uso.pot;
+          if (m.usoTue) return sum + potenciaModuloW(m, n);
+          const amp = Number(m.amperagem) || 10;
+          const isTue = m.usoCircuito === "tue" || amp >= 20;
+          if (isTue && n.usoTue && !usedPointUso) {
+            usedPointUso = true;
+            return sum + potenciaModuloW({ ...m, usoTue: n.usoTue }, n);
           }
-          const amp = AMP_TOMADA.find((a) => a.id === Number(m.amperagem)) || AMP_TOMADA[0];
-          return sum + amp.potModulo;
+          return sum + potenciaModuloW(m, null);
         }, 0);
       }
       if (n.usoTue) {
         const uso = usoTueById(n.usoTue);
-        if (uso && !(Number(n.potenciaVA) > 0)) return uso.pot;
+        if (uso) return Number(uso.pot) || 0;
       }
-      if (Number(n.potenciaVA) > 0) return Number(n.potenciaVA);
-      const amp = AMP_TOMADA.find((a) => a.id === n.amperagem) || AMP_TOMADA[0];
-      return amp.potModulo * modulosTomada(n.modulos).modulos;
+      const amp = Number(n.amperagem) || 10;
+      const mods = modulosTomada(n.modulos).modulos;
+      if (amp >= 20 || n.usoCircuito === "tue") return 1500 * mods;
+      return 100 * mods;
     }
     if (n.tipo === "lampada") {
       if (Number(n.potenciaVA) > 0) return Number(n.potenciaVA);
       return varLampada(n.variante).pot;
     }
     return Number(n.potenciaVA || tipoPonto(n.tipo).potDefault || 0);
+  }
+
+  /** Corrente de projeto do ponto (A) — soma das correntes dos módulos/aparelhos. */
+  function correntePontoA(p) {
+    const n = normalizePoint(p);
+    if (n.tipo === "tomada" || n.tipo === "conjugado") {
+      if (Array.isArray(n.modulosConfig) && n.modulosConfig.length) {
+        let usedPointUso = false;
+        return n.modulosConfig.reduce((sum, m) => {
+          if (m.usoTue) return sum + correnteModuloA(m, n);
+          const amp = Number(m.amperagem) || 10;
+          const isTue = m.usoCircuito === "tue" || amp >= 20;
+          if (isTue && n.usoTue && !usedPointUso) {
+            usedPointUso = true;
+            return sum + correnteModuloA({ ...m, usoTue: n.usoTue }, n);
+          }
+          return sum + correnteModuloA(m, n);
+        }, 0);
+      }
+      const pot = cargaPonto(n);
+      const v = tensaoEfetivaPonto(n);
+      return v ? pot / v : 0;
+    }
+    const pot = cargaPonto(n);
+    const v = tensaoEfetivaPonto(n);
+    return v ? pot / v : 0;
   }
 
   function simbPonto(p) {
@@ -584,6 +673,10 @@ export {
   circKindOf,
   pesoPonto,
   cargaPonto,
+  correntePontoA,
+  correnteModuloA,
+  potenciaModuloW,
+  tensaoEfetivaPonto,
   labelPonto,
   simbPonto,
   defaultPoint,

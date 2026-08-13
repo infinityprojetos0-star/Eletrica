@@ -10,6 +10,8 @@ import {
   circKindOf,
   pesoPonto,
   cargaPonto,
+  correntePontoA,
+  tensaoEfetivaPonto,
   labelPonto,
   tipoPonto,
   modulosTomada,
@@ -543,28 +545,38 @@ function polylineLength(verts) {
         sumLen += len;
       });
       circ.conduitesIds = [...conduitesDoCirc];
-      circ.comprimentoM = Math.max(maxLen, 1);
+      circ.comprimentoPlantaM = Math.max(maxLen, 1);
       circ.comprimentoTotalTrechosM = sumLen;
       circ.pontosComPath = nPath;
 
-      const tensoesPts = circ.pontos
-        .map((pid) => normalizeTensaoPonto(byId[pid]?.tensaoV))
-        .filter(Boolean);
+      // Recalcula potência e corrente com usos TUE / módulos
+      circ.potenciaVA = circ.pontos.reduce(
+        (s, pid) => s + cargaPonto(byId[pid] || { id: pid }),
+        0
+      );
+      circ.correnteSomaA = circ.pontos.reduce(
+        (s, pid) => s + correntePontoA(byId[pid] || { id: pid }),
+        0
+      );
+
+      const tensoesPts = circ.pontos.map((pid) => tensaoEfetivaPonto(byId[pid] || {})).filter(Boolean);
       const tensaoDefault =
         circ.tipoId === "iluminacao" || circ.tipoId === "tug" ? 127 : 220;
-      const tensao = tensoesPts.length ? Math.max(...tensoesPts) : tensaoDefault;
+      let tensao = tensoesPts.length ? Math.max(...tensoesPts) : tensaoDefault;
+      // Cargas dedicadas: sempre ≥ 220 V (mesmo em monofásico)
+      if (["chuveiro", "ar", "tue"].includes(circ.tipoId) && tensao < 220) tensao = 220;
+
       const polos = resolvePolos(sistema, tensao);
       const fasesCirc = polos >= 3 ? 3 : 1;
-      const incluiPe = true; // PE sempre no circuito (NBR); aterramento do local é cabo extra
+      const incluiPe = true;
       const nCond = condutoresColoridos(polos, incluiPe).length;
 
-      // Comprimento 3D: planta + descidas (PD − altura)
+      // Comprimento 3D pelos caminhos (planta + sobe/desce PD ↔ altura caixa)
       const len3d = comprimentoCircuito3D(
-        circ,
-        { ...projeto, peDireitoM: projeto.peDireitoM },
+        { ...circ, comprimentoM: circ.comprimentoPlantaM },
+        { ...projeto, points, peDireitoM: projeto.peDireitoM },
         byId
       );
-      circ.comprimentoPlantaM = circ.comprimentoM;
       circ.comprimentoM = len3d;
 
       const dim =
@@ -590,19 +602,50 @@ function polylineLength(verts) {
       if (dim) {
         circ.bitola = dim.cabo.secao;
         circ.disjuntor = dim.disjuntor.In;
-        // Força pólos do sistema (não do tipo NBR genérico)
         circ.polos = polos;
         if (dim.disjuntor) dim.disjuntor.polos = polos;
         circ.curva = dim.disjuntor.curva;
-        circ.ib = dim.ib;
-        circ.quedaPct = dim.queda.pct;
-        circ.eletroduto = dim.eletroduto;
-        circ.dr = dim.dr;
-        circ.avisos = dim.avisos || [];
-        // Metros por condutor (= comprimento do circuito) com folga
+        // Ib: usa soma das correntes dos pontos se maior que Ib da potência total
+        const ibPot = dim.ib;
+        const ibSoma = circ.correnteSomaA || 0;
+        circ.ib = Math.max(ibPot, ibSoma);
+        // Se soma de correntes exige DJ/cabo maior, redimensiona
+        if (ibSoma > ibPot + 0.05) {
+          const dim2 = NBR5410.dimensionar({
+            tipoId: circ.tipoId || "livre",
+            potenciaW: Math.max(circ.potenciaVA, ibSoma * tensao),
+            tensaoV: tensao,
+            fases: fasesCirc,
+            polos,
+            nCondutores: nCond,
+            comprimentoM: circ.comprimentoM,
+            agrupamentoId:
+              circuits.length >= 8 ? "8+" : circuits.length >= 4 ? "4-5" : circuits.length >= 2 ? "2-3" : "1",
+            tempId: "30",
+            dr: circ.tipoId === "tug" || circ.tipoId === "chuveiro" || circ.tipoId === "tue"
+          });
+          if (dim2) {
+            circ.dimensionamento = dim2;
+            circ.bitola = dim2.cabo.secao;
+            circ.disjuntor = dim2.disjuntor.In;
+            circ.curva = dim2.disjuntor.curva;
+            circ.ib = Math.max(dim2.ib, ibSoma);
+            circ.quedaPct = dim2.queda.pct;
+            circ.eletroduto = dim2.eletroduto;
+            circ.dr = dim2.dr;
+            circ.avisos = dim2.avisos || [];
+            if (dim2.disjuntor) dim2.disjuntor.polos = polos;
+          }
+        } else {
+          circ.quedaPct = dim.queda.pct;
+          circ.eletroduto = dim.eletroduto;
+          circ.dr = dim.dr;
+          circ.avisos = dim.avisos || [];
+        }
         circ.metrosPorCondutor = Math.ceil(circ.comprimentoM * 1.1);
       } else {
         circ.polos = polos;
+        circ.ib = circ.correnteSomaA || 0;
         circ.metrosPorCondutor = Math.ceil(circ.comprimentoM * 1.1);
       }
     });
