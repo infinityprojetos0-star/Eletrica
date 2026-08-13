@@ -872,6 +872,26 @@ export function orcamentoTotalComNf(orc, state) {
   return orcamentoBase(orc, state) + orcamentoNfValor(orc, state);
 }
 
+/**
+ * Total que aparece no PDF do cliente.
+ * Se `incluirMateriaisNoPdf === false`, materiais ficam só na lista (fora do valor).
+ */
+export function orcamentoTotalPdf(orc, state) {
+  if (!orc) return 0;
+  const itens = (orc.itens || []).map((i) => sanitizarItemOculto(i, state));
+  const incluirMat = orc.incluirMateriaisNoPdf !== false;
+  const itensPdf = incluirMat ? itens : itens.filter((i) => i.tipo === "servico");
+  return orcamentoTotalComNf({ ...orc, itens: itensPdf }, state);
+}
+
+/** Soma só dos materiais (para exibir diferença lista × PDF) */
+export function orcamentoTotalMateriais(orc, state) {
+  const itens = (orc?.itens || [])
+    .map((i) => sanitizarItemOculto(i, state))
+    .filter((i) => i.tipo !== "servico");
+  return itens.reduce((t, i) => t + Number(i.qtd || 0) * Number(i.preco || 0), 0);
+}
+
 /** Despesas globais — 1× por orçamento (não por unidade) */
 export function despesasGlobaisAtivas(state) {
   return (state?.despesasGlobais || []).filter((d) => d && d.ativo !== false && !d._deleted);

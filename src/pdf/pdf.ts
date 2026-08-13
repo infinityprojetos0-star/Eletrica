@@ -27,10 +27,7 @@ import {
   formatDate,
   getPrecoByModo,
   orcamentoTotalComNf,
-  orcamentoBase,
-  orcamentoNfPercent,
-  orcamentoNfValor,
-  getEmissorNf,
+  orcamentoTotalPdf,
   sanitizarItemOculto,
   custoOcultoGlobal
 } from "../data/catalog";
@@ -154,11 +151,11 @@ import { Store } from "../store/store";
     </table>`;
   }
 
-  function obsLines(text) {
+  function obsLines(text, maxLines = 4) {
     const parts = String(text || "")
       .split(/\r?\n/)
       .concat(["", "", "", ""])
-      .slice(0, 4);
+      .slice(0, maxLines);
     return parts.map((l) => `<div class="obs-line">${esc(l)}</div>`).join("");
   }
 
@@ -261,66 +258,84 @@ ${fontFaceCss()}
 }
 .ve-title .ve-badge{margin-right:6px;}
 
-/* Campos cliente — tabela (html2canvas estável) */
-.ve-fields{width:100%;border-collapse:collapse;margin:0;}
+/* Campos cliente — linhas simples (como pedrgit/orcamento), sem truncar */
+.ve-fields{width:100%;border-collapse:collapse;margin:0;table-layout:fixed;}
 .ve-fields td{
-  border-bottom:1px solid ${C.border};padding:3px 0 2px;vertical-align:bottom;
-  font-size:9px;line-height:1.15;height:15px;
+  border-bottom:1px solid ${C.border};padding:4px 0 3px;vertical-align:bottom;
+  font-size:9.5px;line-height:1.25;
 }
 .ve-fields .lbl{
   font-weight:700;color:${C.text};white-space:nowrap;text-transform:uppercase;
-  padding-right:8px;width:1%;
+  padding-right:10px;width:132px;
 }
-.ve-fields .val{font-weight:400;font-size:10px;color:${C.text};width:99%;}
-.ve-fields .half{width:50%;}
-.ve-fields .half .lbl{width:auto;}
+.ve-fields .val{
+  font-weight:400;font-size:10.5px;color:${C.text};
+  white-space:normal;word-break:break-word;overflow-wrap:anywhere;
+}
+.ve-fields tr.two td{width:50%;border-bottom:none;padding:0;vertical-align:bottom;}
+.ve-fields tr.two table{width:100%;border-collapse:collapse;table-layout:fixed;}
+.ve-fields tr.two .lbl{width:78px;}
+.ve-fields tr.two td td{border-bottom:1px solid ${C.border};padding:4px 0 3px;}
 
-/* Tabela — sem overflow:hidden (corta 1ª linha no html2canvas) */
+/* Tabela serviços/materiais */
 .ve-tbl{
   width:calc(100% - 16px);margin:2px 8px 6px;border-collapse:separate;border-spacing:0;
   border:1px solid ${C.tableLine};table-layout:fixed;
 }
 .ve-tbl th,.ve-tbl td{
   border-top:1px solid ${C.tableLine};
-  padding:5px 6px;font-size:9px;line-height:1.3;vertical-align:middle;
+  padding:4px 6px;font-size:9px;line-height:1.25;vertical-align:middle;
   word-wrap:break-word;overflow-wrap:anywhere;
 }
 .ve-tbl thead th{
   background:${C.primary};color:#fff;font-weight:700;border-top:0;
-  padding:7px 6px;line-height:1.2;
+  padding:6px;line-height:1.2;
 }
 .ve-tbl th.c,.ve-tbl td.c{text-align:center;color:${C.primary};font-weight:600;width:12%;}
 .ve-tbl th.c{color:#fff;}
 .ve-tbl th.d,.ve-tbl td.d{text-align:left;width:62%;color:${C.text};font-weight:400;}
 .ve-tbl th.d{color:#fff;text-align:center;}
 .ve-tbl td.c:last-child,.ve-tbl th.c:last-child{width:26%;}
-.ve-page-note{font-size:8px;color:${C.muted};margin:0 8px 4px;font-style:italic;line-height:1.2;}
+.ve-page-note{font-size:7.5px;color:${C.muted};margin:0 8px 4px;font-style:italic;line-height:1.2;}
 
-.ve-2col{display:table;width:100%;table-layout:fixed;margin-bottom:6px;border-collapse:separate;border-spacing:5px 0;}
-.ve-2col > *{display:table-cell;width:50%;vertical-align:top;}
+.ve-compact .ve-tbl th,.ve-compact .ve-tbl td{padding:3px 5px;font-size:8px;}
+.ve-compact .ve-tbl thead th{padding:5px;}
+.ve-compact .ve-box{margin-bottom:5px;}
+.ve-compact .ve-main{padding-top:4px;}
+.ve-compact .ve-garantia{font-size:7px;line-height:1.2;}
+.ve-compact .ve-title{font-size:9px;margin-bottom:3px;}
+.ve-compact .ve-total .val{font-size:16px;}
+.ve-compact .ve-sign{margin-top:6px;}
 
-.ve-pay{margin:2px 0 2px;font-size:8px;}
+.ve-2col{display:table;width:100%;table-layout:fixed;margin-bottom:6px;border-collapse:separate;border-spacing:6px 0;}
+.ve-2col > *{display:table-cell;vertical-align:top;}
+.ve-2col > .ve-box{width:50%;}
+.ve-2col.ve-final > .ve-box{width:58%;}
+.ve-2col.ve-final > .ve-total{width:42%;}
+
+.ve-pay{margin:2px 0 2px;font-size:8.5px;}
 .ve-pay table{width:100%;border-collapse:collapse;}
-.ve-pay td{padding:2px 4px 2px 0;vertical-align:middle;width:50%;}
+.ve-pay td{padding:3px 4px 3px 0;vertical-align:middle;width:50%;}
 .ve-chk-ico{
-  width:11px;height:11px;border:1.5px solid ${C.primary};
+  width:12px;height:12px;border:1.6px solid ${C.primary};
   display:inline-block;vertical-align:middle;margin-right:5px;
   background:#fff;box-sizing:border-box;line-height:0;text-align:center;
+  border-radius:2px;
 }
 .ve-chk-ico.on{background:${C.secondary};border-color:${C.secondary};}
 .ve-chk-ico svg{display:block;margin:1px auto 0;width:8px;height:8px;}
-.ve-chk-lab{vertical-align:middle;line-height:11px;display:inline-block;}
-.ve-forma{font-size:8px;color:${C.muted};margin-top:3px;border-bottom:1px solid ${C.border};padding-bottom:1px;}
-.obs-line{border-bottom:1px solid ${C.border};min-height:9px;margin-top:3px;font-size:8.5px;color:${C.text};}
-.ve-garantia{font-size:7.5px;line-height:1.25;color:${C.text};font-weight:400;margin:2px 0 0;}
+.ve-chk-lab{vertical-align:middle;line-height:12px;display:inline-block;text-transform:uppercase;}
+.ve-forma{font-size:8px;color:${C.muted};margin-top:4px;border-bottom:1px solid ${C.border};padding-bottom:2px;}
+.obs-line{border-bottom:1px solid ${C.border};min-height:11px;margin-top:3px;font-size:8px;color:${C.text};line-height:1.2;word-break:break-word;}
+.ve-garantia{font-size:7.5px;line-height:1.3;color:${C.text};font-weight:400;margin:2px 0 0;text-transform:none;}
 
 .ve-total{
-  border:1.2px solid ${C.secondary};border-radius:8px;
-  text-align:center;padding:8px;background:#fff;vertical-align:middle;
+  border:2px solid ${C.secondary};border-radius:10px;
+  text-align:center;padding:10px 8px;background:#fff;vertical-align:middle;
 }
-.ve-total .lbl{font-size:9px;font-weight:700;color:${C.primary};letter-spacing:0.25px;margin-bottom:4px;}
+.ve-total .lbl{font-size:9px;font-weight:700;color:${C.primary};letter-spacing:0.25px;margin-bottom:6px;text-transform:uppercase;}
 .ve-total .val{
-  font-size:18px;font-weight:700;color:${C.secondary};line-height:1.15;
+  font-size:20px;font-weight:700;color:${C.secondary};line-height:1.15;
   white-space:nowrap;text-align:center;
 }
 
@@ -437,7 +452,7 @@ ${fontFaceCss()}
     } catch {
       state = undefined;
     }
-    const itensNorm = (orcRaw.itens || []).map((i) => sanitizarItemOculto(i));
+    const itensNorm = (orcRaw.itens || []).map((i) => sanitizarItemOculto(i, state));
     const temServ = itensNorm.some((i) => i.tipo === "servico");
     const despesasObra =
       orcRaw.despesasObra != null && orcRaw.despesasObra !== ""
@@ -453,19 +468,23 @@ ${fontFaceCss()}
     const formas =
       orc.formasPagamento && orc.formasPagamento.length ? orc.formasPagamento : ["pix"];
 
-    const orcPdf = {
-      ...orc,
-      itens: incluirValorMat ? itensNorm : servicos
-    };
     const total =
-      typeof orcamentoTotalComNf === "function"
-        ? orcamentoTotalComNf(orcPdf, state)
-        : Math.max(
-            0,
-            (orcPdf.itens || []).reduce((s, i) => s + Number(i.qtd || 0) * Number(i.preco || 0), 0) +
-              despesasObra -
-              Number(orc.desconto || 0)
-          );
+      typeof orcamentoTotalPdf === "function"
+        ? orcamentoTotalPdf(orc, state)
+        : typeof orcamentoTotalComNf === "function"
+          ? orcamentoTotalComNf(
+              { ...orc, itens: incluirValorMat ? itensNorm : servicos },
+              state
+            )
+          : Math.max(
+              0,
+              (incluirValorMat ? itensNorm : servicos).reduce(
+                (s, i) => s + Number(i.qtd || 0) * Number(i.preco || 0),
+                0
+              ) +
+                despesasObra -
+                Number(orc.desconto || 0)
+            );
     const totalLabel =
       typeof money === "function"
         ? money(total)
@@ -476,9 +495,11 @@ ${fontFaceCss()}
     const validade = orc.validade != null ? orc.validade : 15;
     const minServ = Math.min(servicos.length + 1, Math.max(servicos.length, 4));
     const minMat = Math.min(materiais.length + 2, Math.max(materiais.length, 6));
+    const compact = servicos.length >= 8 ? " ve-compact" : "";
+    const obsMax = compact ? 3 : 4;
 
     const page1 = `
-<div class="ve-page" data-pdf-page="1">
+<div class="ve-page${compact}" data-pdf-page="1">
   <div class="ve-page-inner">
   ${pageHeaderHtml(orc, bannerUrl, `VALIDADE DA PROPOSTA: ${validade} DIAS`)}
 
@@ -486,17 +507,17 @@ ${fontFaceCss()}
     <div class="ve-box ve-box-pad">
       <div class="ve-title">${badge("user", true)} DADOS DO CLIENTE</div>
       <table class="ve-fields">
-        <tr><td class="lbl">NOME / EMPRESA</td><td class="val">${esc(cliente?.nome)}</td></tr>
-        <tr><td class="lbl">CPF / CNPJ</td><td class="val">${esc(cliente?.documento)}</td></tr>
-        <tr>
-          <td class="half" colspan="1">
-            <table class="ve-fields" style="width:100%"><tr><td class="lbl">TELEFONE</td><td class="val">${esc(cliente?.telefone)}</td></tr></table>
+        <tr><td class="lbl">NOME / EMPRESA</td><td class="val">${esc(cliente?.nome || "")}</td></tr>
+        <tr><td class="lbl">CPF / CNPJ</td><td class="val">${esc(cliente?.documento || "")}</td></tr>
+        <tr class="two">
+          <td>
+            <table><tr><td class="lbl">TELEFONE</td><td class="val">${esc(cliente?.telefone || "")}</td></tr></table>
           </td>
-          <td class="half">
-            <table class="ve-fields" style="width:100%"><tr><td class="lbl">E-MAIL</td><td class="val">${esc(cliente?.email)}</td></tr></table>
+          <td>
+            <table><tr><td class="lbl">E-MAIL</td><td class="val">${esc(cliente?.email || "")}</td></tr></table>
           </td>
         </tr>
-        <tr><td class="lbl">ENDEREÇO DA OBRA</td><td class="val">${esc(cliente?.endereco || orc.enderecoObra)}</td></tr>
+        <tr><td class="lbl">ENDEREÇO DA OBRA</td><td class="val">${esc(cliente?.endereco || orc.enderecoObra || "")}</td></tr>
       </table>
     </div>
 
@@ -528,11 +549,11 @@ ${fontFaceCss()}
       </div>
       <div class="ve-box ve-box-pad">
         <div class="ve-title">${badge("chat", false)} OBSERVAÇÕES</div>
-        ${obsLines(orc.observacoes)}
+        ${obsLines(orc.observacoes, obsMax)}
       </div>
     </div>
 
-    <div class="ve-2col" style="margin-bottom:0">
+    <div class="ve-2col ve-final" style="margin-bottom:0">
       <div class="ve-box ve-box-pad">
         <div class="ve-title">${badge("shield", false)} GARANTIA</div>
         <p class="ve-garantia">A VoltES garante a execução dos serviços conforme as normas técnicas vigentes (NBR 5410), utilizando materiais de qualidade e mão de obra especializada. O prazo de garantia dos serviços executados será de <strong>${garantiaMeses}</strong> meses, não abrangendo danos decorrentes de mau uso, intervenções de terceiros ou causas externas.</p>

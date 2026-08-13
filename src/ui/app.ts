@@ -23,6 +23,8 @@ import {
   orcamentoNfPercent,
   orcamentoNfValor,
   orcamentoTotalComNf,
+  orcamentoTotalPdf,
+  orcamentoTotalMateriais,
   despesasDoServico,
   custoOcultoServico,
   custoOcultoGlobal,
@@ -159,8 +161,9 @@ export function initApp() {
     return Store.get();
   }
 
+  /** Total exibido na lista = o mesmo valor do PDF (respeita materiais no total). */
   function orcamentoTotal(orc) {
-    return orcamentoTotalComNf(orc, getState());
+    return orcamentoTotalPdf(orc, getState());
   }
 
   function nfLabel(nf) {
@@ -418,12 +421,18 @@ export function initApp() {
                   nf === "sim"
                     ? o.nfEmissorNome || getEmissorNf(o.nfEmissorId, s)?.nome || ""
                     : "";
+                const totalPdf = orcamentoTotal(o);
+                const matFora = o.incluirMateriaisNoPdf === false;
+                const matValor = matFora ? orcamentoTotalMateriais(o, s) : 0;
                 return `<tr>
                   <td>${o.codigo}</td>
                   <td><strong>${o.titulo}</strong></td>
                   <td>${cli?.nome || "—"}</td>
                   <td>${formatDate(o.data)}</td>
-                  <td>${money(orcamentoTotal(o))}</td>
+                  <td>
+                    <strong>${money(totalPdf)}</strong>
+                    ${matFora && matValor > 0 ? `<div style="font-size:.72rem;color:var(--text-dim);margin-top:2px">PDF · só mão de obra<br/>materiais ${money(matValor)} (ref.)</div>` : ""}
+                  </td>
                   <td><span class="badge badge-${nfBadge}" title="${emNome || "Nota fiscal"}">${nfLabel(nf)}${emNome ? ` · ${emNome}` : ""}</span></td>
                   <td><span class="badge badge-${o.status}">${o.status}</span></td>
                   <td class="actions-cell">
@@ -725,7 +734,7 @@ export function initApp() {
         <div class="field full">
           <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:.9rem;color:var(--text)">
             <input type="checkbox" id="oIncluiMat" style="margin-top:3px" ${o.incluirMateriaisNoPdf !== false ? "checked" : ""} />
-            <span><strong>Somar valor dos materiais no total</strong><br/><span class="hint">Marcado: materiais são seus (entram no valor do PDF). Desmarcado: lista de materiais continua na pág. 2, mas o total fica só com a mão de obra.</span></span>
+            <span><strong>Somar valor dos materiais no total do PDF</strong><br/><span class="hint">Marcado: total do sistema = total do PDF (mão de obra + materiais). Desmarcado: materiais só na pág. 2 como referência — o total da lista e do PDF ficam só com a mão de obra.</span></span>
           </label>
         </div>
         <div class="field full"><label>Observações</label><textarea id="oObs">${o.observacoes || ""}</textarea></div>
@@ -738,7 +747,7 @@ export function initApp() {
             ${PRECO_MODOS.map((m) => `<button type="button" data-modo="${m.id}" class="${modoLocal === m.id ? "active" : ""}">${m.label}</button>`).join("")}
           </div>
         </div>
-        <p style="color:var(--text-dim);font-size:.8rem;max-width:280px">Deslocamento e alimentação (globais) + extras do serviço entram no unitário e <strong>não aparecem</strong> no PDF.</p>
+        <p style="color:var(--text-dim);font-size:.8rem;max-width:280px">Deslocamento/alimentação (1× visita) + extras do serviço entram no valor e <strong>não aparecem</strong> detalhados no PDF.</p>
       </div>
 
       <div style="margin:0 0 16px;display:flex;gap:8px;flex-wrap:wrap">
