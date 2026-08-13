@@ -24,10 +24,10 @@ import {
   orcamentoNfValor,
   orcamentoTotalComNf,
   despesasDoServico,
-  despesasGlobaisAtivas,
   custoOcultoServico,
   custoOcultoGlobal,
   sanitizarItemOculto,
+  despesasObraDoOrcamento,
   precoClienteServico,
   faixaPreco
 } from "../data/catalog";
@@ -519,7 +519,7 @@ export function initApp() {
       itens: []
     };
     let itens = (o.itens || []).map((i) => ({
-      ...sanitizarItemOculto(i),
+      ...sanitizarItemOculto(i, s),
       precoModo: i.precoModo || modoLocal,
       precoMin: i.precoMin,
       precoMed: i.precoMed ?? i.preco,
@@ -539,7 +539,7 @@ export function initApp() {
     const renderItens = () => {
       const box = document.getElementById("itensBox");
       if (!box) return;
-      itens = itens.map((i) => sanitizarItemOculto(i));
+      itens = itens.map((i) => sanitizarItemOculto(i, getState()));
       const subItens = itens.reduce((t, i) => t + i.qtd * i.preco, 0);
       const ocultoItens = itens.reduce((t, i) => t + i.qtd * Number(i.custoOculto || 0), 0);
       const temServ = itens.some((i) => i.tipo === "servico");
@@ -848,7 +848,7 @@ export function initApp() {
       const emissor = notaFiscal === "sim" ? getEmissorNf(nfEmissorId, getState()) : null;
       const nfAliquota = notaFiscal === "sim" ? Number(emissor?.aliquota) || 0 : 0;
 
-      const itensClean = itens.map((i) => sanitizarItemOculto(i));
+      const itensClean = itens.map((i) => sanitizarItemOculto(i, getState()));
       const temServ = itensClean.some((i) => i.tipo === "servico");
       const despesasObra = temServ ? custoOcultoGlobal(getState()) : 0;
 
@@ -1153,10 +1153,15 @@ export function initApp() {
     const despesasServico = s.despesasServico || [];
     const despesasGlobais = s.despesasGlobais || [];
     const totalGlobal = custoOcultoGlobal(s);
-    const totalEmbutidoCadastro = totalGlobal + despesasServico.reduce((t, d) => t + Number(d.valor || 0), 0);
     const aprovadosMes = s.orcamentos.filter((o) => o.status === "aprovado" && (o.data || "").startsWith(mes));
-    const ocultoEmOrcamentos = aprovadosMes.reduce((t, o) =>
-      t + (o.itens || []).reduce((s2, i) => s2 + Number(i.custoOculto || 0) * Number(i.qtd || 0), 0), 0);
+    const ocultoEmOrcamentos = aprovadosMes.reduce((t, o) => {
+      const itens = (o.itens || []).map((i) => sanitizarItemOculto(i, s));
+      const porItem = itens.reduce(
+        (s2, i) => s2 + Number(i.custoOculto || 0) * Number(i.qtd || 0),
+        0
+      );
+      return t + porItem + despesasObraDoOrcamento({ ...o, itens }, s);
+    }, 0);
     const saldo = entradas - saidas;
 
     const nomeServico = (id) => s.servicos.find((sv) => sv.id === id)?.nome || "Serviço removido";
@@ -1166,13 +1171,13 @@ export function initApp() {
       <div class="hero-note">
         <div>
           <h3>Despesas embutidas (ocultas no PDF)</h3>
-          <p><strong>Deslocamento</strong> e <strong>alimentação</strong> entram <strong>1 vez por orçamento</strong> (não por quantidade). Extras por serviço somam no unitário daquele serviço.</p>
+          <p><strong>Deslocamento</strong> e <strong>alimentação</strong> entram <strong>1× por orçamento</strong> (visita), não por ponto. Edite os valores abaixo se estiverem altos. Extras por serviço somam no unitário.</p>
         </div>
       </div>
       <div class="grid grid-4" style="margin-bottom:16px">
         <div class="card stat-card success"><div class="stat-label">Entradas (mês)</div><div class="stat-value">${money(entradas)}</div></div>
         <div class="card stat-card danger"><div class="stat-label">Saídas (mês)</div><div class="stat-value">${money(saidas)}</div></div>
-        <div class="card stat-card warn"><div class="stat-label">Global / serviço</div><div class="stat-value">${money(totalEmbutidoCadastro)}</div></div>
+        <div class="card stat-card warn"><div class="stat-label">Global (1× visita)</div><div class="stat-value">${money(totalGlobal)}</div></div>
         <div class="card stat-card accent"><div class="stat-label">Embutido em aprovados</div><div class="stat-value">${money(ocultoEmOrcamentos)}</div></div>
       </div>
       <div class="toolbar">
@@ -1196,7 +1201,7 @@ export function initApp() {
               ${despesasGlobais.map((d) => `
                 <tr>
                   <td><strong>${d.nome}</strong></td>
-                  <td>Todos os serviços</td>
+                  <td>1× por orçamento</td>
                   <td>${money(d.valor)}</td>
                   <td><span class="badge badge-${d.ativo === false ? "rejeitado" : "aprovado"}">${d.ativo === false ? "off" : "ativa"}</span></td>
                   <td class="actions-cell">
@@ -1255,7 +1260,7 @@ export function initApp() {
         <div class="form-grid">
           <div class="field full"><label>Nome</label><input id="dgNome" value="${d.nome || ""}" placeholder="Ex: Deslocamento, Alimentação…" /></div>
           <div class="field"><label>Valor (R$)</label><input id="dgValor" type="number" step="0.01" value="${d.valor || 0}" /></div>
-          <div class="field full" style="color:var(--text-dim);font-size:.82rem">Aplica em <strong>todos</strong> os serviços do orçamento, somando no unitário (cliente não vê o detalhe).</div>
+          <div class="field full" style="color:var(--text-dim);font-size:.82rem">Soma <strong>1× por orçamento</strong> (visita), não por ponto. Cliente não vê o detalhe.</div>
         </div>
       `, `<button class="btn btn-ghost" id="cancelModal">Cancelar</button><button class="btn btn-primary" id="saveDg">Salvar</button>`);
       document.getElementById("cancelModal").onclick = closeModal;
@@ -1270,7 +1275,7 @@ export function initApp() {
           nome,
           valor,
           ativo: d.ativo !== false,
-          escopo: "todos"
+          escopo: "orcamento"
         };
         const idx = list.findIndex((x) => x.id === data.id);
         if (idx >= 0) list[idx] = { ...list[idx], ...data };
@@ -1939,7 +1944,7 @@ export function initApp() {
             : 0,
         precoModo: modo,
         despesasObra: itens.some((i) => i.tipo === "servico") ? custoOcultoGlobal(getState()) : 0,
-        itens: itens.map((i) => sanitizarItemOculto(i)),
+        itens: itens.map((i) => sanitizarItemOculto(i, getState())),
         status: "pendente",
         origem: "preprojeto"
       };
@@ -2069,7 +2074,7 @@ export function initApp() {
                 nota: m.nota || ""
               };
             });
-            const itensAll = [...itensServ, ...itensMat].map((i) => sanitizarItemOculto(i));
+            const itensAll = [...itensServ, ...itensMat].map((i) => sanitizarItemOculto(i, st));
             const data = {
               id: uid("orc"),
               codigo: `ORC-${Date.now().toString(36).toUpperCase()}`,
@@ -2471,7 +2476,7 @@ export function initApp() {
             : 0,
         precoModo: modo,
         despesasObra: itens.some((i) => i.tipo === "servico") ? custoOcultoGlobal(getState()) : 0,
-        itens: itens.map((i) => sanitizarItemOculto(i)),
+        itens: itens.map((i) => sanitizarItemOculto(i, getState())),
         status: "pendente",
         origem: "nbr5410"
       };

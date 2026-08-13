@@ -773,7 +773,7 @@ export const PAGE_META = {
   orcamentos: { title: "Orçamentos", subtitle: "Monte propostas profissionais em minutos" },
   servicos: { title: "Serviços", subtitle: "Mão de obra média no Espírito Santo (2026)" },
   produtos: { title: "Materiais", subtitle: "Preços médios de varejo / internet" },
-  financeiro: { title: "Financeiro", subtitle: "Lançamentos, deslocamento, alimentação e extras por serviço" },
+  financeiro: { title: "Financeiro", subtitle: "Lançamentos · deslocamento/alimentação 1× por visita · extras por serviço" },
   calculadoras: { title: "Calculadoras", subtitle: "Ambientes, circuitos NBR 5410 e estimativas auxiliares" },
   projeto: {
     title: "Projeto elétrico",
@@ -843,7 +843,7 @@ export function getEmissorNf(id, state) {
 
 /** Subtotal − desconto (antes da NF). Inclui despesas de obra 1× se houver. */
 export function orcamentoBase(orc, state) {
-  const itens = (orc?.itens || []).map((i) => sanitizarItemOculto(i));
+  const itens = (orc?.itens || []).map((i) => sanitizarItemOculto(i, state));
   const sub = itens.reduce((s, i) => s + Number(i.qtd || 0) * Number(i.preco || 0), 0);
   const obra =
     orc?.despesasObra != null && orc.despesasObra !== ""
@@ -902,12 +902,26 @@ function temServicoNoOrc(orc) {
 const GLOBAL_DESPESA_IDS = new Set(["dg-deslocamento", "dg-alimentacao"]);
 
 /** Remove globais legadas do unitário e recalcula preco. */
-export function sanitizarItemOculto(item) {
+export function sanitizarItemOculto(item, state) {
   if (!item || item.tipo !== "servico") return item;
   const raw = item.despesasOcultas;
   let especificas;
-  if (Array.isArray(raw)) {
-    especificas = raw.filter((d) => d && !d.global && !GLOBAL_DESPESA_IDS.has(d.id));
+  if (Array.isArray(raw) && raw.length) {
+    especificas = raw
+      .filter((d) => d && !d.global && !GLOBAL_DESPESA_IDS.has(d.id))
+      .map((d) => ({
+        id: d.id,
+        nome: d.nome,
+        valor: Number(d.valor) || 0,
+        global: false
+      }));
+  } else if (state && item.refId) {
+    especificas = despesasDoServico(item.refId, state).map((d) => ({
+      id: d.id,
+      nome: d.nome,
+      valor: Number(d.valor) || 0,
+      global: false
+    }));
   } else {
     especificas = [];
   }
@@ -940,21 +954,21 @@ export function precoClienteServico(servico, modo, state) {
   return getPrecoByModo(servico, modo) + custoOcultoServico(servico?.id, state);
 }
 
-/** Globais padrão: deslocamento e alimentação — 1× por orçamento */
+/** Globais padrão: deslocamento e alimentação — 1× por orçamento/visita */
 export const SEED_DESPESAS_GLOBAIS = [
   {
     id: "dg-deslocamento",
     nome: "Deslocamento",
-    valor: 35,
+    valor: 40,
     ativo: true,
-    escopo: "todos"
+    escopo: "orcamento"
   },
   {
     id: "dg-alimentacao",
     nome: "Alimentação",
     valor: 25,
     ativo: true,
-    escopo: "todos"
+    escopo: "orcamento"
   }
 ];
 

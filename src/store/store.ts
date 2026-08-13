@@ -8,7 +8,9 @@ import {
   SEED_DESPESAS_GLOBAIS,
   SEED_EMISSORES_NF,
   todayISO,
-  uid
+  uid,
+  sanitizarItemOculto,
+  despesasObraDoOrcamento
 } from "../data/catalog";
 import { DataCache } from "./cache";
 import { FirebaseApp } from "./firebase";
@@ -874,7 +876,7 @@ import { FirebaseApp } from "./firebase";
       }
     }
 
-    // Garante deslocamento + alimentação globais (qualquer serviço)
+    // Garante deslocamento + alimentação (1× por orçamento/visita)
     if (!Array.isArray(state.despesasGlobais) || !state.despesasGlobais.length) {
       state = {
         ...state,
@@ -888,10 +890,38 @@ import { FirebaseApp } from "./firebase";
         if (!map[seed.id]) {
           map[seed.id] = { ...seed, updatedAt: 0 };
           changed = true;
+        } else if (map[seed.id].escopo === "todos") {
+          // Modelo antigo: global por unidade → passa a 1× por orçamento
+          map[seed.id] = { ...map[seed.id], escopo: "orcamento" };
+          changed = true;
         }
       });
       if (changed) {
         state = { ...state, despesasGlobais: Object.values(map) };
+        persistCache();
+      }
+    }
+
+    // Migra orçamentos: tira global do unitário e grava 1× em despesasObra
+    if (Array.isArray(state.orcamentos) && state.orcamentos.length) {
+      let orcChanged = false;
+      const orcamentos = state.orcamentos.map((o) => {
+        if (!o || o._ocultoGlobalMigrado) return o;
+        const itens = (o.itens || []).map((i) => sanitizarItemOculto(i, state));
+        const despesasObra =
+          o.despesasObra != null && o.despesasObra !== ""
+            ? Number(o.despesasObra) || 0
+            : despesasObraDoOrcamento({ ...o, itens }, state);
+        orcChanged = true;
+        return {
+          ...o,
+          itens,
+          despesasObra,
+          _ocultoGlobalMigrado: true
+        };
+      });
+      if (orcChanged) {
+        state = { ...state, orcamentos };
         persistCache();
       }
     }
