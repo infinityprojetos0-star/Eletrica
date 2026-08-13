@@ -255,6 +255,14 @@ import { todayISO, uid } from "../../data/catalog";
     return Math.round(Math.max(0.4, Math.min(2.5, n)) * 10) / 10;
   }
 
+  function normalizeTensaoV(v, fallback = 127) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    if (n >= 300) return 360;
+    if (n >= 200) return 220;
+    return 127;
+  }
+
   function normalizePoint(p) {
     if (!p) return p;
     const out = { ...p };
@@ -299,6 +307,15 @@ import { todayISO, uid } from "../../data/catalog";
       syncComandos(out);
       syncModulosConfig(out);
     }
+    const fallbackV =
+      Number(out.amperagem) >= 20 ||
+      out.usoCircuito === "tue" ||
+      out.tipo === "chuveiro" ||
+      out.tipo === "ar" ||
+      out.tipo === "fogao"
+        ? 220
+        : Number(tipoPonto(out.tipo).tensaoDefault) || 127;
+    out.tensaoV = normalizeTensaoV(out.tensaoV != null ? out.tensaoV : fallbackV, fallbackV);
     return out;
   }
 
@@ -572,5 +589,6 @@ export {
   modulosTomada,
   varInterruptor,
   varLampada,
-  teclasDoInterruptor
+  teclasDoInterruptor,
+  normalizeTensaoV
 };

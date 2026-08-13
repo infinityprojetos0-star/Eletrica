@@ -245,9 +245,18 @@ import { getPrecoByModo } from "../data/catalog";
       disjuntorIn = escolherDisjuntor(ib, izCorrigida);
     }
 
-    const polos = Number(input.polos) || tipo.polos || (tensaoV >= 220 && fases !== 1 ? 2 : 1);
+    // Se o caller informar polos (sistema mono/bi/tri + tensão), prevalece sobre o tipo.
+    const polos =
+      input.polos != null && input.polos !== ""
+        ? Math.max(1, Number(input.polos) || 1)
+        : tipo.polos || (tensaoV >= 220 && Number(fases) !== 1 ? 2 : 1);
     const curva = input.curva || tipo.curva || "C";
-    const nCondutores = polos >= 2 ? 3 : 2; // fases(+neutro) + PE aproximado
+    const nCondutores =
+      input.nCondutores != null
+        ? Math.max(2, Number(input.nCondutores) || 2)
+        : polos >= 3
+          ? 5
+          : 3; // 1P/2P: F(+N/+F)+PE · 3P: 3F+N+PE
     const metrosCabo = comprimentoM > 0 ? comprimentoM * nCondutores : 0;
 
     const eletroduto =

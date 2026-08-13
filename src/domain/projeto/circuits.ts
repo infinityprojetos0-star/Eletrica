@@ -23,6 +23,10 @@ import {
 import {
   resolveSistema,
   labelSistema,
+  normalizeTensaoPonto,
+  resolvePolos,
+  nCondutoresOf,
+  labelPolosDj,
   balancearCargas,
   dimensionarProtecao,
   contarWagos,
@@ -534,13 +538,16 @@ function polylineLength(verts) {
       circ.comprimentoTotalTrechosM = sumLen;
       circ.pontosComPath = nPath;
 
-      const first = byId[circ.pontos[0]];
-      const tensao =
-        circ.tipoId === "iluminacao" || circ.tipoId === "tug"
-          ? Number(first?.tensaoV || 127)
-          : Number(first?.tensaoV || 220);
+      const tensoesPts = circ.pontos
+        .map((pid) => normalizeTensaoPonto(byId[pid]?.tensaoV))
+        .filter(Boolean);
+      const tensaoDefault =
+        circ.tipoId === "iluminacao" || circ.tipoId === "tug" ? 127 : 220;
+      const tensao = tensoesPts.length ? Math.max(...tensoesPts) : tensaoDefault;
+      const polos = resolvePolos(sistema, tensao);
+      const fasesCirc = polos >= 3 ? 3 : 1;
+      const nCond = nCondutoresOf(polos);
 
-      const fasesCirc = tensao >= 220 ? 2 : 1;
       const dim =
         typeof NBR5410 !== "undefined"
           ? NBR5410.dimensionar({
@@ -548,6 +555,8 @@ function polylineLength(verts) {
               potenciaW: circ.potenciaVA,
               tensaoV: tensao,
               fases: fasesCirc,
+              polos,
+              nCondutores: nCond,
               comprimentoM: circ.comprimentoM,
               agrupamentoId:
                 circuits.length >= 8 ? "8+" : circuits.length >= 4 ? "4-5" : circuits.length >= 2 ? "2-3" : "1",
@@ -556,17 +565,22 @@ function polylineLength(verts) {
             })
           : null;
 
+      circ.tensaoV = tensao;
       circ.dimensionamento = dim;
       if (dim) {
         circ.bitola = dim.cabo.secao;
         circ.disjuntor = dim.disjuntor.In;
-        circ.polos = dim.disjuntor.polos;
+        // Força pólos do sistema (não do tipo NBR genérico)
+        circ.polos = polos;
+        if (dim.disjuntor) dim.disjuntor.polos = polos;
         circ.curva = dim.disjuntor.curva;
         circ.ib = dim.ib;
         circ.quedaPct = dim.queda.pct;
         circ.eletroduto = dim.eletroduto;
         circ.dr = dim.dr;
         circ.avisos = dim.avisos || [];
+      } else {
+        circ.polos = polos;
       }
     });
 
@@ -608,7 +622,7 @@ function polylineLength(verts) {
     avisos.push(...(balanceamento.avisos || []));
 
     const protecao = dimensionarProtecao(circuits, sistema, balanceamento);
-    const wago = contarWagos({ ...projeto, points: pointsOut }, graph);
+    const wago = contarWagos({ ...projeto, points: pointsOut }, graph, circuits);
 
     const projetoMat = { ...projeto, points: pointsOut, conduits, arch: projeto.arch || [], sistema };
     const materiaisPorCircuito = montarMateriaisPorCircuito(
@@ -775,9 +789,11 @@ function polylineLength(verts) {
       const k = `${polos}|${In}|${curva}`;
       if (!bagDj[k]) {
         const dj =
-          polos >= 2
-            ? find((p) => p.id === "prd-7") || find((p) => /bipolar/i.test(p.nome || ""))
-            : find((p) => p.id === "prd-6") || find((p) => /monopolar/i.test(p.nome || ""));
+          polos >= 3
+            ? find((p) => /tripolar/i.test(p.nome || ""))
+            : polos >= 2
+              ? find((p) => p.id === "prd-7") || find((p) => /bipolar/i.test(p.nome || ""))
+              : find((p) => p.id === "prd-6") || find((p) => /monopolar/i.test(p.nome || ""));
         bagDj[k] = {
           polos,
           In,
@@ -791,13 +807,17 @@ function polylineLength(verts) {
       }
       bagDj[k].qtd += 1;
       bagDj[k].circs.push(circ.id);
-      if (circ.bitola) bagDj[k].bitolas.push(`${circ.id}: ${circ.bitola} mm²`);
+      if (circ.bitola) {
+        bagDj[k].bitolas.push(
+          `${circ.id}: ${circ.bitola} mm² · ${circ.tensaoV || "—"} V`
+        );
+      }
     });
     Object.values(bagDj).forEach((d) => {
       itens.push({
         tipo: "produto",
         refId: d.refId,
-        nome: `Disjuntor ${d.polos >= 2 ? "bipolar" : "monopolar"} ${d.In}A curva ${d.curva}`,
+        nome: `Disjuntor ${labelPolosDj(d.polos)} ${d.In}A curva ${d.curva}`,
         unidade: "un",
         qtd: d.qtd,
         preco: d.preco,
@@ -825,41 +845,20 @@ function polylineLength(verts) {
       });
     }
 
-    if (protecao?.drs?.length) {
+    // IDR: um por quadro
+    if (protecao?.idr || protecao?.drs?.length) {
+      const idr = protecao.idr || protecao.drs[0];
       const drProd =
         find((p) => p.id === "prd-8") ||
         find((p) => /\bdr\b|idr|diferencial/i.test(p.nome || ""));
-      const bagDr = {};
-      protecao.drs.forEach((d) => {
-        const k = d.nome;
-        if (!bagDr[k]) bagDr[k] = { ...d, qtd: 0, circs: [] };
-        bagDr[k].qtd += 1;
-        bagDr[k].circs.push(d.circuitoId);
-      });
-      Object.values(bagDr).forEach((d) => {
-        itens.push({
-          tipo: "produto",
-          refId: drProd?.id || null,
-          nome: d.nome,
-          unidade: "un",
-          qtd: d.qtd,
-          preco: drProd ? preco(drProd) : 0,
-          nota: `${d.circs.join(", ")} · 30 mA · NBR 5410`
-        });
-      });
-    } else if (circuits.some((c) => c.dr)) {
-      const dr =
-        find((p) => p.id === "prd-8") ||
-        find((p) => /\bdr\b|diferencial/i.test(p.nome || ""));
-      const circsDr = circuits.filter((c) => c.dr).map((c) => c.id);
       itens.push({
         tipo: "produto",
-        refId: dr?.id || null,
-        nome: dr?.nome || "DR 30 mA",
+        refId: drProd?.id || null,
+        nome: idr.nome,
         unidade: "un",
-        qtd: circsDr.length || 1,
-        preco: dr ? preco(dr) : 0,
-        nota: `${circsDr.join(", ") || "TUG / áreas molhadas"} · NBR 5410`
+        qtd: 1,
+        preco: drProd ? preco(drProd) : 0,
+        nota: idr.nota || "Um por QDC · 30 mA · NBR 5410"
       });
     }
 
@@ -878,28 +877,30 @@ function polylineLength(verts) {
       });
     }
 
-    if (wago?.pacotes > 0) {
-      const wag =
-        find((p) => p.id === "prd-23") || find((p) => /wago/i.test(p.nome || ""));
-      itens.push({
-        tipo: "produto",
-        refId: wag?.id || null,
-        nome: wag?.nome || "Conector Wago (pct c/ 50)",
-        unidade: "pct",
-        qtd: wago.pacotes,
-        preco: wag ? preco(wag) : 0,
-        nota: `${wago.unidades} conectores · ${wago.nota}`
-      });
-    }
-    if (wago?.unidades > 0) {
-      itens.push({
-        tipo: "produto",
-        refId: null,
-        nome: "Conectores Wago (unidades estimadas)",
-        unidade: "un",
-        qtd: wago.unidades,
-        preco: 0,
-        nota: `${wago.caixas} caixa(s) + ${wago.juncoes} junção(ões) × 3 (F+N+PE)`
+    // Wago separados por pólos (2 / 3 / 5 / 10)
+    const wagoMap = {
+      2: "prd-wago-2",
+      3: "prd-wago-3",
+      5: "prd-wago-5",
+      10: "prd-wago-10"
+    };
+    if (wago?.porPolos) {
+      [2, 3, 5, 10].forEach((pol) => {
+        const qtd = Number(wago.porPolos[pol]) || 0;
+        if (qtd <= 0) return;
+        const refId = wagoMap[pol];
+        const prod =
+          find((p) => p.id === refId) ||
+          find((p) => new RegExp(`wago.*${pol}\\s*p`, "i").test(p.nome || ""));
+        itens.push({
+          tipo: "produto",
+          refId: prod?.id || refId,
+          nome: prod?.nome || `Conector Wago ${pol} pólos`,
+          unidade: "un",
+          qtd,
+          preco: prod ? preco(prod) : 0,
+          nota: `${wago.caixas || 0} caixa(s) · ${wago.juncoes || 0} junção(ões) · caminhos da rede`
+        });
       });
     }
 

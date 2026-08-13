@@ -13,6 +13,7 @@ import {
 
 const DR_INS = [25, 40, 63, 80, 100];
 const DJ_GERAL = [40, 50, 63, 70, 80, 100, 125, 150, 175, 200];
+const TENSOES_PONTO = [127, 220, 360];
 
 function resolveSistema(projeto) {
   const s = String(projeto?.sistema || "").toLowerCase();
@@ -31,6 +32,51 @@ function nFasesOf(sistema) {
   if (sistema === "tri") return 3;
   if (sistema === "mono") return 1;
   return 2;
+}
+
+/** Normaliza tensão do ponto: 127 | 220 | 360 */
+function normalizeTensaoPonto(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 127;
+  if (n >= 300) return 360;
+  if (n >= 200) return 220;
+  return 127;
+}
+
+/**
+ * Pólos do disjuntor conforme sistema + tensão do ponto/circuito.
+ * Monofásico: sempre 1P (mesmo em 220 V).
+ * Bifásico/trifásico: 127→1P, 220→2P, 360→3P (só tri).
+ */
+function resolvePolos(sistema, tensaoV) {
+  if (sistema === "mono") return 1;
+  const V = normalizeTensaoPonto(tensaoV);
+  if (V >= 360) return sistema === "tri" ? 3 : 2;
+  if (V >= 220) return 2;
+  return 1;
+}
+
+/** Condutores no cabo (aprox.): 1P F+N+PE · 2P F1+F2+PE · 3P 3F+N+PE */
+function nCondutoresOf(polos) {
+  const p = Number(polos) || 1;
+  if (p >= 3) return 5;
+  if (p >= 2) return 3;
+  return 3;
+}
+
+function labelPolosDj(polos) {
+  const p = Number(polos) || 1;
+  if (p >= 3) return "tripolar";
+  if (p >= 2) return "bipolar";
+  return "monopolar";
+}
+
+function wagoPolosPorDirecoes(nDirecoes) {
+  const d = Math.max(2, Number(nDirecoes) || 2);
+  if (d <= 2) return 2;
+  if (d === 3) return 3;
+  if (d <= 5) return 5;
+  return 10;
 }
 
 /** Escolhe o menor In ≥ ib na tabela. */
@@ -148,32 +194,41 @@ function balancearCargas(circuits, sistema) {
 }
 
 /**
- * Dimensiona IDR/DR por circuito que exige, DPS no QDC e disjuntor geral.
+ * IDR: um por quadro (QDC), não por circuito.
+ * Dimensiona In pelo DJ geral / fase mais carregada.
  */
 function dimensionarProtecao(circuits, sistema, balanceamento) {
   const nFases = nFasesOf(sistema);
-  const drs = [];
+  const precisaIdr =
+    (circuits || []).some((c) => c.dr) ||
+    (circuits || []).some((c) => ["tug", "tue", "chuveiro"].includes(c.tipoId));
+
+  const ibGeral = Number(balanceamento?.correnteMaxA) || 0;
+  const InGeral = pickIn(DJ_GERAL, ibGeral * 1.1);
+  const polosGeral = nFases === 3 ? 3 : nFases === 2 ? 2 : 1;
+
+  // IDR: mono/bi → 2P (fases+N); tri → 4P
+  const polosIdr = nFases >= 3 ? 4 : 2;
+  const InIdr = pickIn(DR_INS, InGeral);
+  const idr = precisaIdr
+    ? {
+        circuitoId: null,
+        quadro: "QDC",
+        tipo: "IDR",
+        nome: `IDR ${polosIdr}P ${InIdr}A 30mA`,
+        In: InIdr,
+        IDeltaN: 30,
+        polos: polosIdr,
+        qtd: 1,
+        nota: `Um por quadro (QDC) · sistema ${labelSistema(sistema).toLowerCase()} · NBR 5410`
+      }
+    : null;
 
   (circuits || []).forEach((circ) => {
-    if (!circ.dr) {
-      circ.protecao = { ...(circ.protecao || {}), dr: null };
-      return;
-    }
-    const need = Number(circ.disjuntor) || 16;
-    const In = pickIn(DR_INS, need);
-    const polosCirc = Number(circ.polos) || 1;
-    const polos = polosCirc >= 3 || (nFases === 3 && polosCirc >= 3) ? 4 : 2;
-    const item = {
-      circuitoId: circ.id,
-      tipo: "IDR",
-      nome: `IDR ${polos}P ${In}A 30mA`,
-      In,
-      IDeltaN: 30,
-      polos,
-      nota: `Diferencial do ${circ.id} (${circ.dimensionamento?.tipo?.label || circ.tipoId}) — NBR 5410`
+    circ.protecao = {
+      ...(circ.protecao || {}),
+      dr: circ.dr && idr ? { ...idr, compartilhado: true } : null
     };
-    circ.protecao = { ...(circ.protecao || {}), dr: item };
-    drs.push(item);
   });
 
   const dpsModulos = Math.max(1, nFases);
@@ -188,12 +243,9 @@ function dimensionarProtecao(circuits, sistema, balanceamento) {
     nota: `No QDC · sistema ${labelSistema(sistema).toLowerCase()}`
   };
 
-  const ibGeral = Number(balanceamento?.correnteMaxA) || 0;
-  const InGeral = pickIn(DJ_GERAL, ibGeral * 1.1);
-  const polosGeral = nFases === 3 ? 3 : nFases === 2 ? 2 : 1;
   const disjuntorGeral = {
     tipo: "DJ_GERAL",
-    nome: `Disjuntor geral ${polosGeral >= 3 ? "tripolar" : polosGeral >= 2 ? "bipolar" : "monopolar"} ${InGeral}A`,
+    nome: `Disjuntor geral ${labelPolosDj(polosGeral)} ${InGeral}A`,
     In: InGeral,
     polos: polosGeral,
     ibRefA: Math.round(ibGeral * 100) / 100,
@@ -203,44 +255,74 @@ function dimensionarProtecao(circuits, sistema, balanceamento) {
   return {
     sistema,
     label: labelSistema(sistema),
-    drs,
+    drs: idr ? [idr] : [],
+    idr,
     dps,
     disjuntorGeral,
     resumo: {
-      qtdIdr: drs.length,
+      qtdIdr: idr ? 1 : 0,
       qtdDpsModulos: dpsModulos,
-      circuitosComDr: drs.map((d) => d.circuitoId)
+      circuitosComDr: (circuits || []).filter((c) => c.dr).map((c) => c.id)
     }
   };
 }
 
 /**
- * Conta conectores Wago nas caixas e junções (derivações) da rede.
- * Heurística: 3 conectores (F+N+PE) por caixa e por nó com grau ≥ 3.
+ * Wago por caminhos: separa 2, 3, 5 e 10 pólos.
+ * - Caixa/ponto: cabo + dispositivo → 2 direções → Wago 2 × nCondutores
+ * - Junção na rede (grau ≥ 3): Wago 3/5/10 × nCondutores conforme nº de saídas
  */
-function contarWagos(projeto, graph) {
-  const caixas = (projeto.points || []).filter((p) => {
-    const t = normalizePoint(p).tipo;
-    return t && t !== "qdc";
-  }).length;
+function contarWagos(projeto, graph, circuits = []) {
+  const porPolos = { 2: 0, 3: 0, 5: 0, 10: 0 };
+  const circById = Object.fromEntries((circuits || []).map((c) => [c.id, c]));
+
+  const points = (projeto.points || []).map((p) => normalizePoint(p));
+  const caixas = points.filter((p) => p.tipo && p.tipo !== "qdc");
+
+  caixas.forEach((p) => {
+    const circ = circById[p.circuitoId];
+    const nCond = circ ? nCondutoresOf(circ.polos) : 3;
+    // Emenda cabo↔dispositivo: 2 vias por condutor
+    porPolos[2] += nCond;
+  });
 
   const degree = {};
   (graph?.edges || []).forEach((e) => {
     degree[e.a] = (degree[e.a] || 0) + 1;
     degree[e.b] = (degree[e.b] || 0) + 1;
   });
-  const juncoes = Object.values(degree).filter((d) => d >= 3).length;
 
-  const unidades = (caixas + juncoes) * 3;
-  const pacotes = unidades > 0 ? Math.ceil(unidades / 50) : 0;
+  // Condutores médios dos circuitos (para junções da rede)
+  const nCondMed =
+    circuits.length > 0
+      ? Math.round(
+          circuits.reduce((s, c) => s + nCondutoresOf(c.polos), 0) / circuits.length
+        )
+      : 3;
+
+  let juncoes = 0;
+  Object.values(degree).forEach((d) => {
+    if (d < 3) return;
+    juncoes += 1;
+    const wPolos = wagoPolosPorDirecoes(d);
+    porPolos[wPolos] += nCondMed;
+  });
+
+  const unidades = Object.values(porPolos).reduce((s, n) => s + n, 0);
+  const detalhe = [2, 3, 5, 10]
+    .filter((p) => porPolos[p] > 0)
+    .map((p) => `${porPolos[p]}× Wago ${p}P`)
+    .join(" · ");
 
   return {
+    porPolos,
     unidades,
-    pacotes,
-    caixas,
+    pacotes: 0, // itens separados por pólos no BOM
+    caixas: caixas.length,
     juncoes,
-    porCaixa: 3,
-    nota: `${caixas} caixa(s) + ${juncoes} junção(ões) × 3 (F+N+PE) = ${unidades} un · pct c/ 50`
+    nota:
+      detalhe ||
+      `${caixas.length} caixa(s) · ${juncoes} junção(ões) — sem conectores estimados`
   };
 }
 
@@ -290,33 +372,20 @@ function materiaisDoCircuito(circ, projeto, produtos, modo, wagoShareUn) {
   );
 
   const polos = circ.polos || 1;
-  const djId = polos >= 2 ? "prd-7" : "prd-6";
+  const djId = polos >= 3 ? null : polos >= 2 ? "prd-7" : "prd-6";
   itens.push(
     lineProd(
       produtos,
       modo,
       djId,
-      `Disjuntor ${polos >= 2 ? "bipolar" : "monopolar"} ${circ.disjuntor}A curva ${circ.curva || "C"}`,
+      `Disjuntor ${labelPolosDj(polos)} ${circ.disjuntor}A curva ${circ.curva || "C"}`,
       1,
       "un",
-      `Ib ${circ.ib?.toFixed?.(2) || "—"} A · fase ${circ.fase || "—"}`
+      `Ib ${circ.ib?.toFixed?.(2) || "—"} A · ${circ.tensaoV || "—"} V · fase ${circ.fase || "—"}`
     )
   );
 
-  if (circ.protecao?.dr) {
-    const dr = circ.protecao.dr;
-    itens.push(
-      lineProd(
-        produtos,
-        modo,
-        "prd-8",
-        dr.nome,
-        1,
-        "un",
-        dr.nota
-      )
-    );
-  }
+  // IDR fica no QDC (lista total), não por circuito
 
   const pts = (projeto.points || []).filter((p) => p.circuitoId === circ.id);
   pts.forEach((raw) => {
@@ -360,18 +429,6 @@ function materiaisDoCircuito(circ, projeto, produtos, modo, wagoShareUn) {
     );
   }
 
-  if (wagoShareUn > 0) {
-    itens.push({
-      tipo: "produto",
-      refId: "prd-23",
-      nome: "Conector Wago (estimativa)",
-      unidade: "un",
-      qtd: wagoShareUn,
-      preco: 0,
-      nota: "Parte proporcional das derivações (F+N+PE)"
-    });
-  }
-
   // Consolida iguais (ex.: 4 tomadas iguais → qtd 4)
   const bag = {};
   itens.forEach((it) => {
@@ -391,21 +448,21 @@ function materiaisDoCircuito(circ, projeto, produtos, modo, wagoShareUn) {
   }));
 }
 
-function montarMateriaisPorCircuito(projeto, circuits, produtos, modo, wago) {
-  const nCirc = Math.max(1, (circuits || []).length);
-  const share = wago?.unidades ? Math.ceil(wago.unidades / nCirc) : 0;
+function montarMateriaisPorCircuito(projeto, circuits, produtos, modo, _wago) {
   return (circuits || []).map((circ) => {
-    const itens = materiaisDoCircuito(circ, projeto, produtos, modo, share);
+    const itens = materiaisDoCircuito(circ, projeto, produtos, modo, 0);
     circ.materiais = itens;
     return {
       circuitoId: circ.id,
       tipo: circ.dimensionamento?.tipo?.label || circ.tipoId,
       fase: circ.fase || "—",
+      tensaoV: circ.tensaoV,
       potenciaVA: circ.potenciaVA,
       ib: circ.ib,
       bitola: circ.bitola,
       disjuntor: circ.disjuntor,
-      dr: circ.protecao?.dr || null,
+      polos: circ.polos,
+      dr: null,
       itens
     };
   });
@@ -415,6 +472,11 @@ export {
   resolveSistema,
   labelSistema,
   nFasesOf,
+  normalizeTensaoPonto,
+  resolvePolos,
+  nCondutoresOf,
+  labelPolosDj,
+  TENSOES_PONTO,
   balancearCargas,
   dimensionarProtecao,
   contarWagos,

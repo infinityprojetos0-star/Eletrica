@@ -2089,15 +2089,27 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
             }
             ${
               pt.tipo !== "tomada"
-                ? `<label>Potência (VA/W)<input type="number" id="pePtPot" min="0" value="${Number(pt.potenciaVA || 0)}" /></label>
-            <label>Tensão
-              <select id="pePtV">
-                <option value="127" ${Number(pt.tensaoV) === 127 ? "selected" : ""}>127 V</option>
-                <option value="220" ${Number(pt.tensaoV) === 220 ? "selected" : ""}>220 V</option>
-              </select>
-            </label>`
+                ? `<label>Potência (VA/W)<input type="number" id="pePtPot" min="0" value="${Number(pt.potenciaVA || 0)}" /></label>`
                 : `<p class="hint">Potência total ≈ <strong>${Math.round(cargaPonto(pt))}</strong> W (soma dos módulos).</p>`
             }
+            <label>Tensão do ponto
+              <select id="pePtV" title="Define pólos do disjuntor em bi/trifásico">
+                <option value="127" ${Number(pt.tensaoV) === 127 ? "selected" : ""}>127 V</option>
+                <option value="220" ${Number(pt.tensaoV) === 220 ? "selected" : ""}>220 V</option>
+                ${
+                  projeto.sistema === "bi" || projeto.sistema === "tri"
+                    ? `<option value="360" ${Number(pt.tensaoV) === 360 ? "selected" : ""}>360 V</option>`
+                    : ""
+                }
+              </select>
+            </label>
+            <p class="hint">${
+              projeto.sistema === "mono"
+                ? "Monofásico: disjuntor sempre monopolar (mesmo em 220 V)."
+                : projeto.sistema === "tri"
+                  ? "127 V → 1P · 220 V → 2P · 360 V → 3P"
+                  : "127 V → 1P · 220/360 V → 2P"
+            }</p>
             <label>Altura (m)<input type="number" id="pePtAlt" step="0.1" value="${Number(pt.alturaM ?? 0.3)}" /></label>
             <div class="pe-size-row">
               <span>Tamanho no grid</span>
@@ -2279,7 +2291,8 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
             p.interruptor = "";
             syncModulosConfig(p);
             p.potenciaVA = cargaPonto(p);
-            p.tensaoV = p.amperagem >= 20 ? 220 : 127;
+            // Tensão vem do select pePtV (não sobrescrever)
+            if (!tenEl) p.tensaoV = p.amperagem >= 20 ? 220 : 127;
           }
           if (p.tipo === "conjugado") {
             const cid = document.getElementById("pePtConj")?.value;
@@ -3025,19 +3038,16 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
               const active = selectedCircuitId === c.id;
               const nCam = c.caminhos?.length || 0;
               const nCd = c.conduitesIds?.length || 0;
-              const drLabel = c.protecao?.dr
-                ? ` · IDR ${c.protecao.dr.In}A`
-                : c.dr
-                  ? " · DR"
-                  : "";
+              const polosLabel =
+                c.polos >= 3 ? "3P" : c.polos >= 2 ? "2P" : "1P";
               const pathHint =
                 nCam === 0
                   ? `<div class="hint" style="color:#e53935">Sem caminho no conduíte até o QDC — ligue o conduíte e analise de novo.</div>`
                   : "";
               return `<button type="button" class="pe-circ ${active ? "active" : ""}" data-circ="${escapeHtml(c.id)}" style="border-left:4px solid ${c.cor}">
             <strong>${escapeHtml(c.id)}</strong> · ${escapeHtml(c.dimensionamento?.tipo?.label || c.tipoId || "")}
-            <div class="hint">${c.pontos.length} ponto(s) · ${nCam} caminho(s) · ${nCd} conduíte(s) · L≈${c.comprimentoM?.toFixed?.(1) || "—"} m · fase ${escapeHtml(c.fase || "—")}</div>
-            <div>${c.bitola || "—"} mm² · DJ ${c.disjuntor || "—"}A${drLabel} · queda ${c.quedaPct != null ? c.quedaPct.toFixed(2) + "%" : "—"} · ${c.potenciaVA} VA/W</div>
+            <div class="hint">${c.pontos.length} ponto(s) · ${nCam} caminho(s) · L≈${c.comprimentoM?.toFixed?.(1) || "—"} m · ${c.tensaoV || "—"} V · fase ${escapeHtml(c.fase || "—")}</div>
+            <div>${c.bitola || "—"} mm² · DJ ${polosLabel} ${c.disjuntor || "—"}A · queda ${c.quedaPct != null ? c.quedaPct.toFixed(2) + "%" : "—"} · ${c.potenciaVA} VA/W</div>
             ${pathHint}
           </button>`;
             })
@@ -3062,6 +3072,7 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
             : `<p class="hint">Selecione um circuito acima para ver os materiais dele.</p>`;
 
       const prot = a?.protecao;
+      const idrItem = prot?.idr || prot?.drs?.[0];
       const protHtml = prot
         ? `<ul class="pe-prot-list">
             <li><strong>${escapeHtml(prot.disjuntorGeral?.nome || "Disjuntor geral")}</strong>
@@ -3069,18 +3080,13 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
             <li><strong>${escapeHtml(prot.dps?.nome || "DPS")}</strong>
               <div class="hint">${escapeHtml(prot.dps?.nota || "")}</div></li>
             ${
-              prot.drs?.length
-                ? prot.drs
-                    .map(
-                      (d) =>
-                        `<li><strong>${escapeHtml(d.nome)}</strong> · ${escapeHtml(d.circuitoId)}
-                          <div class="hint">${escapeHtml(d.nota || "")}</div></li>`
-                    )
-                    .join("")
-                : `<li class="hint">Nenhum IDR exigido nos circuitos atuais.</li>`
+              idrItem
+                ? `<li><strong>${escapeHtml(idrItem.nome)}</strong> · QDC (1 un)
+                    <div class="hint">${escapeHtml(idrItem.nota || "Um IDR por quadro")}</div></li>`
+                : `<li class="hint">Nenhum IDR exigido neste quadro.</li>`
             }
           </ul>
-          <p class="hint">${prot.resumo?.qtdIdr || 0} IDR · ${prot.resumo?.qtdDpsModulos || 0} módulo(s) DPS · ${escapeHtml(prot.label || "")}</p>`
+          <p class="hint">1 IDR/quadro · ${prot.resumo?.qtdDpsModulos || 0} módulo(s) DPS · ${escapeHtml(prot.label || "")}</p>`
         : `<p class="hint">Rode a análise para dimensionar DJ geral, IDR e DPS.</p>`;
 
       const bal = a?.balanceamento;
@@ -3101,10 +3107,21 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
           </div>`
         : `<p class="hint">Rode a análise para ver o balanceamento de fases.</p>`;
 
-      const wagoHtml = a?.wago
-        ? `<p class="hint">${a.wago.unidades} conectores (≈ ${a.wago.pacotes} pct) · ${a.wago.caixas} caixa(s) · ${a.wago.juncoes} junção(ões)</p>
-           <p class="hint">${escapeHtml(a.wago.nota || "")}</p>`
-        : "";
+      const wagoHtml = a?.wago?.porPolos
+        ? `<ul class="pe-prot-list">
+            ${[2, 3, 5, 10]
+              .map((pol) => {
+                const q = Number(a.wago.porPolos[pol]) || 0;
+                if (!q) return "";
+                return `<li><strong>Wago ${pol} pólos</strong> · <strong>${q}</strong> un</li>`;
+              })
+              .filter(Boolean)
+              .join("")}
+          </ul>
+          <p class="hint">${a.wago.caixas || 0} caixa(s) · ${a.wago.juncoes || 0} junção(ões) · total ${a.wago.unidades || 0} un</p>`
+        : a?.wago
+          ? `<p class="hint">${escapeHtml(a.wago.nota || "")}</p>`
+          : "";
 
       const matHtml = a?.materiais?.length
         ? `<p class="hint" style="margin-bottom:6px">${a.materiais.length} item(ns) · atualizado com os circuitos ${escapeHtml(
