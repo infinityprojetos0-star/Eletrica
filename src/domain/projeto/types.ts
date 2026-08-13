@@ -508,6 +508,8 @@ import { todayISO, uid } from "../../data/catalog";
       id: typeof uid === "function" ? uid("pe") : `pe-${Date.now()}`,
       nome,
       uso: uso === "comercial" ? "comercial" : "residencial",
+      /** mono | bi | tri — padrão bifásico (ES 127/220) */
+      sistema: "bi",
       rooms: [],
       arch: [],
       points: [],

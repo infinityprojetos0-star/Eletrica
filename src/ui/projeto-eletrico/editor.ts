@@ -306,6 +306,9 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
     if (!Array.isArray(projeto.walls)) projeto.walls = [];
     if (!Array.isArray(projeto.dims)) projeto.dims = [];
     if (!Array.isArray(projeto.guides)) projeto.guides = [];
+    if (!projeto.sistema || !["mono", "bi", "tri"].includes(projeto.sistema)) {
+      projeto.sistema = "bi";
+    }
     projeto.symbolScale = clampEscala(projeto.symbolScale == null ? 1 : projeto.symbolScale);
     projeto.points = (projeto.points || []).map(normalizePoint);
 
@@ -453,6 +456,11 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
             <select id="peUso" class="pe-select">
               <option value="residencial" ${projeto.uso === "residencial" ? "selected" : ""}>Residencial</option>
               <option value="comercial" ${projeto.uso === "comercial" ? "selected" : ""}>Comercial</option>
+            </select>
+            <select id="peSistema" class="pe-select" title="Sistema de alimentação">
+              <option value="mono" ${projeto.sistema === "mono" ? "selected" : ""}>Monofásico</option>
+              <option value="bi" ${!projeto.sistema || projeto.sistema === "bi" ? "selected" : ""}>Bifásico</option>
+              <option value="tri" ${projeto.sistema === "tri" ? "selected" : ""}>Trifásico</option>
             </select>
             <div class="pe-tools" id="peTools">
               <button type="button" data-tool="select" class="pe-tool active" title="Selecionar / arrastar">Mover</button>
@@ -645,6 +653,11 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
       root.querySelector("#peUso").onchange = (e) => {
         projeto.uso = e.target.value;
         save();
+      };
+      root.querySelector("#peSistema").onchange = (e) => {
+        projeto.sistema = e.target.value;
+        save();
+        ctx.toast?.("Sistema alterado — rode Analisar NBR 5410 de novo");
       };
       root.querySelector("#peTools").onclick = (e) => {
         const btn = e.target.closest("[data-tool]");
@@ -3004,27 +3017,94 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
       const circHtml = a?.circuits?.length
         ? `<p class="hint" style="margin-bottom:8px">${
             selectedCircuitId
-              ? `Caminho do fio <strong>${escapeHtml(selectedCircuitId)}</strong> (QDC → pontos). Clique de novo para ver todos. Se aparecer tracejado, o conduíte não chega ao QDC — ligue e clique em <strong>Analisar NBR 5410</strong> de novo (refaz os circuitos).`
-              : "Clique em <strong>Analisar NBR 5410</strong> para refazer circuitos e fios nos conduítes. Depois, clique num circuito para ver o caminho."
+              ? `Caminho do fio <strong>${escapeHtml(selectedCircuitId)}</strong> (QDC → pontos). Clique de novo para ver todos.`
+              : "Clique num circuito para ver caminho, proteção e materiais dele."
           }</p>
           ${a.circuits
             .map((c) => {
               const active = selectedCircuitId === c.id;
               const nCam = c.caminhos?.length || 0;
               const nCd = c.conduitesIds?.length || 0;
+              const drLabel = c.protecao?.dr
+                ? ` · IDR ${c.protecao.dr.In}A`
+                : c.dr
+                  ? " · DR"
+                  : "";
               const pathHint =
                 nCam === 0
                   ? `<div class="hint" style="color:#e53935">Sem caminho no conduíte até o QDC — ligue o conduíte e analise de novo.</div>`
                   : "";
               return `<button type="button" class="pe-circ ${active ? "active" : ""}" data-circ="${escapeHtml(c.id)}" style="border-left:4px solid ${c.cor}">
             <strong>${escapeHtml(c.id)}</strong> · ${escapeHtml(c.dimensionamento?.tipo?.label || c.tipoId || "")}
-            <div class="hint">${c.pontos.length} ponto(s) · ${nCam} caminho(s) · ${nCd} conduíte(s) · L≈${c.comprimentoM?.toFixed?.(1) || "—"} m</div>
-            <div>${c.bitola || "—"} mm² · DJ ${c.disjuntor || "—"}A · queda ${c.quedaPct != null ? c.quedaPct.toFixed(2) + "%" : "—"} · ${c.potenciaVA} VA/W</div>
+            <div class="hint">${c.pontos.length} ponto(s) · ${nCam} caminho(s) · ${nCd} conduíte(s) · L≈${c.comprimentoM?.toFixed?.(1) || "—"} m · fase ${escapeHtml(c.fase || "—")}</div>
+            <div>${c.bitola || "—"} mm² · DJ ${c.disjuntor || "—"}A${drLabel} · queda ${c.quedaPct != null ? c.quedaPct.toFixed(2) + "%" : "—"} · ${c.potenciaVA} VA/W</div>
             ${pathHint}
           </button>`;
             })
             .join("")}`
         : `<div class="empty"><strong>Sem análise</strong>Trace conduítes até o QDC e clique em Analisar NBR 5410.</div>`;
+
+      const circSel = selectedCircuitId
+        ? (a?.circuits || []).find((c) => c.id === selectedCircuitId)
+        : null;
+      const matCircHtml =
+        circSel?.materiais?.length
+          ? `<table class="pe-mat"><thead><tr><th>Item (${escapeHtml(circSel.id)})</th><th>Qtd</th></tr></thead><tbody>
+            ${circSel.materiais
+              .map(
+                (m) =>
+                  `<tr><td>${escapeHtml(m.nome)}<div class="hint">${escapeHtml(m.nota || "")}</div></td><td>${m.qtd} ${m.unidade}</td></tr>`
+              )
+              .join("")}
+            </tbody></table>`
+          : selectedCircuitId
+            ? `<p class="hint">Sem materiais neste circuito — rode a análise de novo.</p>`
+            : `<p class="hint">Selecione um circuito acima para ver os materiais dele.</p>`;
+
+      const prot = a?.protecao;
+      const protHtml = prot
+        ? `<ul class="pe-prot-list">
+            <li><strong>${escapeHtml(prot.disjuntorGeral?.nome || "Disjuntor geral")}</strong>
+              <div class="hint">${escapeHtml(prot.disjuntorGeral?.nota || "")}</div></li>
+            <li><strong>${escapeHtml(prot.dps?.nome || "DPS")}</strong>
+              <div class="hint">${escapeHtml(prot.dps?.nota || "")}</div></li>
+            ${
+              prot.drs?.length
+                ? prot.drs
+                    .map(
+                      (d) =>
+                        `<li><strong>${escapeHtml(d.nome)}</strong> · ${escapeHtml(d.circuitoId)}
+                          <div class="hint">${escapeHtml(d.nota || "")}</div></li>`
+                    )
+                    .join("")
+                : `<li class="hint">Nenhum IDR exigido nos circuitos atuais.</li>`
+            }
+          </ul>
+          <p class="hint">${prot.resumo?.qtdIdr || 0} IDR · ${prot.resumo?.qtdDpsModulos || 0} módulo(s) DPS · ${escapeHtml(prot.label || "")}</p>`
+        : `<p class="hint">Rode a análise para dimensionar DJ geral, IDR e DPS.</p>`;
+
+      const bal = a?.balanceamento;
+      const balHtml = bal
+        ? `<div class="pe-bal">
+            ${bal.fases
+              .map(
+                (f) =>
+                  `<div class="pe-bal-row">
+                    <strong>${escapeHtml(f.label)}</strong>
+                    <span>${f.correnteA.toFixed(1)} A · ${f.potenciaW} W</span>
+                    <div class="hint">${(f.circuitos || []).join(", ") || "—"}</div>
+                  </div>`
+              )
+              .join("")}
+            <p class="hint" style="margin-top:8px">Desequilíbrio: <strong>${bal.desequilibrioPct}%</strong>
+              ${bal.ok ? " (ok)" : " (alto — revise distribuição)"} · ${escapeHtml(bal.label || "")}</p>
+          </div>`
+        : `<p class="hint">Rode a análise para ver o balanceamento de fases.</p>`;
+
+      const wagoHtml = a?.wago
+        ? `<p class="hint">${a.wago.unidades} conectores (≈ ${a.wago.pacotes} pct) · ${a.wago.caixas} caixa(s) · ${a.wago.juncoes} junção(ões)</p>
+           <p class="hint">${escapeHtml(a.wago.nota || "")}</p>`
+        : "";
 
       const matHtml = a?.materiais?.length
         ? `<table class="pe-mat"><thead><tr><th>Item</th><th>Qtd</th></tr></thead><tbody>
@@ -3039,23 +3119,44 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
         : "";
 
       const avisos = (a?.avisos || [])
-        .slice(0, 6)
+        .slice(0, 10)
         .map((x) => `<li>${escapeHtml(x)}</li>`)
         .join("");
+
+      const sistLabel =
+        a?.sistemaLabel ||
+        (projeto.sistema === "mono"
+          ? "Monofásico"
+          : projeto.sistema === "tri"
+            ? "Trifásico"
+            : "Bifásico");
 
       side.innerHTML = `
         ${inspectorHtml()}
         <div class="pe-side-block">
           <h3>Resumo</h3>
           <p class="hint">${projeto.rooms.length} cômodo(s) · ${(projeto.arch || []).length} porta/janela · ${(projeto.walls || []).length} linha(s) · ${projeto.points.length} ponto(s) · ${projeto.conduits.length} conduíte(s)</p>
-          <p class="source-pill">Base: NBR 5410 (baixa tensão)</p>
+          <p class="source-pill">Sistema: ${escapeHtml(sistLabel)} · NBR 5410</p>
+        </div>
+        <div class="pe-side-block">
+          <h3>Proteção</h3>
+          ${protHtml}
+        </div>
+        <div class="pe-side-block">
+          <h3>Balanceamento</h3>
+          ${balHtml}
         </div>
         <div class="pe-side-block">
           <h3>Circuitos</h3>
           ${circHtml}
         </div>
         <div class="pe-side-block">
-          <h3>Materiais</h3>
+          <h3>Materiais do circuito</h3>
+          ${matCircHtml}
+        </div>
+        <div class="pe-side-block">
+          <h3>Materiais (total)</h3>
+          ${wagoHtml}
           ${matHtml || `<p class="hint">Rode a análise para gerar a lista.</p>`}
         </div>
         ${
@@ -3075,7 +3176,7 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
           renderSide();
           ctx.toast?.(
             selectedCircuitId
-              ? `Caminho do ${selectedCircuitId}`
+              ? `Caminho e materiais do ${selectedCircuitId}`
               : "Todos os caminhos"
           );
         };

@@ -17,6 +17,14 @@ import {
   POINT_LINK_M,
   CONDUIT_JOIN_M
 } from "./types";
+import {
+  resolveSistema,
+  labelSistema,
+  balancearCargas,
+  dimensionarProtecao,
+  contarWagos,
+  montarMateriaisPorCircuito
+} from "./relatorio";
 
 function dist(a, b) {
     return Math.hypot(a.x - b.x, a.y - b.y);
@@ -279,6 +287,7 @@ function polylineLength(verts) {
 
   function analisar(projeto, { produtos, modoPreco } = {}) {
     const uso = projeto.uso === "comercial" ? "comercial" : "residencial";
+    const sistema = resolveSistema(projeto);
     const lim =
       (typeof PreProjeto !== "undefined" && PreProjeto.LIMITES?.[uso]) || {
         pontosIlumPorCircuito: 10,
@@ -292,6 +301,7 @@ function polylineLength(verts) {
     const avisos = [];
     const qdc = points.find((p) => p.tipo === "qdc");
     if (!qdc) avisos.push("Inclua um QDC na planta para dimensionar os caminhos dos circuitos.");
+    avisos.push(`Sistema elétrico: ${labelSistema(sistema)}.`);
 
     points.forEach((p) => {
       if (!p.circuitoManual) p.circuitoId = null;
@@ -432,12 +442,14 @@ function polylineLength(verts) {
           ? Number(first?.tensaoV || 127)
           : Number(first?.tensaoV || 220);
 
+      const fasesCirc = tensao >= 220 ? 2 : 1;
       const dim =
         typeof NBR5410 !== "undefined"
           ? NBR5410.dimensionar({
               tipoId: circ.tipoId || "livre",
               potenciaW: circ.potenciaVA,
               tensaoV: tensao,
+              fases: fasesCirc,
               comprimentoM: circ.comprimentoM,
               agrupamentoId:
                 circuits.length >= 8 ? "8+" : circuits.length >= 4 ? "4-5" : circuits.length >= 2 ? "2-3" : "1",
@@ -494,19 +506,39 @@ function polylineLength(verts) {
       return p ? { ...normalizePoint(orig), circuitoId: p.circuitoId } : normalizePoint(orig);
     });
 
-    const materiais = montarMateriais(
-      { ...projeto, points: pointsOut, conduits, arch: projeto.arch || [] },
+    const balanceamento = balancearCargas(circuits, sistema);
+    avisos.push(...(balanceamento.avisos || []));
+
+    const protecao = dimensionarProtecao(circuits, sistema, balanceamento);
+    const wago = contarWagos({ ...projeto, points: pointsOut }, graph);
+
+    const projetoMat = { ...projeto, points: pointsOut, conduits, arch: projeto.arch || [], sistema };
+    const materiaisPorCircuito = montarMateriaisPorCircuito(
+      projetoMat,
       circuits,
       produtos,
-      modoPreco || "medio"
+      modoPreco || "medio",
+      wago
     );
+
+    const materiais = montarMateriais(projetoMat, circuits, produtos, modoPreco || "medio", {
+      protecao,
+      wago,
+      balanceamento
+    });
 
     return {
       uso,
+      sistema,
+      sistemaLabel: labelSistema(sistema),
       circuits,
       conduits,
       points: pointsOut,
       materiais,
+      materiaisPorCircuito,
+      protecao,
+      balanceamento,
+      wago,
       avisos: [...new Set(avisos)],
       disclaimer:
         "Cálculos auxiliares com base em critérios simplificados da NBR 5410. Não substitui projeto elétrico oficial.",
@@ -514,12 +546,14 @@ function polylineLength(verts) {
     };
   }
 
-  function montarMateriais(projeto, circuits, produtos, modo) {
+  function montarMateriais(projeto, circuits, produtos, modo, extras = {}) {
     const itens = [];
     const list = produtos || [];
     const find = (pred) => list.find(pred);
     const preco = (p) =>
       typeof getPrecoByModo === "function" ? getPrecoByModo(p, modo) : Number(p?.preco || 0);
+    const protecao = extras.protecao || null;
+    const wago = extras.wago || null;
 
     const caboMap = { 1.5: "prd-13", 2.5: "prd-10", 4: "prd-11", 6: "prd-12" };
     const metrosPorSecao = {};
@@ -652,7 +686,50 @@ function polylineLength(verts) {
       });
     });
 
-    if (circuits.some((c) => c.dr)) {
+    // Proteção: IDR por circuito + DPS no QDC + disjuntor geral
+    if (protecao?.disjuntorGeral) {
+      const g = protecao.disjuntorGeral;
+      const djG =
+        g.polos >= 3
+          ? find((p) => /tripolar|geral/i.test(p.nome || ""))
+          : g.polos >= 2
+            ? find((p) => p.id === "prd-7") || find((p) => /bipolar/i.test(p.nome || ""))
+            : find((p) => p.id === "prd-6");
+      itens.push({
+        tipo: "produto",
+        refId: djG?.id || null,
+        nome: g.nome,
+        unidade: "un",
+        qtd: 1,
+        preco: djG ? preco(djG) : 0,
+        nota: g.nota
+      });
+    }
+
+    if (protecao?.drs?.length) {
+      const drProd =
+        find((p) => p.id === "prd-8") ||
+        find((p) => /\bdr\b|idr|diferencial/i.test(p.nome || ""));
+      // Agrupa por nome (In/pólos) para a lista consolidada
+      const bagDr = {};
+      protecao.drs.forEach((d) => {
+        const k = d.nome;
+        if (!bagDr[k]) bagDr[k] = { ...d, qtd: 0, circs: [] };
+        bagDr[k].qtd += 1;
+        bagDr[k].circs.push(d.circuitoId);
+      });
+      Object.values(bagDr).forEach((d) => {
+        itens.push({
+          tipo: "produto",
+          refId: drProd?.id || null,
+          nome: d.nome,
+          unidade: "un",
+          qtd: d.qtd,
+          preco: drProd ? preco(drProd) : 0,
+          nota: `${d.circs.join(", ")} · 30 mA · NBR 5410`
+        });
+      });
+    } else if (circuits.some((c) => c.dr)) {
       const dr =
         find((p) => p.id === "prd-8") ||
         find((p) => /\bdr\b|diferencial/i.test(p.nome || ""));
@@ -667,17 +744,32 @@ function polylineLength(verts) {
       });
     }
 
-    const dps =
-      find((p) => p.id === "prd-9") || find((p) => /\bdps\b/i.test(p.nome || ""));
-    if (dps || circuits.length) {
+    const dpsQtd = protecao?.dps?.modulos || (circuits.length ? 1 : 0);
+    if (dpsQtd > 0) {
+      const dps =
+        find((p) => p.id === "prd-9") || find((p) => /\bdps\b/i.test(p.nome || ""));
       itens.push({
         tipo: "produto",
         refId: dps?.id || null,
-        nome: dps?.nome || "DPS",
+        nome: protecao?.dps?.nome || dps?.nome || "DPS classe II",
         unidade: "un",
-        qtd: 1,
+        qtd: dpsQtd,
         preco: dps ? preco(dps) : 0,
-        nota: "Proteção contra surtos (recomendado)"
+        nota: protecao?.dps?.nota || "Proteção contra surtos no QDC"
+      });
+    }
+
+    if (wago?.pacotes > 0) {
+      const wag =
+        find((p) => p.id === "prd-23") || find((p) => /wago/i.test(p.nome || ""));
+      itens.push({
+        tipo: "produto",
+        refId: wag?.id || null,
+        nome: wag?.nome || "Conector Wago (pct c/ 50)",
+        unidade: "pct",
+        qtd: wago.pacotes,
+        preco: wag ? preco(wag) : 0,
+        nota: wago.nota
       });
     }
 
@@ -692,7 +784,7 @@ function polylineLength(verts) {
       unidade: "un",
       qtd: 1,
       preco: quadro ? preco(quadro) : 0,
-      nota: `${nCirc} circuitos`
+      nota: `${nCirc} circuitos · ${labelSistema(resolveSistema(projeto))}`
     });
 
     return itens;

@@ -1283,6 +1283,26 @@ tr:hover td { background: rgba(61,180,255,0.03); }
 .pe-mat th, .pe-mat td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--border); vertical-align: top; }
 .pe-avisos { margin: 0; padding-left: 18px; color: var(--text-muted); font-size: 0.78rem; }
 .pe-avisos li { margin-bottom: 4px; }
+.pe-prot-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.82rem;
+}
+.pe-prot-list li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.pe-prot-list li:last-child { border-bottom: none; }
+.pe-bal { display: flex; flex-direction: column; gap: 8px; }
+.pe-bal-row {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(26, 86, 149, 0.08);
+  border: 1px solid var(--border);
+  font-size: 0.82rem;
+}
+.pe-bal-row strong { display: block; margin-bottom: 2px; }
 .pe-fios-list {
   list-style: none;
   margin: 8px 0 0;
