@@ -17,6 +17,7 @@ import {
   modulosTomada,
   varInterruptor,
   varLampada,
+  syncComandos,
   CORES_CIRCUITO,
   SNAP_M,
   POINT_LINK_M,
@@ -309,6 +310,50 @@ function polylineLength(verts) {
   }
 
   /**
+   * Liga interruptores (e parte int. do conjugado) ao circuito de iluminação
+   * das lâmpadas com a mesma letra de comando (a/b/c…).
+   * Assim a fase QDC→interruptor→retorno→lâmpada entra na metragem e na marcação.
+   */
+  function vincularInterruptoresIluminacao(points, circuits, byId) {
+    const lampCircs = (circuits || []).filter((c) => c.tipoId === "iluminacao");
+    lampCircs.forEach((c) => {
+      c.interruptores = Array.isArray(c.interruptores) ? c.interruptores : [];
+    });
+
+    const letrasDe = (lamp) =>
+      String(lamp?.interruptor || "")
+        .toLowerCase()
+        .split(/[\/,;\s]+/)
+        .map((c) => c.replace(/[^a-z0-9]/g, "").slice(0, 2))
+        .filter(Boolean);
+
+    (points || []).forEach((sw) => {
+      if (!sw || (sw.tipo !== "interruptor" && sw.tipo !== "conjugado")) return;
+      const cmds = syncComandos(sw);
+      if (!cmds.length) return;
+
+      for (const circ of lampCircs) {
+        const lamps = (circ.pontos || [])
+          .map((pid) => byId[pid])
+          .filter((p) => p && p.tipo === "lampada");
+        const hit = lamps.some((L) =>
+          letrasDe(L).some((ltr) => cmds.includes(ltr))
+        );
+        if (!hit) continue;
+
+        if (!circ.interruptores.includes(sw.id)) circ.interruptores.push(sw.id);
+        if (!circ.pontos.includes(sw.id)) circ.pontos.push(sw.id);
+
+        // Interruptor puro passa a pertencer ao circuito de iluminação
+        if (sw.tipo === "interruptor" && !sw.circuitoManual) {
+          sw.circuitoId = circ.id;
+        }
+        break;
+      }
+    });
+  }
+
+  /**
    * Renumeração sequencial C1…Cn (iluminação → TUG → TUE → cargas).
    * Evita C7/C11 “pulados” de análises antigas.
    */
@@ -485,6 +530,9 @@ function polylineLength(verts) {
     // Sempre C1…Cn na ordem tipológica (não herda números altos de análises antigas)
     renumerarCircuitos(circuits, points);
 
+    // Interruptores entram no circuito de iluminação das lâmpadas que comandam (letras a/b/c…)
+    vincularInterruptoresIluminacao(points, circuits, byId);
+
     const graph = buildGraph({ ...projeto, points });
     const qdcNode = qdc ? graph.snap[qdc.id] : -1;
     const qdcStub = qdc ? graph.stub[qdc.id] || 0 : 0;
@@ -494,6 +542,39 @@ function polylineLength(verts) {
     const conduitUse = {};
     /** Arestas únicas por circuito (para contar pontas/Wago nos nós) */
     const circEdgeMap = {}; // circId -> Map(edgeKey -> {a,b})
+
+    function registerEdges(circId, edges) {
+      if (!circEdgeMap[circId]) circEdgeMap[circId] = new Map();
+      (edges || []).forEach((e) => {
+        const a = Math.min(e.a, e.b);
+        const b = Math.max(e.a, e.b);
+        const ekey = e.conduitId ? `${e.conduitId}:${a}-${b}` : `x:${a}-${b}`;
+        circEdgeMap[circId].set(ekey, { a: e.a, b: e.b });
+        if (!e.conduitId) return;
+        if (!conduitUse[e.conduitId]) conduitUse[e.conduitId] = {};
+        conduitUse[e.conduitId][circId] = (conduitUse[e.conduitId][circId] || 0) + e.len;
+      });
+    }
+
+    /** Caminho na rede entre dois pontos elétricos (snap + stubs). */
+    function pathEntrePontos(idA, idB) {
+      const na = graph.snap[idA];
+      const nb = graph.snap[idB];
+      if (na == null || nb == null || na < 0 || nb < 0) return null;
+      const fromA = dijkstra(graph, na);
+      if (!(fromA.distArr[nb] < Infinity)) return null;
+      const edges = pathEdgesFromPrev(fromA.prev, fromA.prevEdge, nb);
+      let pts = pathPointsFromPrev(graph, fromA.prev, nb);
+      const pa = byId[idA];
+      const pb = byId[idB];
+      if (pa) pts = [{ x: pa.x, y: pa.y }, ...pts];
+      if (pb) pts = [...pts, { x: pb.x, y: pb.y }];
+      pts = dedupePoly(pts);
+      const len =
+        fromA.distArr[nb] + (graph.stub[idA] || 0) + (graph.stub[idB] || 0);
+      return { len, edges, pontos: pts };
+    }
+
     circuits.forEach((circ) => {
       let maxLen = 0;
       let sumLen = 0;
@@ -501,70 +582,149 @@ function polylineLength(verts) {
       circ.caminhos = []; // polilinhas QDC→ponto (caminho mais curto na rede)
       const conduitesDoCirc = new Set();
       if (!circEdgeMap[circ.id]) circEdgeMap[circ.id] = new Map();
-      circ.pontos.forEach((pid) => {
-        const pt = byId[pid];
-        if (!pt) return;
-        const ni = graph.snap[pid];
-        const ptStub = graph.stub[pid] || 0;
-        let len = 0;
-        if (qdcNode >= 0 && ni >= 0 && fromQdc.distArr[ni] < Infinity) {
-          // só arestas da rede (mais curto); ramais QDC/ponto somados à parte
-          len = fromQdc.distArr[ni] + qdcStub + ptStub;
-          pathEdgesFromPrev(fromQdc.prev, fromQdc.prevEdge, ni).forEach((e) => {
-            const a = Math.min(e.a, e.b);
-            const b = Math.max(e.a, e.b);
-            const ekey = e.conduitId ? `${e.conduitId}:${a}-${b}` : `x:${a}-${b}`;
-            circEdgeMap[circ.id].set(ekey, { a: e.a, b: e.b });
-            if (!e.conduitId) return;
-            if (!conduitUse[e.conduitId]) conduitUse[e.conduitId] = {};
-            conduitUse[e.conduitId][circ.id] =
-              (conduitUse[e.conduitId][circ.id] || 0) + e.len;
-            conduitesDoCirc.add(e.conduitId);
+
+      // Iluminação: também roteia fase QDC → interruptor → lâmpada (retorno)
+      if (circ.tipoId === "iluminacao" && qdc) {
+        const lamps = circ.pontos
+          .map((pid) => byId[pid])
+          .filter((p) => p && p.tipo === "lampada");
+        const switches = (circ.interruptores || [])
+          .map((pid) => byId[pid])
+          .filter(Boolean);
+
+        lamps.forEach((lamp) => {
+          const letters = String(lamp.interruptor || "")
+            .toLowerCase()
+            .split(/[\/,;\s]+/)
+            .map((c) => c.replace(/[^a-z0-9]/g, "").slice(0, 2))
+            .filter(Boolean);
+          const sws = switches.filter((sw) => {
+            const cmds = syncComandos(sw);
+            return letters.some((ltr) => cmds.includes(ltr));
           });
-          let pathPts = pathPointsFromPrev(graph, fromQdc.prev, ni);
-          if (qdc) pathPts = [{ x: qdc.x, y: qdc.y }, ...pathPts];
-          pathPts = [...pathPts, { x: pt.x, y: pt.y }];
-          pathPts = dedupePoly(pathPts);
-          if (pathPts.length >= 2) {
-            circ.caminhos.push({
-              pontoId: pid,
-              pontos: pathPts,
-              label: labelPonto(pt)
-            });
+
+          if (!sws.length) {
+            // sem interruptor vinculado: QDC → lâmpada
+            const ni = graph.snap[lamp.id];
+            if (qdcNode >= 0 && ni >= 0 && fromQdc.distArr[ni] < Infinity) {
+              const len = fromQdc.distArr[ni] + qdcStub + (graph.stub[lamp.id] || 0);
+              registerEdges(circ.id, pathEdgesFromPrev(fromQdc.prev, fromQdc.prevEdge, ni));
+              pathEdgesFromPrev(fromQdc.prev, fromQdc.prevEdge, ni).forEach((e) => {
+                if (e.conduitId) conduitesDoCirc.add(e.conduitId);
+              });
+              let pathPts = pathPointsFromPrev(graph, fromQdc.prev, ni);
+              pathPts = [{ x: qdc.x, y: qdc.y }, ...pathPts, { x: lamp.x, y: lamp.y }];
+              pathPts = dedupePoly(pathPts);
+              circ.caminhos.push({
+                pontoId: lamp.id,
+                pontos: pathPts,
+                label: labelPonto(lamp),
+                via: "direto"
+              });
+              maxLen = Math.max(maxLen, len);
+              sumLen += len;
+              nPath++;
+            }
+            return;
           }
-          nPath++;
-        } else if (qdc) {
-          len = dist(pt, qdc) * 1.35;
-          avisos.push(
-            `Ponto "${labelPonto(pt)}" sem caminho de conduíte até o QDC — comprimento estimado ×1,35.`
-          );
-        } else {
-          len = 12;
-        }
-        maxLen = Math.max(maxLen, len);
-        sumLen += len;
-      });
+
+          // Fase: QDC → interruptor → lâmpada (retorno). Usa o pior interruptor.
+          sws.forEach((sw) => {
+            const leg1 = pathEntrePontos(qdc.id, sw.id);
+            const leg2 = pathEntrePontos(sw.id, lamp.id);
+            if (leg1 && leg2) {
+              registerEdges(circ.id, leg1.edges);
+              registerEdges(circ.id, leg2.edges);
+              leg1.edges.forEach((e) => e.conduitId && conduitesDoCirc.add(e.conduitId));
+              leg2.edges.forEach((e) => e.conduitId && conduitesDoCirc.add(e.conduitId));
+              const pathPts = dedupePoly([...(leg1.pontos || []), ...(leg2.pontos || []).slice(1)]);
+              const len = leg1.len + leg2.len;
+              circ.caminhos.push({
+                pontoId: lamp.id,
+                interruptorId: sw.id,
+                pontos: pathPts,
+                label: `${labelPonto(lamp)} via ${labelPonto(sw)}`,
+                via: "fase-retorno"
+              });
+              maxLen = Math.max(maxLen, len);
+              sumLen += len;
+              nPath++;
+            } else {
+              avisos.push(
+                `Iluminação "${labelPonto(lamp)}": sem conduíte contínuo QDC → ${labelPonto(sw)} → lâmpada.`
+              );
+            }
+          });
+
+          // Neutro/PE costuma ir QDC → lâmpada: garante esse trecho na rede também
+          const direto = pathEntrePontos(qdc.id, lamp.id);
+          if (direto) {
+            registerEdges(circ.id, direto.edges);
+            direto.edges.forEach((e) => e.conduitId && conduitesDoCirc.add(e.conduitId));
+            maxLen = Math.max(maxLen, direto.len);
+          }
+        });
+      } else {
+        // Demais circuitos: QDC → cada ponto
+        circ.pontos.forEach((pid) => {
+          const pt = byId[pid];
+          if (!pt) return;
+          const ni = graph.snap[pid];
+          const ptStub = graph.stub[pid] || 0;
+          let len = 0;
+          if (qdcNode >= 0 && ni >= 0 && fromQdc.distArr[ni] < Infinity) {
+            len = fromQdc.distArr[ni] + qdcStub + ptStub;
+            const edges = pathEdgesFromPrev(fromQdc.prev, fromQdc.prevEdge, ni);
+            registerEdges(circ.id, edges);
+            edges.forEach((e) => e.conduitId && conduitesDoCirc.add(e.conduitId));
+            let pathPts = pathPointsFromPrev(graph, fromQdc.prev, ni);
+            if (qdc) pathPts = [{ x: qdc.x, y: qdc.y }, ...pathPts];
+            pathPts = [...pathPts, { x: pt.x, y: pt.y }];
+            pathPts = dedupePoly(pathPts);
+            if (pathPts.length >= 2) {
+              circ.caminhos.push({
+                pontoId: pid,
+                pontos: pathPts,
+                label: labelPonto(pt)
+              });
+            }
+            nPath++;
+          } else if (qdc) {
+            len = dist(pt, qdc) * 1.35;
+            avisos.push(
+              `Ponto "${labelPonto(pt)}" sem caminho de conduíte até o QDC — comprimento estimado ×1,35.`
+            );
+          } else {
+            len = 12;
+          }
+          maxLen = Math.max(maxLen, len);
+          sumLen += len;
+        });
+      }
+
       circ.conduitesIds = [...conduitesDoCirc];
       circ.comprimentoPlantaM = Math.max(maxLen, 1);
       circ.comprimentoTotalTrechosM = sumLen;
       circ.pontosComPath = nPath;
 
-      // Recalcula potência e corrente com usos TUE / módulos
-      circ.potenciaVA = circ.pontos.reduce(
-        (s, pid) => s + cargaPonto(byId[pid] || { id: pid }),
-        0
-      );
-      circ.correnteSomaA = circ.pontos.reduce(
-        (s, pid) => s + correntePontoA(byId[pid] || { id: pid }),
-        0
-      );
+      // Potência/corrente: só pontos de carga do circuito
+      // (interruptores/conjugados ligados à iluminação entram na rota, não na carga)
+      const pontosCarga = circ.pontos
+        .map((pid) => byId[pid])
+        .filter((p) => {
+          if (!p) return false;
+          if (p.tipo === "interruptor") return false;
+          if (circ.tipoId === "iluminacao") return p.tipo === "lampada";
+          return true;
+        });
+      circ.potenciaVA = pontosCarga.reduce((s, p) => s + cargaPonto(p), 0);
+      circ.correnteSomaA = pontosCarga.reduce((s, p) => s + correntePontoA(p), 0);
 
-      const tensoesPts = circ.pontos.map((pid) => tensaoEfetivaPonto(byId[pid] || {})).filter(Boolean);
+      // Tensão: UI do ponto (127/220/360) prevalece — sem forçar 220 em TUE
+      const tensoesPts = pontosCarga.map((p) => tensaoEfetivaPonto(p)).filter(Boolean);
       const tensaoDefault =
         circ.tipoId === "iluminacao" || circ.tipoId === "tug" ? 127 : 220;
       let tensao = tensoesPts.length ? Math.max(...tensoesPts) : tensaoDefault;
-      // Cargas dedicadas: sempre ≥ 220 V (mesmo em monofásico)
-      if (["chuveiro", "ar", "tue"].includes(circ.tipoId) && tensao < 220) tensao = 220;
 
       const polos = resolvePolos(sistema, tensao);
       const fasesCirc = polos >= 3 ? 3 : 1;

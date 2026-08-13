@@ -351,22 +351,17 @@ import { todayISO, uid } from "../../data/catalog";
     return 100; // TUG — convencional NBR (≈ 100 VA por ponto/módulo)
   }
 
-  /** Tensão efetiva do ponto (TUE/chuveiro/ar → 220 V mesmo em monofásico). */
+  /**
+   * Tensão efetiva do ponto — a escolha do inspetor (tensaoV) prevalece.
+   * Só usa default 220/127 quando o ponto ainda não tem tensão definida.
+   */
   function tensaoEfetivaPonto(p) {
     const n = normalizePoint(p);
-    if (n.tipo === "chuveiro" || n.tipo === "ar" || n.tipo === "fogao") {
-      return normalizeTensaoV(n.tensaoV != null ? n.tensaoV : 220, 220);
+    if (n.tensaoV != null && Number.isFinite(Number(n.tensaoV))) {
+      return normalizeTensaoV(n.tensaoV, 127);
     }
+    if (n.tipo === "chuveiro" || n.tipo === "ar" || n.tipo === "fogao") return 220;
     if (n.tipo === "tomada" || n.tipo === "conjugado") {
-      if (Array.isArray(n.modulosConfig)) {
-        for (const m of n.modulosConfig) {
-          if (m.usoTue) {
-            const uso = usoTueById(m.usoTue);
-            if (uso) return normalizeTensaoV(uso.tensao, 220);
-          }
-          if (Number(m.amperagem) >= 20 || m.usoCircuito === "tue") return 220;
-        }
-      }
       if (n.usoTue) {
         const uso = usoTueById(n.usoTue);
         if (uso) return normalizeTensaoV(uso.tensao, 220);
@@ -375,17 +370,13 @@ import { todayISO, uid } from "../../data/catalog";
       return 127;
     }
     if (n.tipo === "lampada" || n.tipo === "interruptor") return 127;
-    return normalizeTensaoV(n.tensaoV != null ? n.tensaoV : 127, 127);
+    return 127;
   }
 
-  /** Correntes médias (A) por módulo — para somar no circuito. */
+  /** Correntes médias (A) por módulo — tensão do ponto (UI) prevalece. */
   function correnteModuloA(m, pt) {
     const pot = potenciaModuloW(m, pt);
-    const v = m?.usoTue
-      ? Number(usoTueById(m.usoTue)?.tensao) || tensaoEfetivaPonto(pt)
-      : Number(m?.amperagem) >= 20
-        ? 220
-        : tensaoEfetivaPonto(pt);
+    const v = tensaoEfetivaPonto(pt);
     if (!v || !pot) return 0;
     return pot / v;
   }

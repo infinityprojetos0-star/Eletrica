@@ -2385,6 +2385,8 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
             }
           }
           Object.assign(p, normalizePoint(p));
+          // Tensão do inspetor prevalece (normalize/usoTue não devem forçar 220)
+          if (tenEl) p.tensaoV = Number(tenEl.value) || 127;
           p.label = document.getElementById("pePtLabel")?.value.trim() || labelPonto(p);
           save();
           paint();
