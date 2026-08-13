@@ -309,6 +309,8 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
     if (!projeto.sistema || !["mono", "bi", "tri"].includes(projeto.sistema)) {
       projeto.sistema = "bi";
     }
+    if (!(Number(projeto.peDireitoM) > 0)) projeto.peDireitoM = 2.8;
+    if (typeof projeto.aterramento !== "boolean") projeto.aterramento = true;
     projeto.symbolScale = clampEscala(projeto.symbolScale == null ? 1 : projeto.symbolScale);
     projeto.points = (projeto.points || []).map(normalizePoint);
 
@@ -357,6 +359,33 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
 
     function roundCm(v) {
       return Math.round(Number(v) / GRID_M) * GRID_M;
+    }
+
+    function roomAt(x, y) {
+      return (projeto.rooms || []).find(
+        (r) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h
+      );
+    }
+
+    function lampsInRoom(room) {
+      if (!room) return [];
+      return (projeto.points || []).filter((p) => {
+        if (normalizePoint(p).tipo !== "lampada") return false;
+        return p.x >= room.x && p.x <= room.x + room.w && p.y >= room.y && p.y <= room.y + room.h;
+      });
+    }
+
+    /** Distâncias do ponto às 4 paredes do cômodo (para cotas ao arrastar). */
+    function wallCotasForPoint(p) {
+      const room = roomAt(p.x, p.y);
+      if (!room) return null;
+      return {
+        room,
+        left: Math.max(0, p.x - room.x),
+        right: Math.max(0, room.x + room.w - p.x),
+        top: Math.max(0, p.y - room.y),
+        bottom: Math.max(0, room.y + room.h - p.y)
+      };
     }
 
     function visualGridStep() {
@@ -461,6 +490,15 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
               <option value="mono" ${projeto.sistema === "mono" ? "selected" : ""}>Monofásico</option>
               <option value="bi" ${!projeto.sistema || projeto.sistema === "bi" ? "selected" : ""}>Bifásico</option>
               <option value="tri" ${projeto.sistema === "tri" ? "selected" : ""}>Trifásico</option>
+            </select>
+            <label class="pe-field-inline" title="Pé direito — altura das paredes / forro">
+              PD
+              <input type="number" id="pePD" class="pe-select pe-input-sm" min="2.2" max="6" step="0.05" value="${Number(projeto.peDireitoM) || 2.8}" />
+              <span class="hint">m</span>
+            </label>
+            <select id="peAterramento" class="pe-select" title="Aterramento do local">
+              <option value="sim" ${projeto.aterramento !== false ? "selected" : ""}>Aterramento: sim</option>
+              <option value="nao" ${projeto.aterramento === false ? "selected" : ""}>Aterramento: passar PE</option>
             </select>
             <div class="pe-tools" id="peTools">
               <button type="button" data-tool="select" class="pe-tool active" title="Selecionar / arrastar">Mover</button>
@@ -658,6 +696,18 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
         projeto.sistema = e.target.value;
         save();
         ctx.toast?.("Sistema alterado — rode Analisar NBR 5410 de novo");
+      };
+      root.querySelector("#pePD").onchange = (e) => {
+        const v = Math.max(2.2, Math.min(6, Number(e.target.value) || 2.8));
+        projeto.peDireitoM = Math.round(v * 100) / 100;
+        e.target.value = String(projeto.peDireitoM);
+        save();
+        ctx.toast?.("Pé direito atualizado — rode a análise de novo");
+      };
+      root.querySelector("#peAterramento").onchange = (e) => {
+        projeto.aterramento = e.target.value !== "nao";
+        save();
+        ctx.toast?.("Aterramento atualizado — rode a análise de novo");
       };
       root.querySelector("#peTools").onclick = (e) => {
         const btn = e.target.closest("[data-tool]");
@@ -1611,9 +1661,26 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
           ctx.toast?.("Já existe um QDC — apague o atual para reposicionar.");
           return;
         }
-        const pt = defaultPoint(placeTipo, w.x, w.y);
+        let px = w.x;
+        let py = w.y;
+        // 1ª lâmpada do cômodo → centro automático
+        if (placeTipo === "lampada") {
+          const room = roomAt(w.x, w.y);
+          if (room) {
+            const lamps = lampsInRoom(room);
+            if (lamps.length === 0) {
+              px = roundCm(room.x + room.w / 2);
+              py = roundCm(room.y + room.h / 2);
+              ctx.toast?.("1ª luz do cômodo — centrada automaticamente");
+            }
+          }
+        }
+        const pt = defaultPoint(placeTipo, px, py);
         if (placePreset) applyPointPreset(pt, placePreset);
         Object.assign(pt, normalizePoint(pt));
+        if (placeTipo === "lampada" && Number(projeto.peDireitoM) > 0) {
+          pt.alturaM = Number(projeto.peDireitoM);
+        }
         projeto.points.push(pt);
         selectedId = pt.id;
         selectedKind = "point";
@@ -2916,6 +2983,29 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
         drawDim(d.a, d.b, sel ? "#f57c00" : "#00838f");
       });
 
+      // Cotas em tempo real: lâmpada arrastada ou selecionada → distâncias às paredes
+      {
+        let lamp = null;
+        if (drag?.type === "move-point") {
+          lamp = projeto.points.find((x) => x.id === drag.id);
+        } else if (selectedKind === "point" && selectedId) {
+          lamp = projeto.points.find((x) => x.id === selectedId);
+        }
+        if (lamp && normalizePoint(lamp).tipo === "lampada") {
+          const c = wallCotasForPoint(lamp);
+          if (c) {
+            const col = "#e65100";
+            const { room } = c;
+            // esquerda / direita (horizontal)
+            drawDim({ x: room.x, y: lamp.y }, { x: lamp.x, y: lamp.y }, col);
+            drawDim({ x: lamp.x, y: lamp.y }, { x: room.x + room.w, y: lamp.y }, col);
+            // cima / baixo (vertical)
+            drawDim({ x: lamp.x, y: room.y }, { x: lamp.x, y: lamp.y }, col);
+            drawDim({ x: lamp.x, y: lamp.y }, { x: lamp.x, y: room.y + room.h }, col);
+          }
+        }
+      }
+
       if (measureDraft?.a) {
         const b =
           measureDraft.b ||
@@ -3134,10 +3224,14 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
           )}</p>
           <table class="pe-mat"><thead><tr><th>Item</th><th class="pe-mat-qtd">Qtd</th></tr></thead><tbody>
           ${a.materiais
-            .map(
-              (m) =>
-                `<tr><td>${escapeHtml(m.nome)}<div class="hint">${escapeHtml(m.nota || "")}</div></td><td class="pe-mat-qtd"><strong>${m.qtd}</strong> ${escapeHtml(m.unidade || "")}</td></tr>`
-            )
+            .map((m) => {
+              const meta = [m.bitola != null ? `${m.bitola} mm²` : "", m.cor || ""]
+                .filter(Boolean)
+                .join(" · ");
+              return `<tr><td>${escapeHtml(m.nome)}${
+                meta ? `<div class="hint">${escapeHtml(meta)}</div>` : ""
+              }<div class="hint">${escapeHtml(m.nota || "")}</div></td><td class="pe-mat-qtd"><strong>${m.qtd}</strong> ${escapeHtml(m.unidade || "")}</td></tr>`;
+            })
             .join("")}
           </tbody></table>
           <button type="button" class="btn btn-primary btn-sm" id="peOrc" style="margin-top:10px;width:100%">Gerar orçamento</button>`
@@ -3161,7 +3255,7 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
         <div class="pe-side-block">
           <h3>Resumo</h3>
           <p class="hint">${projeto.rooms.length} cômodo(s) · ${(projeto.arch || []).length} porta/janela · ${(projeto.walls || []).length} linha(s) · ${projeto.points.length} ponto(s) · ${projeto.conduits.length} conduíte(s)</p>
-          <p class="source-pill">Sistema: ${escapeHtml(sistLabel)} · NBR 5410</p>
+          <p class="source-pill">Sistema: ${escapeHtml(sistLabel)} · PD ${Number(projeto.peDireitoM || 2.8).toFixed(2)} m · Aterramento: ${projeto.aterramento === false ? "passar PE" : "sim"}</p>
         </div>
         <div class="pe-side-block">
           <h3>Proteção</h3>

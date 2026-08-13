@@ -8,8 +8,20 @@ import {
   labelPonto,
   modulosTomada,
   varInterruptor,
-  varLampada
+  varLampada,
+  teclasDoInterruptor
 } from "./types";
+
+/** Cores NBR 5410 (identificação de condutores — prática BR) */
+const CORES_CABO_NBR = {
+  fase: [
+    { id: "preto", label: "preto", hex: "#1a1a1a" },
+    { id: "vermelho", label: "vermelho", hex: "#c62828" },
+    { id: "branco", label: "branco", hex: "#f5f5f5" }
+  ],
+  neutro: { id: "azul", label: "azul-claro", hex: "#42a5f5" },
+  pe: { id: "verde_amarelo", label: "verde-amarelo", hex: "#7cb342" }
+};
 
 const DR_INS = [25, 40, 63, 80, 100];
 const DJ_GERAL = [40, 50, 63, 70, 80, 100, 125, 150, 175, 200];
@@ -371,6 +383,23 @@ function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
     }
   });
 
+  // Derivações DENTRO da caixa (tomada dupla/tripla, interruptor multi-tecla)
+  const bumpWago = (size, qtd, label, pontas) => {
+    if (!size || !qtd) return;
+    porPolos[size] = (porPolos[size] || 0) + qtd;
+    if (detalhes.length < 14) {
+      detalhes.push(`${label}: ${pontas} pontas → ${qtd}× Wago ${size}P`);
+    }
+  };
+  caixas.forEach((p) => {
+    const interno = wagoInternoCaixa(p);
+    if (!interno) return;
+    bumpWago(interno.size, interno.qtd, interno.label, interno.pontas);
+    if (interno.extra) {
+      bumpWago(interno.extra.size, interno.extra.qtd, `${interno.label}+`, interno.extra.pontas || interno.pontas);
+    }
+  });
+
   const unidades = Object.values(porPolos).reduce((s, n) => s + n, 0);
   const resumoPolos = [2, 3, 5, 10]
     .filter((p) => porPolos[p] > 0)
@@ -388,6 +417,135 @@ function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
       resumoPolos ||
       "Sem emendas com 2+ pontas — nada a estimar de Wago"
   };
+}
+
+/**
+ * Wago na caixinha: interruptor duplo/triplo (fase) e tomada multi (F+N+PE).
+ * Ex.: 2 módulos → 1 chega + 2 sai = 3 pontas → Wago 3P; 3 módulos → 4 pontas → Wago 5P.
+ */
+function wagoInternoCaixa(raw) {
+  const p = normalizePoint(raw);
+  if (!p || p.tipo === "qdc") return null;
+
+  if (p.tipo === "interruptor") {
+    const teclas = teclasDoInterruptor(p.variante || "simples");
+    if (teclas < 2) return null;
+    const pontas = teclas + 1; // chega fase + 1 por tecla
+    const size = pickWagoSize(pontas);
+    return {
+      size,
+      qtd: 1, // só fase
+      pontas,
+      label: `int.${teclas}teclas`
+    };
+  }
+
+  if (p.tipo === "tomada") {
+    const mods = modulosTomada(p.modulos).modulos;
+    if (mods < 2) return null;
+    const pontas = mods + 1; // chega + 1 por módulo
+    const size = pickWagoSize(pontas);
+    return {
+      size,
+      qtd: 3, // F + N + PE
+      pontas,
+      label: `tomada ${mods}mod`
+    };
+  }
+
+  if (p.tipo === "conjugado") {
+    const teclas = teclasDoInterruptor(p.variante || "simples");
+    const mods = modulosTomada(p.modulos).modulos;
+    const parts = [];
+    let main = null;
+    let extra = null;
+    if (teclas >= 2) {
+      const pontas = teclas + 1;
+      main = {
+        size: pickWagoSize(pontas),
+        qtd: 1,
+        pontas,
+        label: `conjugado int${teclas}`
+      };
+      parts.push(`int${teclas}`);
+    }
+    if (mods >= 2) {
+      const pontas = mods + 1;
+      const tom = {
+        size: pickWagoSize(pontas),
+        qtd: 3,
+        pontas,
+        label: `conjugado tom${mods}`
+      };
+      parts.push(`tom${mods}`);
+      if (!main) main = tom;
+      else if (main.size === tom.size) {
+        main.qtd += tom.qtd;
+        main.pontas = Math.max(main.pontas, tom.pontas);
+        main.label = `conjugado ${parts.join("+")}`;
+      } else {
+        extra = tom;
+        main.label = `conjugado ${parts.join("+")}`;
+      }
+    }
+    if (!main) return null;
+    if (extra) main.extra = extra;
+    return main;
+  }
+
+  return null;
+}
+
+/**
+ * Condutores coloridos do circuito (NBR — identificação).
+ * Retorna lista { papel, cor, corLabel, metrosFator } metrosFator = fração do comprimento de um condutor.
+ */
+function condutoresColoridos(polos, incluiPe = true) {
+  const p = Number(polos) || 1;
+  const list = [];
+  if (p >= 3) {
+    list.push({ papel: "Fase L1", cor: "preto", corLabel: "preto" });
+    list.push({ papel: "Fase L2", cor: "vermelho", corLabel: "vermelho" });
+    list.push({ papel: "Fase L3", cor: "branco", corLabel: "branco" });
+    list.push({ papel: "Neutro", cor: "azul", corLabel: "azul-claro" });
+  } else if (p >= 2) {
+    list.push({ papel: "Fase L1", cor: "preto", corLabel: "preto" });
+    list.push({ papel: "Fase L2", cor: "vermelho", corLabel: "vermelho" });
+  } else {
+    list.push({ papel: "Fase", cor: "preto", corLabel: "preto" });
+    list.push({ papel: "Neutro", cor: "azul", corLabel: "azul-claro" });
+  }
+  if (incluiPe) {
+    list.push({ papel: "PE (aterramento)", cor: "verde_amarelo", corLabel: "verde-amarelo" });
+  }
+  return list;
+}
+
+/**
+ * Comprimento 3D do circuito: planta + descidas (pé direito − altura do ponto).
+ * peDireitoM padrão 2,80 m.
+ */
+function comprimentoCircuito3D(circ, projeto, byId) {
+  const pd = Math.max(2.2, Number(projeto?.peDireitoM) || 2.8);
+  const plan = Number(circ.comprimentoM) || 0;
+  const qdc = (projeto.points || []).find((p) => normalizePoint(p).tipo === "qdc");
+  const hQdc = qdc ? Number(normalizePoint(qdc).alturaM) || 1.4 : 1.4;
+  const dropQdc = Math.max(0, pd - hQdc);
+
+  let dropMax = 0;
+  (circ.pontos || []).forEach((pid) => {
+    const pt = byId?.[pid] || (projeto.points || []).find((x) => x.id === pid);
+    if (!pt) return;
+    const n = normalizePoint(pt);
+    const h = Number(n.alturaM);
+    const altura = Number.isFinite(h) ? h : n.tipo === "lampada" ? pd : 0.3;
+    // Lâmpada no teto: quase sem descida; parede: PD − altura
+    const drop = n.tipo === "lampada" ? Math.max(0, pd - Math.min(altura, pd)) : Math.max(0, pd - altura);
+    dropMax = Math.max(dropMax, drop);
+  });
+
+  // Pior ramo: planta + descida QDC + descida no ponto mais desfavorável
+  return Math.max(plan + dropQdc + dropMax, plan, 1);
 }
 
 function lineProd(produtos, modo, refId, nome, qtd, unidade, nota, pred) {
@@ -420,20 +578,25 @@ function materiaisDoCircuito(circ, projeto, produtos, modo, wagoShareUn) {
   const dim = circ.dimensionamento;
   if (!dim) return itens;
 
-  const metros = Math.ceil((dim.metrosCabo || circ.comprimentoM * (dim.nCondutores || 2)) * 1.1);
+  const metros1 =
+    Number(circ.metrosPorCondutor) ||
+    Math.ceil((circ.comprimentoM || 0) * 1.1);
   const caboMap = { 1.5: "prd-13", 2.5: "prd-10", 4: "prd-11", 6: "prd-12" };
   const caboId = caboMap[Number(circ.bitola)] || null;
-  itens.push(
-    lineProd(
-      produtos,
-      modo,
-      caboId,
-      `Cabo ${circ.bitola} mm² (${circ.id})`,
-      metros,
-      "m",
-      `L≈${(circ.comprimentoM || 0).toFixed(1)} m · ${dim.nCondutores || "—"} cond. +10%`
-    )
-  );
+  const conds = circ.condutores || condutoresColoridos(circ.polos || 1, true);
+  conds.forEach((c) => {
+    itens.push(
+      lineProd(
+        produtos,
+        modo,
+        caboId,
+        `Cabo ${circ.bitola} mm² ${c.corLabel} — ${c.papel}`,
+        metros1,
+        "m",
+        `L≈${(circ.comprimentoM || 0).toFixed(1)} m (planta+PD) · ${circ.id}`
+      )
+    );
+  });
 
   const polos = circ.polos || 1;
   const djId = polos >= 3 ? null : polos >= 2 ? "prd-7" : "prd-6";
@@ -541,10 +704,14 @@ export {
   nCondutoresOf,
   labelPolosDj,
   pickWagoSize,
+  condutoresColoridos,
+  comprimentoCircuito3D,
+  CORES_CABO_NBR,
   TENSOES_PONTO,
   balancearCargas,
   dimensionarProtecao,
   contarWagos,
+  wagoInternoCaixa,
   materiaisDoCircuito,
   montarMateriaisPorCircuito,
   lineProd,

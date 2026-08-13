@@ -527,6 +527,13 @@ import { todayISO, uid } from "../../data/catalog";
       uso: uso === "comercial" ? "comercial" : "residencial",
       /** mono | bi | tri — padrão bifásico (ES 127/220) */
       sistema: "bi",
+      /** Pé direito (altura das paredes / forro) em metros */
+      peDireitoM: 2.8,
+      /**
+       * Aterramento do local:
+       * true = já possui aterramento · false = precisa passar cabo de aterramento (PE)
+       */
+      aterramento: true,
       rooms: [],
       arch: [],
       points: [],

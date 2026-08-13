@@ -27,6 +27,8 @@ import {
   resolvePolos,
   nCondutoresOf,
   labelPolosDj,
+  condutoresColoridos,
+  comprimentoCircuito3D,
   balancearCargas,
   dimensionarProtecao,
   contarWagos,
@@ -553,7 +555,17 @@ function polylineLength(verts) {
       const tensao = tensoesPts.length ? Math.max(...tensoesPts) : tensaoDefault;
       const polos = resolvePolos(sistema, tensao);
       const fasesCirc = polos >= 3 ? 3 : 1;
-      const nCond = nCondutoresOf(polos);
+      const incluiPe = true; // PE sempre no circuito (NBR); aterramento do local é cabo extra
+      const nCond = condutoresColoridos(polos, incluiPe).length;
+
+      // Comprimento 3D: planta + descidas (PD − altura)
+      const len3d = comprimentoCircuito3D(
+        circ,
+        { ...projeto, peDireitoM: projeto.peDireitoM },
+        byId
+      );
+      circ.comprimentoPlantaM = circ.comprimentoM;
+      circ.comprimentoM = len3d;
 
       const dim =
         typeof NBR5410 !== "undefined"
@@ -574,6 +586,7 @@ function polylineLength(verts) {
 
       circ.tensaoV = tensao;
       circ.dimensionamento = dim;
+      circ.condutores = condutoresColoridos(polos, incluiPe);
       if (dim) {
         circ.bitola = dim.cabo.secao;
         circ.disjuntor = dim.disjuntor.In;
@@ -586,8 +599,11 @@ function polylineLength(verts) {
         circ.eletroduto = dim.eletroduto;
         circ.dr = dim.dr;
         circ.avisos = dim.avisos || [];
+        // Metros por condutor (= comprimento do circuito) com folga
+        circ.metrosPorCondutor = Math.ceil(circ.comprimentoM * 1.1);
       } else {
         circ.polos = polos;
+        circ.metrosPorCondutor = Math.ceil(circ.comprimentoM * 1.1);
       }
     });
 
@@ -660,6 +676,8 @@ function polylineLength(verts) {
       uso,
       sistema,
       sistemaLabel: labelSistema(sistema),
+      peDireitoM: Math.max(2.2, Number(projeto.peDireitoM) || 2.8),
+      aterramento: projeto.aterramento !== false,
       circuits,
       conduits,
       points: pointsOut,
@@ -685,8 +703,11 @@ function polylineLength(verts) {
     const wago = extras.wago || null;
 
     const caboMap = { 1.5: "prd-13", 2.5: "prd-10", 4: "prd-11", 6: "prd-12" };
-    const metrosPorSecao = {};
+    /** Agrega: secao|cor|papel → metros */
+    const metrosCaboDet = {};
     let metrosEletroduto = 0;
+    const peDireito = Math.max(2.2, Number(projeto.peDireitoM) || 2.8);
+    const temAterramento = projeto.aterramento !== false;
 
     (projeto.conduits || []).forEach((c) => {
       metrosEletroduto += polylineLength(c.points || []);
@@ -694,26 +715,64 @@ function polylineLength(verts) {
 
     circuits.forEach((circ) => {
       const dim = circ.dimensionamento;
-      if (!dim) return;
-      const s = dim.cabo.secao;
-      metrosPorSecao[s] =
-        (metrosPorSecao[s] || 0) + (dim.metrosCabo || circ.comprimentoM * dim.nCondutores);
-    });
-
-    Object.entries(metrosPorSecao).forEach(([secao, metros]) => {
-      const id = caboMap[Number(secao)];
-      const prod = id ? find((p) => p.id === id) : null;
-      const m = Math.ceil(metros * 1.1);
-      itens.push({
-        tipo: "produto",
-        refId: prod?.id || null,
-        nome: prod?.nome || `Cabo flexível ${secao} mm²`,
-        unidade: "m",
-        qtd: m,
-        preco: prod ? preco(prod) / 100 : 0,
-        nota: `${secao} mm² · NBR 5410 · +10% folga`
+      if (!dim && !circ.bitola) return;
+      const secao = dim?.cabo?.secao || circ.bitola;
+      const metros1 = Number(circ.metrosPorCondutor) || Math.ceil((circ.comprimentoM || 0) * 1.1);
+      const conds = circ.condutores || condutoresColoridos(circ.polos || 1, true);
+      conds.forEach((c) => {
+        const k = `${secao}|${c.cor}|${c.papel}`;
+        if (!metrosCaboDet[k]) {
+          metrosCaboDet[k] = {
+            secao,
+            cor: c.cor,
+            corLabel: c.corLabel,
+            papel: c.papel,
+            metros: 0,
+            circs: []
+          };
+        }
+        metrosCaboDet[k].metros += metros1;
+        if (!metrosCaboDet[k].circs.includes(circ.id)) metrosCaboDet[k].circs.push(circ.id);
       });
     });
+
+    Object.values(metrosCaboDet)
+      .sort((a, b) => Number(a.secao) - Number(b.secao) || a.papel.localeCompare(b.papel))
+      .forEach((row) => {
+        const id = caboMap[Number(row.secao)];
+        const prod = id ? find((p) => p.id === id) : null;
+        const m = Math.ceil(row.metros);
+        itens.push({
+          tipo: "produto",
+          refId: prod?.id || null,
+          nome: `Cabo ${row.secao} mm² ${row.corLabel} — ${row.papel}`,
+          unidade: "m",
+          qtd: m,
+          preco: prod ? preco(prod) / 100 : 0,
+          bitola: row.secao,
+          cor: row.corLabel,
+          papel: row.papel,
+          nota: `${row.circs.join(", ")} · PD ${peDireito.toFixed(2)} m · +10% · NBR 5410`
+        });
+      });
+
+    // Cabo PE de aterramento do local (haste → QDC) quando não há aterramento
+    if (!temAterramento && circuits.length) {
+      const peExtra = Math.ceil(peDireito * 2 + 5); // descida + margem até haste
+      const prodPe = find((p) => p.id === "prd-12") || find((p) => p.id === "prd-11");
+      itens.push({
+        tipo: "produto",
+        refId: prodPe?.id || null,
+        nome: "Cabo 6 mm² verde-amarelo — aterramento (haste → QDC)",
+        unidade: "m",
+        qtd: peExtra,
+        preco: prodPe ? preco(prodPe) / 100 : 0,
+        bitola: 6,
+        cor: "verde-amarelo",
+        papel: "PE aterramento",
+        nota: "Local sem aterramento — passar cabo PE até o QDC"
+      });
+    }
 
     if (metrosEletroduto > 0) {
       const eletro =
