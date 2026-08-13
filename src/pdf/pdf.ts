@@ -287,12 +287,12 @@ ${fontFaceCss()}
 .ve-tbl th,.ve-tbl td{
   border:1px solid ${C.tableLine};
   border-left:none;border-right:none;
-  padding:5px 8px;font-size:9px;line-height:1.25;vertical-align:middle;
+  padding:7px 8px;font-size:9.5px;line-height:1.3;vertical-align:middle;
   word-wrap:break-word;overflow-wrap:anywhere;
 }
 .ve-tbl thead th{
   background:${C.primary};color:#fff;font-weight:700;
-  border-color:${C.primary};padding:7px 8px;line-height:1.2;
+  border-color:${C.primary};padding:8px;line-height:1.2;
 }
 .ve-tbl tbody tr:last-child td{border-bottom:none;}
 .ve-tbl th.c,.ve-tbl td.c{text-align:center;color:${C.primary};font-weight:600;width:11%;}
@@ -302,14 +302,63 @@ ${fontFaceCss()}
 .ve-tbl td.c:last-child,.ve-tbl th.c:last-child{width:25%;}
 .ve-page-note{font-size:7.5px;color:${C.muted};margin:4px 10px 6px;font-style:italic;line-height:1.2;}
 
-.ve-compact .ve-tbl th,.ve-compact .ve-tbl td{padding:3px 6px;font-size:8px;}
-.ve-compact .ve-tbl thead th{padding:5px 6px;}
+/* Densidade: poucos itens → maior; muitos → menor */
+.ve-airy .ve-tbl th,.ve-airy .ve-tbl td{padding:11px 9px;font-size:11px;}
+.ve-airy .ve-tbl thead th{padding:10px 9px;font-size:10.5px;}
+.ve-airy .ve-box{margin-bottom:11px;}
+.ve-airy .ve-box-pad{padding:10px 12px 11px;}
+.ve-airy .ve-fields td{padding:7px 0 6px;font-size:10.5px;}
+.ve-airy .ve-fields .val{font-size:11.5px;}
+.ve-airy .ve-title{font-size:11.5px;margin-bottom:6px;}
+.ve-airy .ve-main{padding-top:10px;}
+.ve-airy .ve-garantia{font-size:8.5px;line-height:1.4;}
+.ve-airy .ve-pay{font-size:9.5px;}
+.ve-airy .ve-pay td{padding:5px 4px 5px 0;}
+.ve-airy .obs-line{min-height:14px;font-size:9px;margin-top:5px;}
+.ve-airy .ve-total{padding:16px 10px;}
+.ve-airy .ve-total .val{font-size:24px;}
+.ve-airy .ve-total .lbl{font-size:10px;margin-bottom:8px;}
+.ve-airy .ve-sign .t,.ve-airy .ve-sign .sub{font-size:9.5px;}
+.ve-airy .ve-2col{margin-bottom:10px;border-spacing:9px 0;}
+
+.ve-comfy .ve-tbl th,.ve-comfy .ve-tbl td{padding:9px 8px;font-size:10.5px;}
+.ve-comfy .ve-tbl thead th{padding:9px 8px;}
+.ve-comfy .ve-box{margin-bottom:9px;}
+.ve-comfy .ve-box-pad{padding:8px 11px 9px;}
+.ve-comfy .ve-fields td{padding:5px 0 4px;font-size:10px;}
+.ve-comfy .ve-title{font-size:11px;}
+.ve-comfy .ve-garantia{font-size:8px;line-height:1.35;}
+.ve-comfy .ve-pay{font-size:9px;}
+.ve-comfy .ve-total .val{font-size:22px;}
+.ve-comfy .ve-total{padding:14px 9px;}
+.ve-comfy .obs-line{min-height:12px;font-size:8.5px;}
+
+.ve-compact .ve-tbl th,.ve-compact .ve-tbl td{padding:4px 6px;font-size:8.5px;}
+.ve-compact .ve-tbl thead th{padding:5px 6px;font-size:8px;}
 .ve-compact .ve-box{margin-bottom:5px;}
+.ve-compact .ve-box-pad{padding:5px 8px 6px;}
 .ve-compact .ve-main{padding-top:4px;}
 .ve-compact .ve-garantia{font-size:7px;line-height:1.2;}
 .ve-compact .ve-title{font-size:9px;margin-bottom:3px;}
 .ve-compact .ve-total .val{font-size:16px;}
-.ve-compact .ve-sign{margin-top:8px;}
+.ve-compact .ve-total{padding:8px;}
+.ve-compact .ve-fields td{padding:3px 0 2px;font-size:9px;}
+.ve-compact .obs-line{min-height:9px;font-size:7.5px;}
+
+.ve-dense .ve-tbl th,.ve-dense .ve-tbl td{padding:2px 5px;font-size:7.5px;}
+.ve-dense .ve-tbl thead th{padding:4px 5px;font-size:7.5px;}
+.ve-dense .ve-box{margin-bottom:4px;}
+.ve-dense .ve-box-pad{padding:4px 7px 5px;}
+.ve-dense .ve-main{padding-top:3px;}
+.ve-dense .ve-garantia{font-size:6.5px;line-height:1.15;}
+.ve-dense .ve-title{font-size:8.5px;margin-bottom:2px;}
+.ve-dense .ve-total .val{font-size:15px;}
+.ve-dense .ve-total{padding:6px;}
+.ve-dense .ve-fields td{padding:2px 0;font-size:8.5px;}
+.ve-dense .obs-line{min-height:8px;font-size:7px;margin-top:2px;}
+.ve-dense .ve-2col{margin-bottom:4px;border-spacing:5px 0;}
+.ve-dense .ve-pay{font-size:7.5px;}
+.ve-dense .ve-pay td{padding:1px 3px 1px 0;}
 
 .ve-2col{
   display:table;width:100%;table-layout:fixed;margin-bottom:7px;
@@ -346,17 +395,18 @@ ${fontFaceCss()}
   white-space:nowrap;text-align:center;
 }
 
-.ve-sign{display:table;width:100%;margin:10px 0 0;table-layout:fixed;flex-shrink:0;}
+.ve-sign{display:table;width:100%;margin:0;padding-top:8px;table-layout:fixed;flex-shrink:0;}
 .ve-sign .col{display:table-cell;width:50%;text-align:center;padding:0 18px;vertical-align:top;}
 .ve-sign .hline{border-top:1.5px solid ${C.primary};margin-bottom:4px;}
 .ve-sign .t{font-size:8px;font-weight:700;color:${C.text};}
 .ve-sign .navy{color:${C.primary};}
 .ve-sign .sub{font-size:8px;font-weight:700;margin-top:2px;color:${C.text};}
 
-.ve-push{flex:1 1 auto;min-height:6px;width:100%;}
+/* Empurra a assinatura até a linha amarela do contato */
+.ve-push{flex:1 1 auto;min-height:4px;width:100%;}
 
 .ve-contact{
-  margin:0 ${mx}px;padding:10px 0 8px;
+  margin:0 ${mx}px;padding:8px 0 6px;
   border-top:2px solid ${C.secondary};
   display:table;width:calc(100% - ${mx * 2}px);table-layout:fixed;
   flex-shrink:0;
@@ -425,7 +475,6 @@ ${fontFaceCss()}
     const footCell = (icon, lines) =>
       `<div class="cell"><span class="ico">${svgIcon(icon, 18)}</span><span class="ft">${lines}</span></div>`;
     return `
-  <div class="ve-push"></div>
   <div class="ve-contact">
     <div class="left">
       <span class="ico">${svgIcon("phone", 18)}</span><span class="fone">${esc(fone)}</span>
@@ -504,13 +553,15 @@ ${fontFaceCss()}
     const fone = empresa?.telefone || "(27) 99617-5219";
     const garantiaMeses = orc.garantiaMeses || 3;
     const validade = orc.validade != null ? orc.validade : 15;
-    const minServ = Math.min(servicos.length + 1, Math.max(servicos.length, 4));
+    const minServ = servicos.length;
     const minMat = Math.min(materiais.length + 2, Math.max(materiais.length, 6));
-    const compact = servicos.length >= 8 ? " ve-compact" : "";
-    const obsMax = compact ? 3 : 4;
+    const nServ = servicos.length;
+    const density =
+      nServ <= 5 ? " ve-airy" : nServ <= 8 ? " ve-comfy" : nServ <= 12 ? "" : nServ <= 16 ? " ve-compact" : " ve-dense";
+    const obsMax = nServ <= 8 ? 4 : nServ <= 12 ? 3 : 2;
 
     const page1 = `
-<div class="ve-page${compact}" data-pdf-page="1">
+<div class="ve-page${density}" data-pdf-page="1">
   <div class="ve-page-inner">
   ${pageHeaderHtml(orc, bannerUrl, `VALIDADE DA PROPOSTA: ${validade} DIAS`)}
 
@@ -575,6 +626,8 @@ ${fontFaceCss()}
       </div>
     </div>
 
+    <div class="ve-push" aria-hidden="true"></div>
+
     <div class="ve-sign">
       <div class="col">
         <div class="hline"></div>
@@ -595,7 +648,15 @@ ${fontFaceCss()}
     if (!materiais.length) return page1;
 
     const page2 = `
-<div class="ve-page" data-pdf-page="2">
+<div class="ve-page${
+      materiais.length <= 8
+        ? " ve-airy"
+        : materiais.length <= 14
+          ? " ve-comfy"
+          : materiais.length <= 22
+            ? ""
+            : " ve-compact"
+    }" data-pdf-page="2">
   <div class="ve-page-inner">
   ${pageHeaderHtml(orc, bannerUrl, "MATERIAIS E EQUIPAMENTOS")}
 
@@ -609,6 +670,7 @@ ${fontFaceCss()}
       }</p>
       ${tableBlock(materiais, minMat)}
     </div>
+    <div class="ve-push" aria-hidden="true"></div>
   </div>
 
   ${pageFooterHtml(fone)}
