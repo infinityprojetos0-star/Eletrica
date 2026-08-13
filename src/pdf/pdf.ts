@@ -395,18 +395,18 @@ ${fontFaceCss()}
   white-space:nowrap;text-align:center;
 }
 
-.ve-sign{display:table;width:100%;margin:0;padding-top:8px;table-layout:fixed;flex-shrink:0;}
+.ve-sign{display:table;width:100%;margin:0 0 10px;padding-top:8px;padding-bottom:4px;table-layout:fixed;flex-shrink:0;}
 .ve-sign .col{display:table-cell;width:50%;text-align:center;padding:0 18px;vertical-align:top;}
 .ve-sign .hline{border-top:1.5px solid ${C.primary};margin-bottom:4px;}
 .ve-sign .t{font-size:8px;font-weight:700;color:${C.text};}
 .ve-sign .navy{color:${C.primary};}
-.ve-sign .sub{font-size:8px;font-weight:700;margin-top:2px;color:${C.text};}
+.ve-sign .sub{font-size:8px;font-weight:700;margin-top:2px;color:${C.text};padding-bottom:2px;}
 
-/* Empurra a assinatura até a linha amarela do contato */
+/* Empurra a assinatura até perto da linha amarela do contato */
 .ve-push{flex:1 1 auto;min-height:4px;width:100%;}
 
 .ve-contact{
-  margin:0 ${mx}px;padding:8px 0 6px;
+  margin:0 ${mx}px;padding:10px 0 6px;
   border-top:2px solid ${C.secondary};
   display:table;width:calc(100% - ${mx * 2}px);table-layout:fixed;
   flex-shrink:0;
