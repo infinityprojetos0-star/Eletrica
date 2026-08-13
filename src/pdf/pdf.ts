@@ -126,10 +126,12 @@ import {
       .replace(/"/g, "&quot;");
   }
 
-  function tableBlock(items, count) {
+  function tableBlock(items, minRows = 8) {
+    const list = items || [];
+    const count = Math.max(minRows, list.length);
     let rows = "";
     for (let i = 0; i < count; i++) {
-      const it = items[i];
+      const it = list[i];
       const qtd =
         it && it.qtd !== "" && it.qtd != null
           ? `${it.qtd}${it.unidade ? ` ${it.unidade}` : ""}`
@@ -199,8 +201,8 @@ import {
 ${fontFaceCss()}
 #voltes-pdf-host,#voltes-pdf-host *{box-sizing:border-box;}
 #voltes-pdf-host{
-  position:fixed;left:0;top:0;width:${A4_W}px;height:${A4_H}px;
-  margin:0;padding:0;background:#fff;overflow:hidden;
+  position:fixed;left:0;top:0;width:${A4_W}px;height:auto;
+  margin:0;padding:0;background:#fff;overflow:visible;
   z-index:2147483646;pointer-events:none;
 }
 .ve-page{
@@ -269,10 +271,10 @@ ${fontFaceCss()}
 .ve-row2{display:flex;gap:10px;}
 .ve-row2 .ve-field{flex:1;}
 
-/* Células com padding interno — texto não cola/corta na linha */
+/* Células — texto completo com quebra de linha */
 .ve-tbl{margin:0 8px 7px;border:1px solid ${C.tableLine};border-radius:4px;overflow:visible;}
 .ve-thead{
-  display:flex;height:24px;background:${C.primary};color:#fff;
+  display:flex;min-height:24px;height:24px;background:${C.primary};color:#fff;
   border-radius:3px 3px 0 0;
 }
 .ve-thead > div{
@@ -280,28 +282,30 @@ ${fontFaceCss()}
   height:24px;box-sizing:border-box;padding:0 4px;
 }
 .ve-trow{
-  display:flex;align-items:center;height:20px;
+  display:flex;align-items:stretch;min-height:22px;height:auto;
   border-top:1px solid ${C.tableLine};background:#fff;
 }
 .ve-trow > div{
-  display:flex;align-items:center;height:20px;
-  box-sizing:border-box;padding:0 5px;min-width:0;
+  display:flex;align-items:center;min-height:22px;height:auto;
+  box-sizing:border-box;padding:4px 5px;min-width:0;
 }
-.ve-trow .desc{justify-content:flex-start;}
+.ve-trow .desc{justify-content:flex-start;align-items:flex-start;}
 .ve-trow .item,.ve-trow .qty,.ve-thead .item,.ve-thead .qty{justify-content:center;}
 .cell-txt{
   display:block;width:100%;
-  font-size:9px;line-height:1.25;font-weight:400;
-  color:${C.text};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:9px;line-height:1.3;font-weight:400;
+  color:${C.text};overflow:visible;white-space:normal;word-break:break-word;
 }
 .ve-thead .cell-txt{
   color:#fff;font-weight:700;font-size:9px;line-height:1;text-align:center;
+  white-space:nowrap;overflow:hidden;
 }
 .cell-txt.c{color:${C.primary};font-weight:600;text-align:center;}
 .ve-thead .item,.ve-trow .item{width:12%;flex-shrink:0;}
 .ve-thead .desc,.ve-trow .desc{width:62%;flex:1;min-width:0;}
 .ve-thead .qty,.ve-trow .qty{width:26%;flex-shrink:0;}
-.ve-push{flex:1 1 auto;min-height:10px;}
+.ve-push{flex:1 1 auto;min-height:8px;}
+.ve-page-note{font-size:8px;color:${C.muted};margin:0 8px 6px;font-style:italic;}
 
 .ve-2col{display:flex;gap:5px;margin-bottom:5px;}
 .ve-2col > *{flex:1;min-width:0;}
@@ -375,33 +379,8 @@ ${fontFaceCss()}
 `;
   }
 
-  function buildPageHtml(orc, cliente, empresa, bannerUrl) {
-    const servicos = (orc.itens || []).filter((i) => i.tipo === "servico");
-    const materiais = (orc.itens || []).filter((i) => i.tipo !== "servico");
-    const formas = orc.formasPagamento || [];
-    const mark = (id) => (formas.includes(id) ? "✓" : "");
-
-    const state = typeof getState === "function" ? getState() : undefined;
-    const total =
-      typeof orcamentoTotalComNf === "function"
-        ? orcamentoTotalComNf(orc, state)
-        : Math.max(
-            0,
-            (orc.itens || []).reduce((s, i) => s + Number(i.qtd || 0) * Number(i.preco || 0), 0) -
-              Number(orc.desconto || 0)
-          );
-    const totalLabel =
-      typeof money === "function"
-        ? money(total)
-        : `R$ ${Number(total || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
-    const fone = empresa?.telefone || "(27) 99617-5219";
-    const garantiaMeses = orc.garantiaMeses || 3;
-    const validade = orc.validade != null ? orc.validade : 15;
-
+  function pageHeaderHtml(orc, bannerUrl, subtitle) {
     return `
-<div class="ve-page">
-  <div class="ve-page-inner">
   <div class="ve-hdr">
     <div class="ve-logo-wrap">
       <img class="ve-logo" src="${logoUrl()}" alt="voltES" crossorigin="anonymous"/>
@@ -413,10 +392,73 @@ ${fontFaceCss()}
         <h1>ORÇAMENTO</h1>
         <p>Nº: ${esc(orc.codigo || "—")}</p>
         <p>DATA: ${esc(formatDate(orc.data))}</p>
-        <p class="val">VALIDADE DA PROPOSTA: ${esc(validade)} DIAS</p>
+        <p class="val">${esc(subtitle || `VALIDADE DA PROPOSTA: ${orc.validade != null ? orc.validade : 15} DIAS`)}</p>
       </div>
     </div>
+  </div>`;
+  }
+
+  function pageFooterHtml(fone) {
+    return `
+  <div class="ve-contact">
+    <div class="left">
+      <span class="pi">${svgIcon("phone", 14)}</span>
+      <span class="fone">${esc(fone)}</span>
+    </div>
+    <div class="right">
+      <span class="bolt"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14"><path fill="${C.secondary}" d="M13 2 3 14h8l-1 8 10-12h-8l1-8z"/></svg></span>
+      <div class="slogan">ENERGIA QUE CONECTA,<br/>QUALIDADE QUE <b>TRANSFORMA.</b></div>
+    </div>
   </div>
+  </div>
+
+  <div class="ve-foot">
+    <div class="cell"><span class="fi">${svgIcon("zap", 16)}</span><span class="ft">INSTALAÇÕES<br/>ELÉTRICAS</span></div>
+    <div class="cell"><span class="fi">${svgIcon("cog", 16)}</span><span class="ft">MANUTENÇÃO<br/>PREVENTIVA</span></div>
+    <div class="cell"><span class="fi">${svgIcon("file", 16)}</span><span class="ft">PROJETOS<br/>ELÉTRICOS</span></div>
+    <div class="cell"><span class="fi">${svgIcon("building", 16)}</span><span class="ft">ADEQUAÇÃO<br/>NBR 5410</span></div>
+    <div class="cell"><span class="fi">${svgIcon("badge", 16)}</span><span class="ft">SEGURANÇA E<br/>QUALIDADE</span></div>
+    <div class="cell"><span class="fi">${svgIcon("headset", 16)}</span><span class="ft">ATENDIMENTO<br/>ESPECIALIZADO</span></div>
+  </div>`;
+  }
+
+  function buildPageHtml(orc, cliente, empresa, bannerUrl) {
+    const incluirMat = orc.incluirMateriaisNoPdf !== false;
+    const servicos = (orc.itens || []).filter((i) => i.tipo === "servico");
+    const materiais = incluirMat
+      ? (orc.itens || []).filter((i) => i.tipo !== "servico")
+      : [];
+    const formas = orc.formasPagamento || [];
+    const mark = (id) => (formas.includes(id) ? "✓" : "");
+
+    const state = typeof getState === "function" ? getState() : undefined;
+    const orcPdf = {
+      ...orc,
+      itens: incluirMat ? orc.itens : servicos
+    };
+    const total =
+      typeof orcamentoTotalComNf === "function"
+        ? orcamentoTotalComNf(orcPdf, state)
+        : Math.max(
+            0,
+            (orcPdf.itens || []).reduce((s, i) => s + Number(i.qtd || 0) * Number(i.preco || 0), 0) -
+              Number(orc.desconto || 0)
+          );
+    const totalLabel =
+      typeof money === "function"
+        ? money(total)
+        : `R$ ${Number(total || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+    const fone = empresa?.telefone || "(27) 99617-5219";
+    const garantiaMeses = orc.garantiaMeses || 3;
+    const validade = orc.validade != null ? orc.validade : 15;
+    const minServ = Math.max(8, Math.min(14, servicos.length || 8));
+    const minMat = Math.max(10, Math.min(22, materiais.length || 10));
+
+    const page1 = `
+<div class="ve-page" data-pdf-page="1">
+  <div class="ve-page-inner">
+  ${pageHeaderHtml(orc, bannerUrl, `VALIDADE DA PROPOSTA: ${validade} DIAS`)}
 
   <div class="ve-main">
     <div class="ve-box ve-box-pad">
@@ -433,13 +475,15 @@ ${fontFaceCss()}
     </div>
 
     <div class="ve-box ve-box-tbl">
-      <div class="ve-title">${badge("wrench", false)} DESCRIÇÃO DOS SERVIÇOS</div>
-      ${tableBlock(servicos, 10)}
-    </div>
-
-    <div class="ve-box ve-box-tbl">
-      <div class="ve-title">${badge("cart", false)} MATERIAIS E EQUIPAMENTOS</div>
-      ${tableBlock(materiais, 10)}
+      <div class="ve-title" style="padding:5px 9px 0">${badge("wrench", false)} DESCRIÇÃO DOS SERVIÇOS</div>
+      ${tableBlock(servicos, minServ)}
+      ${
+        !incluirMat
+          ? `<p class="ve-page-note">Proposta somente de mão de obra — materiais não inclusos neste PDF.</p>`
+          : materiais.length
+            ? `<p class="ve-page-note">Lista de materiais na página seguinte.</p>`
+            : ""
+      }
     </div>
 
     <div class="ve-2col">
@@ -487,31 +531,63 @@ ${fontFaceCss()}
     </div>
   </div>
 
-  <div class="ve-contact">
-    <div class="left">
-      <span class="pi">${svgIcon("phone", 14)}</span>
-      <span class="fone">${esc(fone)}</span>
+  ${pageFooterHtml(fone)}
+</div>`;
+
+    if (!incluirMat || !materiais.length) return page1;
+
+    const page2 = `
+<div class="ve-page" data-pdf-page="2">
+  <div class="ve-page-inner">
+  ${pageHeaderHtml(orc, bannerUrl, "MATERIAIS E EQUIPAMENTOS")}
+
+  <div class="ve-main">
+    <div class="ve-box ve-box-tbl" style="flex:1;display:flex;flex-direction:column;min-height:0">
+      <div class="ve-title" style="padding:5px 9px 0">${badge("cart", false)} MATERIAIS E EQUIPAMENTOS</div>
+      <p class="ve-page-note">Continuação do orçamento ${esc(orc.codigo || "")} — apenas materiais (mão de obra na página 1).</p>
+      ${tableBlock(materiais, minMat)}
     </div>
-    <div class="right">
-      <span class="bolt"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14"><path fill="${C.secondary}" d="M13 2 3 14h8l-1 8 10-12h-8l1-8z"/></svg></span>
-      <div class="slogan">ENERGIA QUE CONECTA,<br/>QUALIDADE QUE <b>TRANSFORMA.</b></div>
-    </div>
-  </div>
+    <div class="ve-push"></div>
   </div>
 
-  <div class="ve-foot">
-    <div class="cell"><span class="fi">${svgIcon("zap", 16)}</span><span class="ft">INSTALAÇÕES<br/>ELÉTRICAS</span></div>
-    <div class="cell"><span class="fi">${svgIcon("cog", 16)}</span><span class="ft">MANUTENÇÃO<br/>PREVENTIVA</span></div>
-    <div class="cell"><span class="fi">${svgIcon("file", 16)}</span><span class="ft">PROJETOS<br/>ELÉTRICOS</span></div>
-    <div class="cell"><span class="fi">${svgIcon("building", 16)}</span><span class="ft">ADEQUAÇÃO<br/>NBR 5410</span></div>
-    <div class="cell"><span class="fi">${svgIcon("badge", 16)}</span><span class="ft">SEGURANÇA E<br/>QUALIDADE</span></div>
-    <div class="cell"><span class="fi">${svgIcon("headset", 16)}</span><span class="ft">ATENDIMENTO<br/>ESPECIALIZADO</span></div>
-  </div>
+  ${pageFooterHtml(fone)}
 </div>`;
+
+    return page1 + page2;
+  }
+
+  async function capturePage(pageEl) {
+    const html2canvas = ensureHtml2Canvas();
+    return html2canvas(pageEl, {
+      scale: 2,
+      useCORS: true,
+      allowTaint: true,
+      backgroundColor: "#ffffff",
+      logging: false,
+      width: A4_W,
+      height: A4_H,
+      windowWidth: A4_W,
+      windowHeight: A4_H,
+      scrollX: 0,
+      scrollY: 0,
+      onclone: (doc) => {
+        const h = doc.getElementById("voltes-pdf-host");
+        if (h) {
+          h.style.opacity = "1";
+          h.style.left = "0";
+          h.style.top = "0";
+        }
+        doc.querySelectorAll(".ve-page").forEach((p) => {
+          p.style.transform = "none";
+          p.style.width = `${A4_W}px`;
+          p.style.height = `${A4_H}px`;
+        });
+      }
+    });
   }
 
   async function orcamento(orc, cliente, empresa) {
-    const html2canvas = ensureHtml2Canvas();
+    ensureHtml2Canvas();
     const jsPDF = ensureJsPdf();
 
     document.getElementById("voltes-pdf-host")?.remove();
@@ -531,8 +607,8 @@ ${fontFaceCss()}
     host.innerHTML = buildPageHtml(orc, cliente, empresa, bannerUrl);
     document.body.appendChild(host);
 
-    const page = host.querySelector(".ve-page");
-    if (!page) {
+    const pages = [...host.querySelectorAll(".ve-page")];
+    if (!pages.length) {
       host.remove();
       styleEl.remove();
       throw new Error("Falha ao montar o layout do orçamento.");
@@ -550,37 +626,12 @@ ${fontFaceCss()}
     window.scrollTo(0, 0);
 
     try {
-      // Captura a página A4 fixa (sem scale — scale cortava o rodapé)
-      const canvas = await html2canvas(page, {
-        scale: 2,
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: "#ffffff",
-        logging: false,
-        width: A4_W,
-        height: A4_H,
-        windowWidth: A4_W,
-        windowHeight: A4_H,
-        scrollX: 0,
-        scrollY: 0,
-        onclone: (doc) => {
-          const h = doc.getElementById("voltes-pdf-host");
-          if (h) {
-            h.style.opacity = "1";
-            h.style.left = "0";
-            h.style.top = "0";
-          }
-          const p = doc.querySelector(".ve-page");
-          if (p) {
-            p.style.transform = "none";
-            p.style.width = `${A4_W}px`;
-            p.style.height = `${A4_H}px`;
-          }
-        }
-      });
-
       const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait", compress: true });
-      doc.addImage(canvas.toDataURL("image/jpeg", 0.98), "JPEG", 0, 0, 210, 297, undefined, "FAST");
+      for (let i = 0; i < pages.length; i++) {
+        const canvas = await capturePage(pages[i]);
+        if (i > 0) doc.addPage();
+        doc.addImage(canvas.toDataURL("image/jpeg", 0.98), "JPEG", 0, 0, 210, 297, undefined, "FAST");
+      }
       doc.save(`${orc.codigo || "orcamento"}.pdf`);
     } finally {
       window.scrollTo(prevX, prevY);

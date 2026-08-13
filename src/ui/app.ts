@@ -513,6 +513,7 @@ export function initApp() {
       formasPagamento: ["pix"],
       formaPagamentoObs: "",
       garantiaMeses: 3,
+      incluirMateriaisNoPdf: true,
       itens: []
     };
     let itens = (o.itens || []).map((i) => ({
@@ -556,6 +557,19 @@ export function initApp() {
       const nfPct = orcamentoNfPercent(draft, getState());
       const nfValor = orcamentoNfValor(draft, getState());
       const totalCliente = base + nfValor;
+      const incluiMatPdf = document.getElementById("oIncluiMat")?.checked !== false;
+      const basePdf = incluiMatPdf
+        ? base
+        : Math.max(
+            0,
+            itens
+              .filter((i) => i.tipo === "servico")
+              .reduce((t, i) => t + i.qtd * i.preco, 0) - desconto
+          );
+      const nfPdf = incluiMatPdf
+        ? nfValor
+        : basePdf * (nfPct / 100);
+      const totalPdf = basePdf + nfPdf;
       box.innerHTML = `
         <div class="line-items">
           ${itens.map((item, idx) => {
@@ -591,7 +605,12 @@ export function initApp() {
               ? `<div class="row" style="color:var(--warn)"><span>NF ${nfPct}% embutida — ${getEmissorNf(emissorId, getState())?.nome || "emissor"} (só você)</span><span>${money(nfValor)}</span></div>`
               : ""
           }
-          <div class="row total"><span>Total no PDF (cliente)</span><span>${money(totalCliente)}</span></div>
+          <div class="row total"><span>Total no PDF (cliente)${!incluiMatPdf ? " · só serviços" : ""}</span><span>${money(totalPdf)}</span></div>
+          ${
+            !incluiMatPdf && totalCliente !== totalPdf
+              ? `<div class="row" style="color:var(--text-dim)"><span>Total interno (c/ materiais)</span><span>${money(totalCliente)}</span></div>`
+              : ""
+          }
         </div>
       `;
       box.querySelectorAll("[data-qtd]").forEach((inp) => {
@@ -691,6 +710,12 @@ export function initApp() {
           </div>
         </div>
         <div class="field full"><label>Detalhe da forma de pagamento</label><input id="oPagObs" value="${o.formaPagamentoObs || ""}" placeholder="Ex: 50% entrada + 50% na conclusão" /></div>
+        <div class="field full">
+          <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:.9rem;color:var(--text)">
+            <input type="checkbox" id="oIncluiMat" style="margin-top:3px" ${o.incluirMateriaisNoPdf !== false ? "checked" : ""} />
+            <span><strong>Incluir materiais no PDF</strong><br/><span class="hint">Marcado: pág. 1 serviços · pág. 2 materiais. Desmarcado: só mão de obra (total do PDF sem materiais).</span></span>
+          </label>
+        </div>
         <div class="field full"><label>Observações</label><textarea id="oObs">${o.observacoes || ""}</textarea></div>
       </div>
 
@@ -737,6 +762,7 @@ export function initApp() {
 
     renderItens();
     document.getElementById("oDesc").oninput = renderItens;
+    document.getElementById("oIncluiMat")?.addEventListener("change", renderItens);
     document.getElementById("oNotaFiscal").onchange = () => {
       syncNfEmissorUI();
       renderItens();
@@ -820,6 +846,7 @@ export function initApp() {
         prazo: document.getElementById("oPrazo").value.trim(),
         desconto: Number(document.getElementById("oDesc").value) || 0,
         garantiaMeses: Number(document.getElementById("oGarantia").value) || 3,
+        incluirMateriaisNoPdf: document.getElementById("oIncluiMat")?.checked !== false,
         formasPagamento: [...document.querySelectorAll(".oPag:checked")].map((el) => el.value),
         formaPagamentoObs: document.getElementById("oPagObs").value.trim(),
         observacoes: document.getElementById("oObs").value.trim(),
@@ -2035,6 +2062,7 @@ export function initApp() {
                 `Gerado do projeto elétrico "${proj.nome}". Serviços e materiais conforme a planta (NBR 5410 auxiliar). ${analise.disclaimer || ""}`,
               nf: "nao",
               precoModo: modo,
+              incluirMateriaisNoPdf: true,
               itens: [...itensServ, ...itensMat],
               status: "pendente",
               origem: "projeto-eletrico",
