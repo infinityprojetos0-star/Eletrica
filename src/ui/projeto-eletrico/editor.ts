@@ -329,6 +329,8 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
     let selectedId = null;
     let selectedKind = null;
     let selectedCircuitId = null; // highlight de caminho do circuito
+    /** @type {{ size?: number, localId?: string } | null} */
+    let selectedWago = null; // highlight de locais Wago na planta
     let hover = null;
     let lengthBuffer = "";
     let hotkeys = loadHotkeys();
@@ -554,7 +556,10 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
 
     function setTool(t, tipo, arch) {
       tool = t;
-      if (t === "conduit") selectedCircuitId = null; // só conduítes, sem caminhos de circuito
+      if (t === "conduit") {
+        selectedCircuitId = null; // só conduítes, sem caminhos de circuito
+        selectedWago = null;
+      }
       if (tipo) {
         placeTipo = tipo;
         placePreset = null;
@@ -2831,6 +2836,16 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
       // Conduítes: no modo "conduíte" só o tubo (sem fios/caminhos de circuito)
       const conduitMode = tool === "conduit" || !!conduitDraft;
       const hasCircFilter = !!selectedCircuitId && !conduitMode;
+      const hasWagoFilter = !!selectedWago && !conduitMode && !hasCircFilter;
+      const wagoLocaisAtivos = hasWagoFilter
+        ? (projeto.lastAnalise?.wago?.locais || []).filter((l) => {
+            if (selectedWago.localId) return l.id === selectedWago.localId;
+            return Number(l.size) === Number(selectedWago.size);
+          })
+        : [];
+      const wagoPontoIds = new Set(
+        wagoLocaisAtivos.flatMap((l) => l.pontoIds || []).filter(Boolean)
+      );
       const WIRE_GAP_M = 0.045;
 
       projeto.conduits.forEach((c) => {
@@ -2961,9 +2976,51 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
           } else {
             highlight = true;
           }
+        } else if (hasWagoFilter) {
+          if (!wagoPontoIds.has(n.id)) {
+            ctx2.save();
+            ctx2.globalAlpha = 0.18;
+            drawNbrSymbol(ctx2, n, ppm, false, "#888", projeto.symbolScale);
+            ctx2.restore();
+            return;
+          }
+          stroke = "#ff6f00";
+          highlight = true;
         }
         drawNbrSymbol(ctx2, n, ppm, highlight, stroke, projeto.symbolScale);
       });
+
+      // Marcadores Wago selecionados (conferência na planta)
+      if (hasWagoFilter && wagoLocaisAtivos.length) {
+        wagoLocaisAtivos.forEach((loc) => {
+          let x = loc.x;
+          let y = loc.y;
+          if ((!Number.isFinite(x) || !Number.isFinite(y)) && loc.pontoIds?.[0]) {
+            const pt = (projeto.points || []).find((p) => p.id === loc.pontoIds[0]);
+            if (pt) {
+              x = pt.x;
+              y = pt.y;
+            }
+          }
+          if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+          const px = x * ppm;
+          const py = y * ppm;
+          ctx2.save();
+          ctx2.beginPath();
+          ctx2.arc(px, py, 14, 0, Math.PI * 2);
+          ctx2.fillStyle = "rgba(255, 111, 0, 0.22)";
+          ctx2.fill();
+          ctx2.strokeStyle = "#ff6f00";
+          ctx2.lineWidth = 2.5;
+          ctx2.stroke();
+          ctx2.fillStyle = "#e65100";
+          ctx2.font = "bold 11px Segoe UI, sans-serif";
+          ctx2.textAlign = "center";
+          ctx2.textBaseline = "bottom";
+          ctx2.fillText(`Wago ${loc.size}P ×${loc.qtd}`, px, py - 16);
+          ctx2.restore();
+        });
+      }
 
       const drawDim = (a, b, color) => {
         const len = dist(a, b);
@@ -3228,43 +3285,64 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
           </div>`
         : `<p class="hint">Rode a análise para ver o balanceamento de fases.</p>`;
 
-      const wagoHtml = a?.wago?.porPolos
-        ? `<ul class="pe-prot-list">
+      const wago = a?.wago;
+      const wagoLocais = wago?.locais || [];
+      const wagoHtml = wago?.porPolos
+        ? `<p class="hint" style="margin-bottom:8px">Clique no Wago (ou no local) para marcar na planta · Total <strong>${wago.unidades || 0}</strong> un · ${wago.caixas || 0} caixa(s)</p>
+          <div class="pe-wago-grid">
             ${[2, 3, 5, 10]
               .map((pol) => {
-                const q = Number(a.wago.porPolos[pol]) || 0;
+                const q = Number(wago.porPolos[pol]) || 0;
                 if (!q) return "";
-                return `<li><strong>Wago ${pol} pólos</strong> · <strong>${q}</strong> un</li>`;
+                const active =
+                  selectedWago &&
+                  !selectedWago.localId &&
+                  Number(selectedWago.size) === pol;
+                const locs = wagoLocais.filter((l) => Number(l.size) === pol);
+                return `<div class="pe-wago-card ${active ? "active" : ""}">
+                  <button type="button" class="pe-wago-btn" data-wago-size="${pol}">
+                    <strong>Wago ${pol} pólos</strong>
+                    <span class="pe-wago-qtd">${q} un</span>
+                    <span class="hint">${locs.length} local(is) na planta</span>
+                  </button>
+                  <div class="pe-wago-locs">
+                    ${locs
+                      .map((l) => {
+                        const locActive = selectedWago?.localId === l.id;
+                        return `<button type="button" class="pe-wago-loc ${locActive ? "active" : ""}" data-wago-local="${escapeHtml(l.id)}" title="${escapeHtml(l.detalhe || l.label || "")}">
+                          <span>${escapeHtml(l.circuitoId || "—")} · ${escapeHtml(l.label || l.origem || "local")}</span>
+                          <strong>×${l.qtd}</strong>
+                        </button>`;
+                      })
+                      .join("")}
+                  </div>
+                </div>`;
               })
               .filter(Boolean)
               .join("")}
-          </ul>
-          <p class="hint">Conta pontas de cabo (chega/sai/dispositivo). 4 pontas → Wago 5P. Total ${a.wago.unidades || 0} un</p>
-          ${
-            a.wago.detalhes?.length
-              ? `<p class="hint">${a.wago.detalhes.map((d) => escapeHtml(d)).join(" · ")}</p>`
-              : ""
-          }`
-        : a?.wago
-          ? `<p class="hint">${escapeHtml(a.wago.nota || "")}</p>`
+          </div>`
+        : wago
+          ? `<p class="hint">${escapeHtml(wago.nota || "")}</p>`
           : "";
 
       const matHtml = a?.materiais?.length
         ? `<p class="hint" style="margin-bottom:6px">${a.materiais.length} item(ns) · circuitos ${escapeHtml(
             (a.circuits || []).map((c) => c.id).join(", ") || "—"
           )}</p>
+          <div class="pe-mat-wrap">
           <table class="pe-mat"><thead><tr><th>Item</th><th class="pe-mat-qtd">Qtd</th></tr></thead><tbody>
           ${a.materiais
             .map((m) => {
               const meta = [m.bitola != null ? `${m.bitola} mm²` : "", m.cor || ""]
                 .filter(Boolean)
                 .join(" · ");
-              return `<tr><td>${escapeHtml(m.nome)}${
+              return `<tr><td><div class="pe-mat-nome">${escapeHtml(m.nome)}</div>${
                 meta ? `<div class="hint">${escapeHtml(meta)}</div>` : ""
-              }<div class="hint">${escapeHtml(m.nota || "")}</div></td><td class="pe-mat-qtd"><strong>${m.qtd}</strong> ${escapeHtml(m.unidade || "")}</td></tr>`;
+              }${m.nota ? `<div class="hint pe-mat-nota">${escapeHtml(m.nota)}</div>` : ""}</td><td class="pe-mat-qtd"><strong>${m.qtd}</strong> ${escapeHtml(m.unidade || "")}</td></tr>`;
             })
             .join("")}
           </tbody></table>
+          </div>
           <button type="button" class="btn btn-primary btn-sm" id="peOrc" style="margin-top:10px">Gerar orçamento</button>`
         : "";
 
@@ -3306,8 +3384,11 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
             ${matCircHtml}
           </div>
           <div class="pe-side-block">
+            <h3>Wagos</h3>
+            ${wagoHtml || `<p class="hint">Rode a análise para estimar Wagos.</p>`}
+          </div>
+          <div class="pe-side-block">
             <h3>Materiais (total)</h3>
-            ${wagoHtml}
             ${matHtml || `<p class="hint">Rode a análise para gerar a lista.</p>`}
           </div>
           ${
@@ -3323,12 +3404,54 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
         el.onclick = () => {
           const id = el.dataset.circ;
           selectedCircuitId = selectedCircuitId === id ? null : id;
+          selectedWago = null;
           paint();
           renderSide();
           ctx.toast?.(
             selectedCircuitId
               ? `Caminho e materiais do ${selectedCircuitId}`
               : "Todos os caminhos"
+          );
+        };
+      });
+      analysis.querySelectorAll(".pe-wago-btn[data-wago-size]").forEach((el) => {
+        el.onclick = () => {
+          const size = Number(el.dataset.wagoSize);
+          selectedCircuitId = null;
+          if (selectedWago && !selectedWago.localId && Number(selectedWago.size) === size) {
+            selectedWago = null;
+          } else {
+            selectedWago = { size };
+          }
+          paint();
+          renderSide();
+          const n = (projeto.lastAnalise?.wago?.locais || []).filter(
+            (l) => Number(l.size) === size
+          ).length;
+          ctx.toast?.(
+            selectedWago
+              ? `Wago ${size}P · ${n} local(is) na planta`
+              : "Seleção de Wago limpa"
+          );
+        };
+      });
+      analysis.querySelectorAll(".pe-wago-loc[data-wago-local]").forEach((el) => {
+        el.onclick = (ev) => {
+          ev.stopPropagation();
+          const localId = el.dataset.wagoLocal;
+          const loc = (projeto.lastAnalise?.wago?.locais || []).find((l) => l.id === localId);
+          selectedCircuitId = null;
+          if (selectedWago?.localId === localId) {
+            selectedWago = null;
+          } else {
+            selectedWago = { size: loc?.size, localId };
+          }
+          paint();
+          renderSide();
+          ctx.toast?.(
+            selectedWago
+              ? `Wago ${loc?.size}P · ${loc?.label || localId}`
+              : "Seleção de Wago limpa"
           );
         };
       });

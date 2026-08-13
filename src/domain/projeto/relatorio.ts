@@ -322,6 +322,8 @@ function dimensionarProtecao(circuits, sistema, balanceamento) {
  *   pontas = arestas do caminho nesse nó + pontos desse circuito ancorados no nó
  * Cada condutor (F/N/PE…) leva 1 Wago do tamanho escolhido.
  *
+ * Retorna também `locais[]` com coordenadas para highlight na planta.
+ *
  * @param nodeEdgeEnds { [circId]: { [nodeIdx]: number } }
  */
 function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
@@ -329,6 +331,8 @@ function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
   const circById = Object.fromEntries((circuits || []).map((c) => [c.id, c]));
   const points = (projeto.points || []).map((p) => normalizePoint(p));
   const caixas = points.filter((p) => p.tipo && p.tipo !== "qdc");
+  const locais = [];
+  let seq = 0;
 
   const qdc = points.find((p) => p.tipo === "qdc");
   const qdcNode = qdc && graph?.snap ? graph.snap[qdc.id] : -1;
@@ -353,6 +357,11 @@ function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
   let juncoes = 0;
   const detalhes = [];
 
+  const pushLocal = (entry) => {
+    seq += 1;
+    locais.push({ id: `wago-${seq}`, ...entry });
+  };
+
   keys.forEach((k) => {
     const at = k.lastIndexOf("@");
     const cid = k.slice(0, at);
@@ -361,7 +370,6 @@ function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
 
     const edgeEnds = Number(nodeEdgeEnds?.[cid]?.[ni]) || 0;
     const pts = nodeCircPoints[k] || [];
-    // Ignora vértices “de passagem” (2 arestas sem caixa) — não são emenda real
     if (pts.length === 0 && edgeEnds < 3) return;
 
     const nPontas = edgeEnds + pts.length;
@@ -380,32 +388,59 @@ function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
 
     const qtdPorCond = nPontas > 10 ? Math.ceil(nPontas / 10) : 1;
     const useSize = nPontas > 10 ? 10 : size;
-    porPolos[useSize] += nCond * qtdPorCond;
+    const qtd = nCond * qtdPorCond;
+    porPolos[useSize] += qtd;
 
-    if (detalhes.length < 8) {
-      const onde =
-        pts.map((p) => p.tipo).filter(Boolean).join("/") || `nó ${ni}`;
-      detalhes.push(
-        `${cid}@${onde}: ${nPontas} pontas → ${nCond}× Wago ${useSize}P`
-      );
-    }
+    const node = graph?.nodes?.[ni];
+    const anchor = pts[0] || null;
+    const x = Number(anchor?.x ?? node?.x);
+    const y = Number(anchor?.y ?? node?.y);
+    const onde =
+      pts.map((p) => labelPonto(p)).filter(Boolean).join(" · ") ||
+      pts.map((p) => p.tipo).filter(Boolean).join("/") ||
+      `junção nó ${ni}`;
+    const detail = `${cid} · ${onde}: ${nPontas} pontas → ${qtd}× Wago ${useSize}P`;
+    if (detalhes.length < 40) detalhes.push(detail);
+
+    pushLocal({
+      size: useSize,
+      qtd,
+      pontas: nPontas,
+      nCond,
+      circuitoId: cid,
+      pontoIds: pts.map((p) => p.id).filter(Boolean),
+      x: Number.isFinite(x) ? x : null,
+      y: Number.isFinite(y) ? y : null,
+      label: onde,
+      detalhe: detail,
+      origem: "rede"
+    });
   });
 
-  // Derivações DENTRO da caixa (tomada dupla/tripla, interruptor multi-tecla)
-  const bumpWago = (size, qtd, label, pontas) => {
-    if (!size || !qtd) return;
-    porPolos[size] = (porPolos[size] || 0) + qtd;
-    if (detalhes.length < 14) {
-      detalhes.push(`${label}: ${pontas} pontas → ${qtd}× Wago ${size}P`);
-    }
-  };
   caixas.forEach((p) => {
     const interno = wagoInternoCaixa(p);
     if (!interno) return;
-    bumpWago(interno.size, interno.qtd, interno.label, interno.pontas);
-    if (interno.extra) {
-      bumpWago(interno.extra.size, interno.extra.qtd, `${interno.label}+`, interno.extra.pontas || interno.pontas);
-    }
+    const addInterno = (block, suffix = "") => {
+      if (!block?.size || !block.qtd) return;
+      porPolos[block.size] = (porPolos[block.size] || 0) + block.qtd;
+      const detail = `${labelPonto(p)} · ${block.label}${suffix}: ${block.pontas} pontas → ${block.qtd}× Wago ${block.size}P`;
+      if (detalhes.length < 40) detalhes.push(detail);
+      pushLocal({
+        size: block.size,
+        qtd: block.qtd,
+        pontas: block.pontas,
+        nCond: block.qtd,
+        circuitoId: p.circuitoId || null,
+        pontoIds: [p.id],
+        x: Number(p.x),
+        y: Number(p.y),
+        label: `${labelPonto(p)} (${block.label}${suffix})`,
+        detalhe: detail,
+        origem: "interno"
+      });
+    };
+    addInterno(interno);
+    if (interno.extra) addInterno(interno.extra, "+");
   });
 
   const unidades = Object.values(porPolos).reduce((s, n) => s + n, 0);
@@ -420,6 +455,7 @@ function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
     pacotes: 0,
     caixas: caixas.length,
     juncoes,
+    locais,
     detalhes,
     nota:
       resumoPolos ||
