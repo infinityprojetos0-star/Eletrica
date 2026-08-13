@@ -3145,7 +3145,9 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
                 c.polos >= 3 ? "3P" : c.polos >= 2 ? "2P" : "1P";
               const rot = c.roteamento?.modelo;
               const rotHint =
-                rot === "iluminacao-laje-retorno"
+                rot === "iluminacao-inteligente-neutro"
+                  ? " · inteligente (N↓)"
+                  : rot === "iluminacao-laje-retorno"
                   ? " · laje + retorno"
                   : rot === "laje-descida"
                     ? " · laje→descida"

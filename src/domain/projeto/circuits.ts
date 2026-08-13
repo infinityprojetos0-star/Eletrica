@@ -21,7 +21,8 @@ import {
   CORES_CIRCUITO,
   SNAP_M,
   POINT_LINK_M,
-  CONDUIT_JOIN_M
+  CONDUIT_JOIN_M,
+  interruptorUsaNeutro
 } from "./types";
 import {
   resolveSistema,
@@ -621,6 +622,7 @@ function polylineLength(verts) {
        * - Neutro (+PE): QDC → lâmpada pela laje
        * - Fase: QDC → lâmpada pela laje, desce até o interruptor
        * - Retorno: sobe do interruptor até a lâmpada
+       * - Interruptor inteligente: neutro do mesmo circuito também desce até o interruptor
        */
       if (circ.tipoId === "iluminacao" && qdc) {
         const lamps = circ.pontos
@@ -629,6 +631,7 @@ function polylineLength(verts) {
         const switches = (circ.interruptores || [])
           .map((pid) => byId[pid])
           .filter(Boolean);
+        let temInteligente = false;
 
         lamps.forEach((lamp) => {
           const laje = pathEntrePontos(qdc.id, lamp.id);
@@ -648,7 +651,7 @@ function polylineLength(verts) {
           laje.edges.forEach((e) => e.conduitId && conduitesDoCirc.add(e.conduitId));
           maxLaje = Math.max(maxLaje, laje.len);
 
-          // Neutro / PE na laje
+          // Neutro / PE na laje (sempre)
           circ.caminhos.push({
             pontoId: lamp.id,
             pontos: laje.pontos,
@@ -717,6 +720,19 @@ function polylineLength(verts) {
               papel: "retorno"
             });
 
+            // Inteligente: neutro do circuito desce até o interruptor (mais metragem + ponta Wago)
+            if (interruptorUsaNeutro(sw.variante)) {
+              temInteligente = true;
+              circ.caminhos.push({
+                pontoId: lamp.id,
+                interruptorId: sw.id,
+                pontos: fasePts,
+                label: `${labelPonto(lamp)} · neutro até ${labelPonto(sw)} (inteligente)`,
+                via: "neutro-laje-descida",
+                papel: "neutro"
+              });
+            }
+
             const lenFase = laje.len + drop.len;
             maxLen = Math.max(maxLen, lenFase);
             sumLen += lenFase;
@@ -725,9 +741,12 @@ function polylineLength(verts) {
         });
 
         circ.roteamento = {
-          modelo: "iluminacao-laje-retorno",
+          modelo: temInteligente
+            ? "iluminacao-inteligente-neutro"
+            : "iluminacao-laje-retorno",
           comprimentoLajeM: maxLaje,
-          comprimentoDescidaM: maxDescida
+          comprimentoDescidaM: maxDescida,
+          neutroNoInterruptor: temInteligente
         };
       } else if (qdc) {
         /*
@@ -863,21 +882,25 @@ function polylineLength(verts) {
       const pd = Math.max(2.2, Number(projeto.peDireitoM) || 2.8);
       const proj3d = { ...projeto, points, peDireitoM: pd };
       let mLaje = 0;
+      let mNeutro = 0;
       let mFase = 0;
       let mRetorno = 0;
       (circ.caminhos || []).forEach((cam) => {
         const L = comprimentoPath3D(cam.pontos || [], proj3d, pd);
         if (!L) return;
-        if (cam.papel === "neutro" || cam.via === "neutro-laje") mLaje = Math.max(mLaje, L);
+        if (cam.via === "neutro-laje") mLaje = Math.max(mLaje, L);
+        if (cam.papel === "neutro") mNeutro = Math.max(mNeutro, L);
         if (cam.papel === "fase" || cam.via === "fase-laje" || cam.via === "fase-laje-descida") {
           mFase = Math.max(mFase, L);
         }
         if (cam.papel === "retorno" || cam.via === "retorno") mRetorno = Math.max(mRetorno, L);
         if (cam.via === "laje-descida" || cam.via === "direto") mFase = Math.max(mFase, L);
       });
+      if (!mNeutro) mNeutro = mLaje;
       if (circ.roteamento) {
         circ.roteamento.comprimentoLajeM = mLaje || circ.roteamento.comprimentoLajeM;
         circ.roteamento.comprimentoDescidaM = mRetorno || circ.roteamento.comprimentoDescidaM;
+        circ.roteamento.comprimentoNeutroM = mNeutro;
       }
 
       const baseConds = condutoresColoridos(polos, incluiPe);
@@ -888,6 +911,11 @@ function polylineLength(verts) {
           if (papel.includes("fase")) {
             return { ...c, metros: Math.ceil((mFase || circ.comprimentoM) * 1.1) };
           }
+          if (papel.includes("neutro")) {
+            // Inteligente: neutro desce ao interruptor → metragem maior
+            return { ...c, metros: Math.ceil((mNeutro || mLaje || circ.comprimentoM) * 1.1) };
+          }
+          // PE permanece na laje até a lâmpada
           return { ...c, metros: Math.ceil((mLaje || circ.comprimentoM) * 1.1) };
         });
         circ.condutores.push({

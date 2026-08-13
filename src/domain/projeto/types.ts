@@ -113,12 +113,25 @@ import { todayISO, uid } from "../../data/catalog";
     { id: "bipolar", label: "Bipolar", simb: "SB", teclas: 2 },
     { id: "dimmer", label: "Dimmer / variador", simb: "D", teclas: 1 },
     { id: "pulsador", label: "Pulsador", simb: "P", teclas: 1 },
-    { id: "sensor_embutido", label: "Com sensor embutido", simb: "SS", teclas: 1 }
+    { id: "sensor_embutido", label: "Com sensor embutido", simb: "SS", teclas: 1 },
+    {
+      id: "inteligente",
+      label: "Inteligente (Wi-Fi / smart)",
+      simb: "SI",
+      teclas: 1,
+      precisaNeutro: true
+    }
   ];
 
   function teclasDoInterruptor(variante) {
     const v = varInterruptor(variante);
     return Math.max(1, Number(v.teclas) || 1);
+  }
+
+  /** Interruptor inteligente / smart: precisa de neutro além de fase e retorno. */
+  function interruptorUsaNeutro(variante) {
+    const v = varInterruptor(variante);
+    return !!(v && v.precisaNeutro);
   }
 
   /** Letras de comando por tecla (a, b, c…) — ligam à lâmpada com a mesma letra. */
@@ -681,5 +694,6 @@ export {
   varInterruptor,
   varLampada,
   teclasDoInterruptor,
+  interruptorUsaNeutro,
   normalizeTensaoV
 };

@@ -9,7 +9,8 @@ import {
   modulosTomada,
   varInterruptor,
   varLampada,
-  teclasDoInterruptor
+  teclasDoInterruptor,
+  interruptorUsaNeutro
 } from "./types";
 
 /** Cores NBR 5410 (identificação de condutores — prática BR) */
@@ -104,15 +105,21 @@ function wagoPolosPorDirecoes(nDirecoes) {
 
 /**
  * Condutores emendados no ponto (cada um leva 1 Wago do mesmo tamanho).
- * Interruptor/sensor: só fase. Demais: F(+fases)+N+PE conforme pólos.
+ * Interruptor comum: só fase. Inteligente: fase + neutro.
+ * Demais: F(+fases)+N+PE conforme pólos.
  */
-function condutoresEmendaNoPonto(tiposPonto, polos) {
+function condutoresEmendaNoPonto(tiposPonto, polos, pontos = []) {
   const tipos = tiposPonto || [];
   if (
     tipos.length > 0 &&
     tipos.every((t) => t === "interruptor" || t === "sensor" || t === "campainha")
   ) {
-    return 1;
+    const usaN = (pontos || []).some(
+      (p) =>
+        (p.tipo === "interruptor" || p.tipo === "conjugado") &&
+        interruptorUsaNeutro(p.variante)
+    );
+    return usaN ? 2 : 1; // +neutro no inteligente
   }
   return nCondutoresOf(polos);
 }
@@ -365,7 +372,8 @@ function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
     const circ = circById[cid];
     const nCond = condutoresEmendaNoPonto(
       pts.map((p) => p.tipo),
-      circ?.polos || 1
+      circ?.polos || 1,
+      pts
     );
     const size = pickWagoSize(nPontas);
     if (!size || nCond < 1) return;
@@ -429,14 +437,16 @@ function wagoInternoCaixa(raw) {
 
   if (p.tipo === "interruptor") {
     const teclas = teclasDoInterruptor(p.variante || "simples");
-    if (teclas < 2) return null;
-    const pontas = teclas + 1; // chega fase + 1 por tecla
+    const usaN = interruptorUsaNeutro(p.variante);
+    // Comum multi-tecla: emenda de fase. Inteligente: +1 ponta do neutro (mesmo 1 tecla).
+    if (teclas < 2 && !usaN) return null;
+    const pontas = teclas + 1 + (usaN ? 1 : 0); // chega fase (+neutro) + 1 por tecla
     const size = pickWagoSize(pontas);
     return {
       size,
-      qtd: 1, // só fase
+      qtd: usaN ? 2 : 1, // fase(+retornos) e neutro
       pontas,
-      label: `int.${teclas}teclas`
+      label: usaN ? "int.inteligente" : `int.${teclas}teclas`
     };
   }
 
@@ -456,18 +466,19 @@ function wagoInternoCaixa(raw) {
   if (p.tipo === "conjugado") {
     const teclas = teclasDoInterruptor(p.variante || "simples");
     const mods = modulosTomada(p.modulos).modulos;
+    const usaN = interruptorUsaNeutro(p.variante);
     const parts = [];
     let main = null;
     let extra = null;
-    if (teclas >= 2) {
-      const pontas = teclas + 1;
+    if (teclas >= 2 || usaN) {
+      const pontas = teclas + 1 + (usaN ? 1 : 0);
       main = {
         size: pickWagoSize(pontas),
-        qtd: 1,
+        qtd: usaN ? 2 : 1,
         pontas,
-        label: `conjugado int${teclas}`
+        label: usaN ? "conjugado int.inteligente" : `conjugado int${teclas}`
       };
-      parts.push(`int${teclas}`);
+      parts.push(usaN ? "intSmart" : `int${teclas}`);
     }
     if (mods >= 2) {
       const pontas = mods + 1;
