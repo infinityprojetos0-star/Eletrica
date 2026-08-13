@@ -841,10 +841,17 @@ export function getEmissorNf(id, state) {
   return getEmissoresNf(state).find((e) => e.id === id) || null;
 }
 
-/** Subtotal − desconto (antes da NF) */
-export function orcamentoBase(orc) {
-  const sub = (orc?.itens || []).reduce((s, i) => s + Number(i.qtd || 0) * Number(i.preco || 0), 0);
-  return Math.max(0, sub - Number(orc?.desconto || 0));
+/** Subtotal − desconto (antes da NF). Inclui despesas de obra 1× se houver. */
+export function orcamentoBase(orc, state) {
+  const itens = (orc?.itens || []).map((i) => sanitizarItemOculto(i));
+  const sub = itens.reduce((s, i) => s + Number(i.qtd || 0) * Number(i.preco || 0), 0);
+  const obra =
+    orc?.despesasObra != null && orc.despesasObra !== ""
+      ? Math.max(0, Number(orc.despesasObra) || 0)
+      : state && temServicoNoOrc({ ...orc, itens })
+        ? custoOcultoGlobal(state)
+        : 0;
+  return Math.max(0, sub + obra - Number(orc?.desconto || 0));
 }
 
 export function orcamentoNfPercent(orc, state) {
@@ -856,30 +863,27 @@ export function orcamentoNfPercent(orc, state) {
 
 /** Valor da NF embutido (oculto no PDF do cliente) */
 export function orcamentoNfValor(orc, state) {
-  const base = orcamentoBase(orc);
+  const base = orcamentoBase(orc, state);
   return base * (orcamentoNfPercent(orc, state) / 100);
 }
 
 /** Total cobrado do cliente = base + NF embutida */
 export function orcamentoTotalComNf(orc, state) {
-  return orcamentoBase(orc) + orcamentoNfValor(orc, state);
+  return orcamentoBase(orc, state) + orcamentoNfValor(orc, state);
 }
 
-/** Despesas globais — valem para QUALQUER serviço */
+/** Despesas globais — 1× por orçamento (não por unidade) */
 export function despesasGlobaisAtivas(state) {
   return (state?.despesasGlobais || []).filter((d) => d && d.ativo !== false && !d._deleted);
 }
 
-/** Específicas de um serviço + globais (deslocamento, alimentação…) */
+/**
+ * Despesas específicas de um serviço (consumíveis etc.).
+ * Globais NÃO entram aqui — vão 1× no orçamento via custoOcultoGlobal.
+ */
 export function despesasDoServico(servicoId, state) {
-  const especificas = servicoId
-    ? (state?.despesasServico || []).filter((d) => d.servicoId === servicoId && !d._deleted)
-    : [];
-  const globais = despesasGlobaisAtivas(state).map((d) => ({
-    ...d,
-    global: true
-  }));
-  return [...globais, ...especificas];
+  if (!servicoId) return [];
+  return (state?.despesasServico || []).filter((d) => d.servicoId === servicoId && !d._deleted);
 }
 
 export function custoOcultoServico(servicoId, state) {
@@ -890,12 +894,53 @@ export function custoOcultoGlobal(state) {
   return despesasGlobaisAtivas(state).reduce((t, d) => t + Number(d.valor || 0), 0);
 }
 
-/** Preço base (mão de obra) + despesas embutidas = valor cobrado do cliente */
+function temServicoNoOrc(orc) {
+  return (orc?.itens || []).some((i) => i.tipo === "servico");
+}
+
+/** IDs seed de despesas globais (legado embutido por unidade) */
+const GLOBAL_DESPESA_IDS = new Set(["dg-deslocamento", "dg-alimentacao"]);
+
+/** Remove globais legadas do unitário e recalcula preco. */
+export function sanitizarItemOculto(item) {
+  if (!item || item.tipo !== "servico") return item;
+  const raw = item.despesasOcultas;
+  let especificas;
+  if (Array.isArray(raw)) {
+    especificas = raw.filter((d) => d && !d.global && !GLOBAL_DESPESA_IDS.has(d.id));
+  } else {
+    especificas = [];
+  }
+  const custoOculto = especificas.reduce((t, d) => t + Number(d.valor || 0), 0);
+  const prevOculto = Number(item.custoOculto || 0);
+  const precoBase =
+    item.precoBase != null && item.precoBase !== ""
+      ? Number(item.precoBase)
+      : Math.max(0, Number(item.preco || 0) - prevOculto);
+  return {
+    ...item,
+    precoBase,
+    custoOculto,
+    despesasOcultas: especificas,
+    preco: precoBase + custoOculto
+  };
+}
+
+/** Valor 1× das despesas de obra (deslocamento/alimentação) para o orçamento. */
+export function despesasObraDoOrcamento(orc, state) {
+  if (orc?.despesasObra != null && orc.despesasObra !== "") {
+    return Math.max(0, Number(orc.despesasObra) || 0);
+  }
+  if (!state || !temServicoNoOrc(orc)) return 0;
+  return custoOcultoGlobal(state);
+}
+
+/** Preço unitário do serviço (mão de obra + extras do serviço; sem globais) */
 export function precoClienteServico(servico, modo, state) {
   return getPrecoByModo(servico, modo) + custoOcultoServico(servico?.id, state);
 }
 
-/** Globais padrão: deslocamento e alimentação (qualquer serviço) */
+/** Globais padrão: deslocamento e alimentação — 1× por orçamento */
 export const SEED_DESPESAS_GLOBAIS = [
   {
     id: "dg-deslocamento",

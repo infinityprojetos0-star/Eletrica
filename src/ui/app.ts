@@ -27,6 +27,7 @@ import {
   despesasGlobaisAtivas,
   custoOcultoServico,
   custoOcultoGlobal,
+  sanitizarItemOculto,
   precoClienteServico,
   faixaPreco
 } from "../data/catalog";
@@ -518,7 +519,7 @@ export function initApp() {
       itens: []
     };
     let itens = (o.itens || []).map((i) => ({
-      ...i,
+      ...sanitizarItemOculto(i),
       precoModo: i.precoModo || modoLocal,
       precoMin: i.precoMin,
       precoMed: i.precoMed ?? i.preco,
@@ -538,16 +539,21 @@ export function initApp() {
     const renderItens = () => {
       const box = document.getElementById("itensBox");
       if (!box) return;
-      const sub = itens.reduce((t, i) => t + i.qtd * i.preco, 0);
-      const ocultoTotal = itens.reduce((t, i) => t + i.qtd * Number(i.custoOculto || 0), 0);
+      itens = itens.map((i) => sanitizarItemOculto(i));
+      const subItens = itens.reduce((t, i) => t + i.qtd * i.preco, 0);
+      const ocultoItens = itens.reduce((t, i) => t + i.qtd * Number(i.custoOculto || 0), 0);
+      const temServ = itens.some((i) => i.tipo === "servico");
+      const obraGlobal = temServ ? custoOcultoGlobal(getState()) : 0;
+      const ocultoTotal = ocultoItens + obraGlobal;
       const desconto = Number(document.getElementById("oDesc")?.value || o.desconto || 0);
-      const base = Math.max(0, sub - desconto);
+      const base = Math.max(0, subItens + obraGlobal - desconto);
       const notaFiscal = document.getElementById("oNotaFiscal")?.value || o.notaFiscal || "a_definir";
       const emissorId =
         document.getElementById("oNfEmissor")?.value || o.nfEmissorId || "nf-propria";
       const draft = {
         itens,
         desconto,
+        despesasObra: obraGlobal,
         notaFiscal,
         nfEmissorId: emissorId,
         nfAliquota:
@@ -559,17 +565,13 @@ export function initApp() {
       const nfValor = orcamentoNfValor(draft, getState());
       const totalCliente = base + nfValor;
       const incluiMatPdf = document.getElementById("oIncluiMat")?.checked !== false;
+      const subServ = itens
+        .filter((i) => i.tipo === "servico")
+        .reduce((t, i) => t + i.qtd * i.preco, 0);
       const basePdf = incluiMatPdf
         ? base
-        : Math.max(
-            0,
-            itens
-              .filter((i) => i.tipo === "servico")
-              .reduce((t, i) => t + i.qtd * i.preco, 0) - desconto
-          );
-      const nfPdf = incluiMatPdf
-        ? nfValor
-        : basePdf * (nfPct / 100);
+        : Math.max(0, subServ + (temServ ? obraGlobal : 0) - desconto);
+      const nfPdf = incluiMatPdf ? nfValor : basePdf * (nfPct / 100);
       const totalPdf = basePdf + nfPdf;
       box.innerHTML = `
         <div class="line-items">
@@ -586,7 +588,7 @@ export function initApp() {
               <div class="line-item-top">
                 <div class="line-item-info">
                   <strong>${item.nome}</strong>
-                  <div class="meta"><span class="badge badge-${item.tipo === "servico" ? "servico" : "produto"}">${item.tipo}</span> · ${precoModoLabel(item.precoModo || modoLocal)} · ${item.unidade || "un"}${oculto > 0 ? ` · <span title="Não aparece no PDF">embutido ${money(oculto)}</span>` : ""}</div>
+                  <div class="meta"><span class="badge badge-${item.tipo === "servico" ? "servico" : "produto"}">${item.tipo}</span> · ${precoModoLabel(item.precoModo || modoLocal)} · ${item.unidade || "un"}${oculto > 0 ? ` · <span title="Extra do serviço — não aparece no PDF">embutido ${money(oculto)}/un</span>` : ""}</div>
                 </div>
                 <input class="line-item-qty" type="number" min="1" step="1" value="${item.qtd}" data-qtd="${idx}" aria-label="Quantidade" />
                 <div class="line-item-total">${money(item.qtd * item.preco)}</div>
@@ -597,8 +599,17 @@ export function initApp() {
           }).join("") || `<div class="empty"><strong>Sem itens</strong>Adicione serviços ou materiais.</div>`}
         </div>
         <div class="totals-box">
-          <div class="row"><span>Subtotal</span><span>${money(sub)}</span></div>
-          ${ocultoTotal > 0 ? `<div class="row" style="color:var(--text-dim)"><span>Custo oculto embutido (só você)</span><span>${money(ocultoTotal)}</span></div>` : ""}
+          <div class="row"><span>Subtotal itens</span><span>${money(subItens)}</span></div>
+          ${
+            obraGlobal > 0
+              ? `<div class="row" style="color:var(--text-dim)"><span>Deslocamento/alimentação (1× obra)</span><span>${money(obraGlobal)}</span></div>`
+              : ""
+          }
+          ${
+            ocultoItens > 0
+              ? `<div class="row" style="color:var(--text-dim)"><span>Extras por serviço (só você)</span><span>${money(ocultoItens)}</span></div>`
+              : ""
+          }
           <div class="row"><span>Desconto</span><span>${money(desconto)}</span></div>
           <div class="row"><span>Base (serviços/materiais)</span><span>${money(base)}</span></div>
           ${
@@ -837,6 +848,10 @@ export function initApp() {
       const emissor = notaFiscal === "sim" ? getEmissorNf(nfEmissorId, getState()) : null;
       const nfAliquota = notaFiscal === "sim" ? Number(emissor?.aliquota) || 0 : 0;
 
+      const itensClean = itens.map((i) => sanitizarItemOculto(i));
+      const temServ = itensClean.some((i) => i.tipo === "servico");
+      const despesasObra = temServ ? custoOcultoGlobal(getState()) : 0;
+
       const data = {
         id: o.id || uid("orc"),
         codigo: o.codigo || nextCodigo("ORC", getState().orcamentos),
@@ -856,7 +871,8 @@ export function initApp() {
         nfEmissorNome: emissor?.nome || "",
         nfAliquota,
         precoModo: modoLocal,
-        itens,
+        despesasObra,
+        itens: itensClean,
         status: o.status || "pendente"
       };
       const list = [...getState().orcamentos];
@@ -1150,7 +1166,7 @@ export function initApp() {
       <div class="hero-note">
         <div>
           <h3>Despesas embutidas (ocultas no PDF)</h3>
-          <p><strong>Deslocamento</strong> e <strong>alimentação</strong> valem para qualquer serviço. Você também pode vincular custos extras a um serviço específico.</p>
+          <p><strong>Deslocamento</strong> e <strong>alimentação</strong> entram <strong>1 vez por orçamento</strong> (não por quantidade). Extras por serviço somam no unitário daquele serviço.</p>
         </div>
       </div>
       <div class="grid grid-4" style="margin-bottom:16px">
@@ -1169,7 +1185,7 @@ export function initApp() {
         <div class="card-header" style="padding:16px 16px 0">
           <div>
             <h3>Despesas em todos os serviços</h3>
-            <p>Deslocamento e alimentação — somam no unitário de qualquer serviço · ocultas no PDF</p>
+            <p>Deslocamento e alimentação — 1× por orçamento · ocultas no PDF</p>
           </div>
           <button class="btn btn-sm btn-secondary" id="btnAddGlobal">+ Global</button>
         </div>
@@ -1922,7 +1938,8 @@ export function initApp() {
             ? Number(getEmissorNf(document.getElementById("ppNfEmissor")?.value, getState())?.aliquota) || 0
             : 0,
         precoModo: modo,
-        itens,
+        despesasObra: itens.some((i) => i.tipo === "servico") ? custoOcultoGlobal(getState()) : 0,
+        itens: itens.map((i) => sanitizarItemOculto(i)),
         status: "pendente",
         origem: "preprojeto"
       };
@@ -2052,6 +2069,7 @@ export function initApp() {
                 nota: m.nota || ""
               };
             });
+            const itensAll = [...itensServ, ...itensMat].map((i) => sanitizarItemOculto(i));
             const data = {
               id: uid("orc"),
               codigo: `ORC-${Date.now().toString(36).toUpperCase()}`,
@@ -2064,7 +2082,8 @@ export function initApp() {
               nf: "nao",
               precoModo: modo,
               incluirMateriaisNoPdf: true,
-              itens: [...itensServ, ...itensMat],
+              despesasObra: itensServ.length ? custoOcultoGlobal(st) : 0,
+              itens: itensAll,
               status: "pendente",
               origem: "projeto-eletrico",
               projetoId: proj.id,
@@ -2354,7 +2373,7 @@ export function initApp() {
         </div>
         <div class="field full" style="color:var(--text-dim);font-size:.82rem">
           Serão adicionados ${mats.length} material(is)${incluiServ ? ` e ${servs.length} serviço(s)` : ""}.
-          Despesas globais (deslocamento/alimentação) entram ao salvar se houver serviços.
+          Despesas de obra (deslocamento/alimentação) entram 1× no total se houver serviços.
         </div>
       </div>
     `, `<button class="btn btn-ghost" id="cancelModal">Cancelar</button><button class="btn btn-primary" id="saveDimOrc">Criar orçamento</button>`);
@@ -2451,7 +2470,8 @@ export function initApp() {
             ? Number(getEmissorNf(document.getElementById("dimNfEmissor")?.value, getState())?.aliquota) || 0
             : 0,
         precoModo: modo,
-        itens,
+        despesasObra: itens.some((i) => i.tipo === "servico") ? custoOcultoGlobal(getState()) : 0,
+        itens: itens.map((i) => sanitizarItemOculto(i)),
         status: "pendente",
         origem: "nbr5410"
       };

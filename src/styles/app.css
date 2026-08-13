@@ -744,6 +744,9 @@ tr:hover td { background: rgba(61,180,255,0.03); }
 .modal-header h2 { font-family: var(--display); font-size: 1.15rem; }
 
 .line-items { display: flex; flex-direction: column; gap: 10px; }
+.line-items > .empty { padding: 20px; }
+#itensBox { display: flex; flex-direction: column; gap: 0; }
+#itensBox .totals-box { margin-top: 12px; flex-shrink: 0; }
 .line-item {
   display: flex;
   flex-direction: column;
