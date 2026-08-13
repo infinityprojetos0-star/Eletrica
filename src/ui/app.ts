@@ -460,13 +460,15 @@ export function initApp() {
     content.querySelectorAll("[data-pdf]").forEach((btn) => {
       btn.onclick = async () => {
         const orc = s.orcamentos.find((o) => o.id === btn.dataset.pdf);
-        const cli = s.clientes.find((c) => c.id === orc.clienteId);
+        if (!orc) return toast("Orçamento não encontrado");
+        const cli = s.clientes.find((c) => c.id === orc.clienteId) || null;
         try {
+          toast("Gerando PDF…");
           await PDF.preloadBrand();
           await PDF.orcamento(orc, cli, s.empresa);
           toast("PDF gerado");
         } catch (e) {
-          toast(e.message);
+          toast(e.message || "Falha ao gerar PDF");
         }
       };
     });
@@ -478,7 +480,7 @@ export function initApp() {
         const orc = list.find((o) => o.id === sel.dataset.status);
         Store.update({ orcamentos: list });
 
-        if (sel.value === "aprovado") {
+        if (sel.value === "aprovado" && orc) {
           const lancamentos = [...getState().lancamentos];
           const exists = lancamentos.some((l) => l.origemId === orc.id);
           if (!exists) {
@@ -2785,12 +2787,18 @@ export function initApp() {
     refreshIcons();
   }
 
+  function setSidebarOpen(open) {
+    sidebar.classList.toggle("open", open);
+    const scrim = document.getElementById("sidebarScrim");
+    if (scrim) scrim.hidden = !open;
+  }
+
   function navigate(view) {
     currentView = view;
     document.querySelectorAll(".nav-item").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.view === view);
     });
-    sidebar.classList.remove("open");
+    setSidebarOpen(false);
     render();
   }
 
@@ -2807,14 +2815,20 @@ export function initApp() {
   modalBackdrop.addEventListener("click", (e) => {
     if (e.target === modalBackdrop) closeModal();
   });
-  document.getElementById("menuToggle").onclick = () => sidebar.classList.toggle("open");
+  document.getElementById("menuToggle").onclick = () => {
+    setSidebarOpen(!sidebar.classList.contains("open"));
+  };
+  document.getElementById("sidebarScrim")?.addEventListener("click", () => setSidebarOpen(false));
   document.getElementById("quickOrcamento").onclick = () => openOrcamentoForm();
   document.getElementById("globalSearch").addEventListener("input", (e) => {
     searchQuery = e.target.value;
     if (["clientes", "orcamentos", "servicos", "produtos"].includes(currentView)) render();
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeModal();
+    if (e.key === "Escape") {
+      closeModal();
+      setSidebarOpen(false);
+    }
   });
 
   // Boot

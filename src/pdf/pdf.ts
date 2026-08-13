@@ -681,8 +681,9 @@ ${fontFaceCss()}
 
   async function capturePage(pageEl) {
     const html2canvas = ensureHtml2Canvas();
+    const isNarrow = typeof window !== "undefined" && window.innerWidth < 900;
     return html2canvas(pageEl, {
-      scale: 2,
+      scale: isNarrow ? 1.35 : 2,
       useCORS: true,
       allowTaint: true,
       backgroundColor: "#ffffff",

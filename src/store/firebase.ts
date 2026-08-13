@@ -37,11 +37,20 @@ export function init() {
 function bindVisibility() {
   if (visibilityBound || typeof document === "undefined") return;
   visibilityBound = true;
+  let hideTimer = null;
   document.addEventListener("visibilitychange", () => {
     const database = getDb();
     if (!database) return;
-    if (document.hidden) database.goOffline();
-    else database.goOnline();
+    if (document.hidden) {
+      // Delay: troca rápida de aba não reconecta/resincroniza tudo
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => {
+        if (document.hidden) database.goOffline();
+      }, 20000);
+    } else {
+      clearTimeout(hideTimer);
+      database.goOnline();
+    }
   });
 }
 

@@ -18,7 +18,7 @@ import { FirebaseApp } from "./firebase";
 
   const OLD_KEYS = ["voltes-data-v1"];
   const ROOT = "voltes";
-  const FLUSH_MS = 500;
+  const FLUSH_MS = 1500;
 
   const USER_LIST_KEYS = [
     "clientes",
@@ -130,6 +130,61 @@ import { FirebaseApp } from "./firebase";
     return rest;
   }
 
+  function slimAnalise(a) {
+    if (!a || typeof a !== "object") return a;
+    return {
+      disclaimer: a.disclaimer,
+      sistema: a.sistema,
+      circuits: Array.isArray(a.circuits)
+        ? a.circuits.map((c) => ({
+            id: c.id,
+            nome: c.nome,
+            tipo: c.tipo,
+            cor: c.cor,
+            Ib: c.Ib,
+            In: c.In,
+            secao: c.secao,
+            polos: c.polos,
+            curva: c.curva,
+            pontoIds: c.pontoIds,
+            comprimentoM: c.comprimentoM
+          }))
+        : undefined,
+      materiais: Array.isArray(a.materiais)
+        ? a.materiais.map((m) => ({
+            refId: m.refId,
+            nome: m.nome,
+            qtd: m.qtd,
+            unidade: m.unidade,
+            preco: m.preco
+          }))
+        : undefined,
+      maoObra: Array.isArray(a.maoObra)
+        ? a.maoObra.map((m) => ({
+            refId: m.refId,
+            nome: m.nome,
+            qtd: m.qtd,
+            unidade: m.unidade,
+            preco: m.preco
+          }))
+        : undefined,
+      wago: a.wago
+        ? {
+            unidades: a.wago.unidades,
+            locais: Array.isArray(a.wago.locais)
+              ? a.wago.locais.map((l) => ({
+                  id: l.id,
+                  pontoId: l.pontoId,
+                  nome: l.nome,
+                  qtd: l.qtd,
+                  polos: l.polos
+                }))
+              : a.wago.locais
+          }
+        : undefined
+    };
+  }
+
   function slimItem(item) {
     if (!item || typeof item !== "object") return item;
     const out = {};
@@ -138,6 +193,11 @@ import { FirebaseApp } from "./firebase";
       if (v == null) return;
       if (typeof v === "string" && v.startsWith("data:")) return;
       if (typeof v === "string" && v.length > 4000) return;
+      // Análise completa (caminhos, points duplicados) é recalculável — nuvem só guarda resumo
+      if (k === "lastAnalise") {
+        out[k] = slimAnalise(v);
+        return;
+      }
       if (typeof v === "object") {
         const nested = slimItem(v);
         if (nested && (Array.isArray(nested) || Object.keys(nested).length)) out[k] = nested;
@@ -420,8 +480,13 @@ import { FirebaseApp } from "./firebase";
       return;
     }
 
-    updates["meta/updatedAt"] = new Date().toISOString();
-    updates["meta/rev"] = now();
+    // Evita write extra de meta a cada flush (só quando há mudança “de negócio”)
+    const needsMetaBump = validPaths.some(
+      (p) => p === "empresa" || !p.startsWith("meta/")
+    );
+    if (needsMetaBump) {
+      updates["meta/updatedAt"] = new Date().toISOString();
+    }
 
     // Garante meta/precoModo válido se estiver no pacote
     if ("meta/precoModo" in updates) {

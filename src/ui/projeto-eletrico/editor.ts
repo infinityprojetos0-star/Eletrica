@@ -336,9 +336,18 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
     let hotkeys = loadHotkeys();
     let capturingHotkeyId = null;
 
-    const save = () => {
+    let saveTimer = null;
+    const save = (immediate = false) => {
       projeto.updatedAt = Date.now();
-      ctx.onSave?.(projeto);
+      const push = () => ctx.onSave?.(projeto);
+      if (immediate) {
+        clearTimeout(saveTimer);
+        push();
+        return;
+      }
+      // Debounce: evita flood no Firebase a cada arraste/clique
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(push, 2800);
     };
 
     function loadHotkeys() {
@@ -460,7 +469,7 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
       projeto.conduits = analise.conduits;
       projeto.sistema = analise.sistema || projeto.sistema || "bi";
       projeto.lastAnalise = analise;
-      save();
+      save(true);
       paint();
       refreshSelectionUI();
       const nCirc = analise.circuits?.length || 0;
@@ -690,7 +699,7 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
 
     function bindChrome() {
       root.querySelector("#peBack").onclick = () => {
-        save();
+        save(true);
         ctx.onBack?.();
       };
       root.querySelector("#peNome").onchange = (e) => {
@@ -741,11 +750,13 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
       root.querySelector("#peAnalisar").onclick = runAnalise;
 
       const canvas = root.querySelector("#peCanvas");
-      canvas.addEventListener("mousedown", onDown);
-      canvas.addEventListener("mousemove", onMove);
+      canvas.style.touchAction = "none";
+      canvas.addEventListener("pointerdown", onDown);
+      canvas.addEventListener("pointermove", onMove);
       canvas.addEventListener("dblclick", onDbl);
-      // mouseup no window: soltar fora do canvas não limpa seleção
-      window.addEventListener("mouseup", onUp);
+      // pointerup no window: soltar fora do canvas não limpa seleção
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
       canvas.addEventListener(
         "wheel",
         (e) => {
@@ -1581,6 +1592,14 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
     }
 
     function onDown(e) {
+      // Mouse: só botão esquerdo (0) ou meio (1 = pan). Touch/pen: button 0.
+      if (e.pointerType === "mouse" && e.button !== 0 && e.button !== 1) return;
+      try {
+        e.currentTarget?.setPointerCapture?.(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      if (e.cancelable) e.preventDefault();
       const canvas = e.currentTarget;
       const w = worldFromEvent(e, canvas);
       if (e.button === 1) {
