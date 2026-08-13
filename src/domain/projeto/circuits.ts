@@ -847,7 +847,11 @@ function polylineLength(verts) {
 
       const polos = resolvePolos(sistema, tensao);
       const fasesCirc = polos >= 3 ? 3 : 1;
-      const incluiPe = true;
+      // Iluminação: PE só se algum ponto de luz marcar aterramentoPe
+      const incluiPe =
+        circ.tipoId === "iluminacao"
+          ? pontosCarga.some((p) => p?.aterramentoPe === true)
+          : true;
       const nCond = condutoresColoridos(polos, incluiPe).length;
 
       // Comprimento 3D pelos caminhos (planta + sobe/desce PD ↔ altura caixa)

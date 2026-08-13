@@ -309,7 +309,11 @@ import { todayISO, uid } from "../../data/catalog";
       out.variante = out.variante || "simples";
       syncComandos(out);
     }
-    if (out.tipo === "lampada") out.variante = out.variante || "ponto";
+    if (out.tipo === "lampada") {
+      out.variante = out.variante || "ponto";
+      /** PE no ponto de luz: padrão não (só neutro/retorno); true = calcula PE */
+      out.aterramentoPe = out.aterramentoPe === true;
+    }
     if (out.tipo === "conjugado") {
       const cj = conjugadoById(out.conjugadoId || "s1_t1");
       out.conjugadoId = cj.id;
@@ -512,6 +516,7 @@ import { todayISO, uid } from "../../data/catalog";
       pt.variante = preset.variante;
       pt.potenciaVA = varLampada(preset.variante).pot;
       pt.tensaoV = 127;
+      if (pt.aterramentoPe !== true) pt.aterramentoPe = false;
       pt.label = labelPonto(pt);
     }
   }
@@ -603,6 +608,7 @@ import { todayISO, uid } from "../../data/catalog";
       base.variante = "ponto";
       base.potenciaVA = 20;
       base.label = "Ponto de luz";
+      base.aterramentoPe = false;
     }
     if (tipo === "conjugado") {
       applyPointPreset(base, { group: "conjugado", conjugadoId: "s1_t1", id: "s1_t1" });

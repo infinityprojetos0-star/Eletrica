@@ -2158,7 +2158,13 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
                   `<option value="${v.id}" ${pt.variante === v.id ? "selected" : ""}>${v.label}</option>`
               ).join("")}</select></label>
               <label>Comando (letra)<input id="pePtInt" maxlength="2" value="${escapeHtml(pt.interruptor || "")}" /></label>
-              <p class="hint">Use a mesma letra do interruptor (ex.: tecla <strong>a</strong> → luz <strong>a</strong>).</p>`
+              <p class="hint">Use a mesma letra do interruptor (ex.: tecla <strong>a</strong> → luz <strong>a</strong>).</p>
+              <label>Aterramento (PE)
+              <select id="pePtPe">
+                <option value="nao" ${pt.aterramentoPe !== true ? "selected" : ""}>Não</option>
+                <option value="sim" ${pt.aterramentoPe === true ? "selected" : ""}>Sim</option>
+              </select></label>
+              <p class="hint">Padrão: só neutro e retorno. Com <strong>Sim</strong>, inclui cabo PE e Wago de aterramento.</p>`
                 : ""
             }
             ${
@@ -2379,6 +2385,7 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
             p.variante = document.getElementById("pePtVar")?.value || "ponto";
             const intEl = document.getElementById("pePtInt");
             if (intEl) p.interruptor = intEl.value.trim().toLowerCase();
+            p.aterramentoPe = document.getElementById("pePtPe")?.value === "sim";
           }
           const circ = document.getElementById("pePtCirc")?.value;
           if (p.tipo !== "tomada") {

@@ -123,8 +123,9 @@ function condutoresEmendaNoPonto(tiposPonto, polos, pontos = []) {
     return usaN ? 2 : 1;
   }
   if (tipos.length > 0 && tipos.every((t) => t === "lampada")) {
-    // Iluminação na passagem: N e PE (fase desce ao interruptor — não é o mesmo 3P)
-    return 2;
+    // Iluminação: neutro sempre; PE só se o ponto pedir aterramento
+    const comPe = (pontos || []).some((p) => p?.aterramentoPe === true);
+    return comPe ? 2 : 1;
   }
   return nCondutoresOf(polos);
 }
@@ -132,15 +133,16 @@ function condutoresEmendaNoPonto(tiposPonto, polos, pontos = []) {
 /**
  * Emenda no ponto de luz (passagem):
  * - Neutro: chega + luminária + segue → Wago 3P (1 un)
- * - PE: idem → Wago 3P (1 un)
+ * - PE: idem → Wago 3P (1 un) só se aterramentoPe = true
  * - Fase: normalmente desce ao interruptor (não conta 3P genérico aqui)
  */
-function wagosPassagemLampada(edgeEnds) {
+function wagosPassagemLampada(edgeEnds, comPe = false) {
   if (edgeEnds < 2) return []; // ponta de ramo: cabo na luminária / sem passagem
-  return [
-    { papel: "Neutro", size: 3, qtd: 1, pontas: 3 },
-    { papel: "PE (aterramento)", size: 3, qtd: 1, pontas: 3 }
-  ];
+  const list = [{ papel: "Neutro", size: 3, qtd: 1, pontas: 3 }];
+  if (comPe) {
+    list.push({ papel: "PE (aterramento)", size: 3, qtd: 1, pontas: 3 });
+  }
+  return list;
 }
 
 /** Escolhe o menor In ≥ ib na tabela. */
@@ -427,7 +429,7 @@ function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
     const soLampadas =
       ptsEmenda.length > 0 && ptsEmenda.every((p) => p.tipo === "lampada");
 
-    // Iluminação: na passagem do ponto de luz → 1×3P Neutro + 1×3P PE
+    // Iluminação: passagem → 1×3P Neutro (+ 1×3P PE se aterramentoPe)
     if (soLampadas && edgeEnds >= 2 && edgeEnds < 3) {
       const node = graph?.nodes?.[ni];
       const anchor = ptsEmenda[0] || pts[0] || null;
@@ -435,7 +437,8 @@ function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
       const y = Number(anchor?.y ?? node?.y);
       const onde =
         ptsEmenda.map((p) => labelPonto(p)).filter(Boolean).join(" · ") || "ponto de luz";
-      wagosPassagemLampada(edgeEnds).forEach((w) => {
+      const comPe = ptsEmenda.some((p) => p?.aterramentoPe === true);
+      wagosPassagemLampada(edgeEnds, comPe).forEach((w) => {
         porPolos[w.size] = (porPolos[w.size] || 0) + w.qtd;
         juncoes += 1;
         const detail = `${cid} · ${onde} · ${w.papel}: ${w.pontas} pontas → ${w.qtd}× Wago ${w.size}P`;
@@ -465,9 +468,11 @@ function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
     juncoes += 1;
 
     const circ = circById[cid];
-    // T de conduíte no ponto de luz: N+PE (2); demais cargas: F+N+PE
+    // T no ponto de luz: Neutro (+PE se aterramentoPe); demais: F+N+PE
     const nCond = soLampadas
-      ? 2
+      ? ptsEmenda.some((p) => p?.aterramentoPe === true)
+        ? 2
+        : 1
       : condutoresEmendaNoPonto(
           ptsEmenda.map((p) => p.tipo),
           circ?.polos || 1,
@@ -490,7 +495,9 @@ function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
       pts.map((p) => labelPonto(p)).filter(Boolean).join(" · ") ||
       `junção nó ${ni}`;
     const papeis = soLampadas
-      ? "Neutro + PE"
+      ? nCond >= 2
+        ? "Neutro + PE"
+        : "Neutro"
       : nCond >= 3
         ? "F+N+PE"
         : "fase";
