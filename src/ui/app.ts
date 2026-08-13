@@ -605,10 +605,10 @@ export function initApp() {
               ? `<div class="row" style="color:var(--warn)"><span>NF ${nfPct}% embutida — ${getEmissorNf(emissorId, getState())?.nome || "emissor"} (só você)</span><span>${money(nfValor)}</span></div>`
               : ""
           }
-          <div class="row total"><span>Total no PDF (cliente)${!incluiMatPdf ? " · só serviços" : ""}</span><span>${money(totalPdf)}</span></div>
+          <div class="row total"><span>Total no PDF (cliente)${!incluiMatPdf ? " · só mão de obra" : ""}</span><span>${money(totalPdf)}</span></div>
           ${
             !incluiMatPdf && totalCliente !== totalPdf
-              ? `<div class="row" style="color:var(--text-dim)"><span>Total interno (c/ materiais)</span><span>${money(totalCliente)}</span></div>`
+              ? `<div class="row" style="color:var(--text-dim)"><span>Materiais (lista no PDF, fora do total)</span><span>${money(totalCliente - totalPdf)}</span></div>`
               : ""
           }
         </div>
@@ -713,7 +713,7 @@ export function initApp() {
         <div class="field full">
           <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:.9rem;color:var(--text)">
             <input type="checkbox" id="oIncluiMat" style="margin-top:3px" ${o.incluirMateriaisNoPdf !== false ? "checked" : ""} />
-            <span><strong>Incluir materiais no PDF</strong><br/><span class="hint">Marcado: pág. 1 serviços · pág. 2 materiais. Desmarcado: só mão de obra (total do PDF sem materiais).</span></span>
+            <span><strong>Somar valor dos materiais no total</strong><br/><span class="hint">Marcado: materiais são seus (entram no valor do PDF). Desmarcado: lista de materiais continua na pág. 2, mas o total fica só com a mão de obra.</span></span>
           </label>
         </div>
         <div class="field full"><label>Observações</label><textarea id="oObs">${o.observacoes || ""}</textarea></div>
