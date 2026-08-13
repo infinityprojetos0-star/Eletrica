@@ -288,6 +288,76 @@ function polylineLength(verts) {
     return { circuits, nextNum: num };
   }
 
+  /** Atualiza circuitoId nos pontos (e módulos) conforme mapa antigo→novo. */
+  function remapCircuitoRefs(points, map) {
+    (points || []).forEach((p) => {
+      if (p.circuitoId && map[p.circuitoId]) p.circuitoId = map[p.circuitoId];
+      if (Array.isArray(p.modulosConfig)) {
+        p.modulosConfig.forEach((m) => {
+          if (m.circuitoId && map[m.circuitoId]) m.circuitoId = map[m.circuitoId];
+        });
+      }
+    });
+  }
+
+  /**
+   * Renumeração sequencial C1…Cn (iluminação → TUG → TUE → cargas).
+   * Evita C7/C11 “pulados” de análises antigas.
+   */
+  function renumerarCircuitos(circuits, points) {
+    const order = { iluminacao: 1, tug: 2, tue: 3, chuveiro: 4, ar: 5, livre: 8 };
+    const sorted = [...circuits].sort((a, b) => {
+      const d = (order[a.tipoId] || 8) - (order[b.tipoId] || 8);
+      if (d) return d;
+      return (a.numero || 0) - (b.numero || 0);
+    });
+    circuits.length = 0;
+    circuits.push(...sorted);
+    const map = {};
+    circuits.forEach((c, i) => {
+      const novo = `C${i + 1}`;
+      map[c.id] = novo;
+      c.id = novo;
+      c.numero = i + 1;
+      c.cor = CORES_CIRCUITO[i % CORES_CIRCUITO.length];
+    });
+    remapCircuitoRefs(points, map);
+    return map;
+  }
+
+  /** Consolida itens iguais somando quantidades. */
+  function consolidarItens(itens) {
+    const bag = {};
+    (itens || []).forEach((it) => {
+      const q = Number(it.qtd);
+      if (!Number.isFinite(q) || q <= 0) return;
+      const k = `${it.refId || ""}|${it.nome}|${it.unidade || "un"}`;
+      if (!bag[k]) {
+        bag[k] = {
+          tipo: it.tipo || "produto",
+          refId: it.refId || null,
+          nome: it.nome,
+          unidade: it.unidade || "un",
+          qtd: 0,
+          preco: Number(it.preco) || 0,
+          notas: []
+        };
+      }
+      bag[k].qtd += q;
+      if (it.nota) bag[k].notas.push(it.nota);
+      if (!bag[k].preco && it.preco) bag[k].preco = Number(it.preco) || 0;
+    });
+    return Object.values(bag).map((b) => ({
+      tipo: b.tipo,
+      refId: b.refId,
+      nome: b.nome,
+      unidade: b.unidade,
+      qtd: b.unidade === "m" || b.unidade === "pct" ? Math.ceil(b.qtd) : Math.round(b.qtd),
+      preco: b.preco,
+      nota: [...new Set(b.notas)].join(" · ")
+    }));
+  }
+
   function analisar(projeto, { produtos, modoPreco } = {}) {
     const uso = projeto.uso === "comercial" ? "comercial" : "residencial";
     const sistema = resolveSistema(projeto);
@@ -307,30 +377,52 @@ function polylineLength(verts) {
     avisos.push(`Sistema elétrico: ${labelSistema(sistema)}.`);
 
     points.forEach((p) => {
-      if (!p.circuitoManual) p.circuitoId = null;
+      if (!p.circuitoManual) {
+        p.circuitoId = null;
+        if (Array.isArray(p.modulosConfig)) {
+          p.modulosConfig.forEach((m) => {
+            if (!p.circuitoManual) m.circuitoId = "";
+          });
+        }
+      }
     });
 
     let nextNum = 1;
     const circuits = [];
 
+    // Manuais: preserva agrupamento, mas já renomeia para C1… sem herdar C11 antigo
     const manuais = {};
+    const oldManualToNew = {};
     points.forEach((p) => {
       if (!p.circuitoManual || !p.circuitoId) return;
-      if (!manuais[p.circuitoId]) {
-        const num = parseInt(String(p.circuitoId).replace(/\D/g, ""), 10) || nextNum;
-        manuais[p.circuitoId] = {
-          id: p.circuitoId,
-          numero: num,
+      const oldId = p.circuitoId;
+      if (!oldManualToNew[oldId]) {
+        const nid = `C${nextNum}`;
+        oldManualToNew[oldId] = nid;
+        manuais[nid] = {
+          id: nid,
+          numero: nextNum,
           tipoId: circKindOf(p) || "livre",
           pontos: [],
           potenciaVA: 0,
-          cor: CORES_CIRCUITO[(num - 1) % CORES_CIRCUITO.length],
+          cor: CORES_CIRCUITO[(nextNum - 1) % CORES_CIRCUITO.length],
           manual: true
         };
-        nextNum = Math.max(nextNum, num + 1);
+        nextNum++;
       }
-      manuais[p.circuitoId].pontos.push(p.id);
-      manuais[p.circuitoId].potenciaVA += cargaPonto(p);
+      const nid = oldManualToNew[oldId];
+      p.circuitoId = nid;
+      manuais[nid].pontos.push(p.id);
+      manuais[nid].potenciaVA += cargaPonto(p);
+    });
+    // Remapeia módulos (tomada dupla/tripla) que apontavam para IDs antigos
+    points.forEach((p) => {
+      if (!Array.isArray(p.modulosConfig)) return;
+      p.modulosConfig.forEach((m) => {
+        if (m.circuitoId && oldManualToNew[m.circuitoId]) {
+          m.circuitoId = oldManualToNew[m.circuitoId];
+        }
+      });
     });
     Object.values(manuais).forEach((c) => circuits.push(c));
 
@@ -381,6 +473,9 @@ function polylineLength(verts) {
         nextNum++;
       });
     });
+
+    // Sempre C1…Cn na ordem tipológica (não herda números altos de análises antigas)
+    renumerarCircuitos(circuits, points);
 
     const graph = buildGraph({ ...projeto, points });
     const qdcNode = qdc ? graph.snap[qdc.id] : -1;
@@ -670,22 +765,43 @@ function polylineLength(verts) {
       });
     }
 
+    // Disjuntores de circuito — agregados por tipo/In com quantidade real
+    const bagDj = {};
     circuits.forEach((circ) => {
       if (!circ.dimensionamento) return;
       const In = circ.disjuntor;
       const polos = circ.polos || 1;
-      const dj =
-        polos >= 2
-          ? find((p) => p.id === "prd-7") || find((p) => /bipolar/i.test(p.nome || ""))
-          : find((p) => p.id === "prd-6") || find((p) => /monopolar/i.test(p.nome || ""));
+      const curva = circ.curva || "C";
+      const k = `${polos}|${In}|${curva}`;
+      if (!bagDj[k]) {
+        const dj =
+          polos >= 2
+            ? find((p) => p.id === "prd-7") || find((p) => /bipolar/i.test(p.nome || ""))
+            : find((p) => p.id === "prd-6") || find((p) => /monopolar/i.test(p.nome || ""));
+        bagDj[k] = {
+          polos,
+          In,
+          curva,
+          qtd: 0,
+          circs: [],
+          bitolas: [],
+          refId: dj?.id || null,
+          preco: dj ? preco(dj) : 0
+        };
+      }
+      bagDj[k].qtd += 1;
+      bagDj[k].circs.push(circ.id);
+      if (circ.bitola) bagDj[k].bitolas.push(`${circ.id}: ${circ.bitola} mm²`);
+    });
+    Object.values(bagDj).forEach((d) => {
       itens.push({
         tipo: "produto",
-        refId: dj?.id || null,
-        nome: `Disjuntor ${polos >= 2 ? "bipolar" : "monopolar"} ${In}A curva ${circ.curva || "C"} (${circ.id})`,
+        refId: d.refId,
+        nome: `Disjuntor ${d.polos >= 2 ? "bipolar" : "monopolar"} ${d.In}A curva ${d.curva}`,
         unidade: "un",
-        qtd: 1,
-        preco: dj ? preco(dj) : 0,
-        nota: `Ib ${circ.ib?.toFixed?.(2) || "—"} A · ${circ.bitola} mm²`
+        qtd: d.qtd,
+        preco: d.preco,
+        nota: `${d.circs.join(", ")} · ${d.bitolas.join("; ")}`
       });
     });
 
@@ -713,7 +829,6 @@ function polylineLength(verts) {
       const drProd =
         find((p) => p.id === "prd-8") ||
         find((p) => /\bdr\b|idr|diferencial/i.test(p.nome || ""));
-      // Agrupa por nome (In/pólos) para a lista consolidada
       const bagDr = {};
       protecao.drs.forEach((d) => {
         const k = d.nome;
@@ -736,14 +851,15 @@ function polylineLength(verts) {
       const dr =
         find((p) => p.id === "prd-8") ||
         find((p) => /\bdr\b|diferencial/i.test(p.nome || ""));
+      const circsDr = circuits.filter((c) => c.dr).map((c) => c.id);
       itens.push({
         tipo: "produto",
         refId: dr?.id || null,
         nome: dr?.nome || "DR 30 mA",
         unidade: "un",
-        qtd: 1,
+        qtd: circsDr.length || 1,
         preco: dr ? preco(dr) : 0,
-        nota: "NBR 5410 — TUG / áreas molhadas"
+        nota: `${circsDr.join(", ") || "TUG / áreas molhadas"} · NBR 5410`
       });
     }
 
@@ -772,7 +888,18 @@ function polylineLength(verts) {
         unidade: "pct",
         qtd: wago.pacotes,
         preco: wag ? preco(wag) : 0,
-        nota: wago.nota
+        nota: `${wago.unidades} conectores · ${wago.nota}`
+      });
+    }
+    if (wago?.unidades > 0) {
+      itens.push({
+        tipo: "produto",
+        refId: null,
+        nome: "Conectores Wago (unidades estimadas)",
+        unidade: "un",
+        qtd: wago.unidades,
+        preco: 0,
+        nota: `${wago.caixas} caixa(s) + ${wago.juncoes} junção(ões) × 3 (F+N+PE)`
       });
     }
 
@@ -783,14 +910,14 @@ function polylineLength(verts) {
     itens.push({
       tipo: "produto",
       refId: quadro?.id || null,
-      nome: quadro?.nome || `Quadro (~${nCirc} circuitos)`,
+      nome: quadro?.nome || `Quadro de distribuição`,
       unidade: "un",
       qtd: 1,
       preco: quadro ? preco(quadro) : 0,
-      nota: `${nCirc} circuitos · ${labelSistema(resolveSistema(projeto))}`
+      nota: `${nCirc} circuito(s) · ${labelSistema(resolveSistema(projeto))}`
     });
 
-    return itens;
+    return consolidarItens(itens);
   }
 
   /* ===================== UI / Editor ===================== */
@@ -808,6 +935,8 @@ export {
   pathEdgesFromPrev,
   pathPointsFromPrev,
   packCircuits,
+  renumerarCircuitos,
+  consolidarItens,
   analisar,
   montarMateriais
 };

@@ -372,7 +372,23 @@ function materiaisDoCircuito(circ, projeto, produtos, modo, wagoShareUn) {
     });
   }
 
-  return itens;
+  // Consolida iguais (ex.: 4 tomadas iguais → qtd 4)
+  const bag = {};
+  itens.forEach((it) => {
+    const k = `${it.refId || ""}|${it.nome}|${it.unidade}`;
+    if (!bag[k]) bag[k] = { ...it, qtd: 0, notas: [] };
+    bag[k].qtd += Number(it.qtd) || 0;
+    if (it.nota) bag[k].notas.push(it.nota);
+  });
+  return Object.values(bag).map((b) => ({
+    tipo: b.tipo,
+    refId: b.refId,
+    nome: b.nome,
+    unidade: b.unidade,
+    qtd: Math.round(b.qtd * 100) / 100,
+    preco: b.preco,
+    nota: [...new Set(b.notas)].join(" · ")
+  }));
 }
 
 function montarMateriaisPorCircuito(projeto, circuits, produtos, modo, wago) {

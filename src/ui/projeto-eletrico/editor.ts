@@ -426,17 +426,17 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
       });
       projeto.points = analise.points;
       projeto.conduits = analise.conduits;
+      projeto.sistema = analise.sistema || projeto.sistema || "bi";
       projeto.lastAnalise = analise;
       save();
       paint();
       refreshSelectionUI();
+      const nCirc = analise.circuits?.length || 0;
+      const nMat = analise.materiais?.length || 0;
+      const ids = (analise.circuits || []).map((c) => c.id).join(", ");
       const comPath = (analise.circuits || []).filter((c) => (c.caminhos || []).length).length;
-      const semPath = (analise.circuits || []).length - comPath;
-      const fiosN = (analise.conduits || []).reduce((n, c) => n + (c.fios?.length || 0), 0);
       ctx.toast?.(
-        semPath > 0
-          ? `Circuitos refeitos: ${analise.circuits.length} · ${comPath} com caminho · ${semPath} sem conduíte até o QDC`
-          : `Circuitos refeitos: ${analise.circuits.length} · ${fiosN} fio(s) nos conduítes`
+        `Circuitos ${ids || "—"} · ${nMat} materiais · ${comPath}/${nCirc} com caminho`
       );
     }
 
@@ -3049,11 +3049,11 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
         : null;
       const matCircHtml =
         circSel?.materiais?.length
-          ? `<table class="pe-mat"><thead><tr><th>Item (${escapeHtml(circSel.id)})</th><th>Qtd</th></tr></thead><tbody>
+          ? `<table class="pe-mat"><thead><tr><th>Item (${escapeHtml(circSel.id)})</th><th class="pe-mat-qtd">Qtd</th></tr></thead><tbody>
             ${circSel.materiais
               .map(
                 (m) =>
-                  `<tr><td>${escapeHtml(m.nome)}<div class="hint">${escapeHtml(m.nota || "")}</div></td><td>${m.qtd} ${m.unidade}</td></tr>`
+                  `<tr><td>${escapeHtml(m.nome)}<div class="hint">${escapeHtml(m.nota || "")}</div></td><td class="pe-mat-qtd"><strong>${m.qtd}</strong> ${escapeHtml(m.unidade || "")}</td></tr>`
               )
               .join("")}
             </tbody></table>`
@@ -3107,11 +3107,14 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
         : "";
 
       const matHtml = a?.materiais?.length
-        ? `<table class="pe-mat"><thead><tr><th>Item</th><th>Qtd</th></tr></thead><tbody>
+        ? `<p class="hint" style="margin-bottom:6px">${a.materiais.length} item(ns) · atualizado com os circuitos ${escapeHtml(
+            (a.circuits || []).map((c) => c.id).join(", ") || "—"
+          )}</p>
+          <table class="pe-mat"><thead><tr><th>Item</th><th class="pe-mat-qtd">Qtd</th></tr></thead><tbody>
           ${a.materiais
             .map(
               (m) =>
-                `<tr><td>${escapeHtml(m.nome)}<div class="hint">${escapeHtml(m.nota || "")}</div></td><td>${m.qtd} ${m.unidade}</td></tr>`
+                `<tr><td>${escapeHtml(m.nome)}<div class="hint">${escapeHtml(m.nota || "")}</div></td><td class="pe-mat-qtd"><strong>${m.qtd}</strong> ${escapeHtml(m.unidade || "")}</td></tr>`
             )
             .join("")}
           </tbody></table>
