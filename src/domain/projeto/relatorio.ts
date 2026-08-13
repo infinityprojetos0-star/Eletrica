@@ -313,14 +313,37 @@ function dimensionarProtecao(circuits, sistema, balanceamento) {
 }
 
 /**
- * Wago pela lógica de pontas de cabo (ex. do usuário):
- * - Neutro no ponto de luz (passa + luminária + segue) → 3 pontas → Wago 3P
- * - Fase no ponto de luz (passa + interruptor + segue) → 3 pontas → Wago 3P
- * - 4 pontas (chega + 2 derivações + segue) → Wago 5P (não existe 4P)
+ * Dispositivo cujo cabo vai direto no borne (sem emenda Wago no ponto final).
+ * Interruptor simples: fase e retorno nos bornes.
+ * Tomada simples no fim do ramo: F/N/PE nos bornes.
+ */
+function dispositivoUsaBorneDireto(p) {
+  if (!p) return false;
+  const n = normalizePoint(p);
+  if (n.tipo === "interruptor") {
+    const teclas = teclasDoInterruptor(n.variante || "simples");
+    // Só multi-tecla / inteligente usam emenda na caixa
+    return teclas < 2 && !interruptorUsaNeutro(n.variante);
+  }
+  if (n.tipo === "tomada") {
+    return modulosTomada(n.modulos).modulos < 2;
+  }
+  if (n.tipo === "conjugado") {
+    const teclas = teclasDoInterruptor(n.variante || "simples");
+    const mods = modulosTomada(n.modulos).modulos;
+    return teclas < 2 && mods < 2 && !interruptorUsaNeutro(n.variante);
+  }
+  if (n.tipo === "sensor" || n.tipo === "campainha") return true;
+  return false;
+}
+
+/**
+ * Wago só onde há DERIVAÇÃO / emenda de cabos:
+ * - Junção de conduíte (T: ≥3 arestas) ou passagem com luminária/carga (passa + segue)
+ * - Interruptor duplo/triplo (fase comum) · inteligente (neutro)
+ * - Tomada multi-módulo (deriva F/N/PE por módulo)
  *
- * Em cada nó da rede, por circuito:
- *   pontas = arestas do caminho nesse nó + pontos desse circuito ancorados no nó
- * Cada condutor (F/N/PE…) leva 1 Wago do tamanho escolhido.
+ * NÃO conta: interruptor simples, tomada simples no fim do ramo (cabo no borne).
  *
  * Retorna também `locais[]` com coordenadas para highlight na planta.
  *
@@ -370,18 +393,28 @@ function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
 
     const edgeEnds = Number(nodeEdgeEnds?.[cid]?.[ni]) || 0;
     const pts = nodeCircPoints[k] || [];
-    if (pts.length === 0 && edgeEnds < 3) return;
 
-    const nPontas = edgeEnds + pts.length;
-    if (nPontas < 2) return;
+    // Sem T de conduíte: só conta se há emenda real (não só borne de ponta)
+    if (edgeEnds < 3) {
+      // ponta de ramo / só bornes → sem Wago de rede
+      if (pts.length === 0) return;
+      if (pts.every(dispositivoUsaBorneDireto)) return;
+      // luminária/carga no meio do circuito: precisa passagem (≥2 arestas)
+      if (edgeEnds < 2) return;
+    }
 
-    if (edgeEnds >= 3 || pts.length >= 2) juncoes += 1;
+    // Pontas de cabo na emenda: direções do conduíte (+ luminária como derivação)
+    const ptsEmenda = pts.filter((p) => !dispositivoUsaBorneDireto(p));
+    const nPontas = edgeEnds + (ptsEmenda.length ? 1 : 0);
+    if (nPontas < 3) return; // menos de 3 pontas = sem derivação típica
+
+    juncoes += 1;
 
     const circ = circById[cid];
     const nCond = condutoresEmendaNoPonto(
-      pts.map((p) => p.tipo),
+      ptsEmenda.map((p) => p.tipo),
       circ?.polos || 1,
-      pts
+      ptsEmenda
     );
     const size = pickWagoSize(nPontas);
     if (!size || nCond < 1) return;
@@ -392,12 +425,12 @@ function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
     porPolos[useSize] += qtd;
 
     const node = graph?.nodes?.[ni];
-    const anchor = pts[0] || null;
+    const anchor = ptsEmenda[0] || pts[0] || null;
     const x = Number(anchor?.x ?? node?.x);
     const y = Number(anchor?.y ?? node?.y);
     const onde =
+      ptsEmenda.map((p) => labelPonto(p)).filter(Boolean).join(" · ") ||
       pts.map((p) => labelPonto(p)).filter(Boolean).join(" · ") ||
-      pts.map((p) => p.tipo).filter(Boolean).join("/") ||
       `junção nó ${ni}`;
     const detail = `${cid} · ${onde}: ${nPontas} pontas → ${qtd}× Wago ${useSize}P`;
     if (detalhes.length < 40) detalhes.push(detail);
@@ -408,7 +441,10 @@ function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
       pontas: nPontas,
       nCond,
       circuitoId: cid,
-      pontoIds: pts.map((p) => p.id).filter(Boolean),
+      pontoIds: [...ptsEmenda, ...pts]
+        .map((p) => p.id)
+        .filter(Boolean)
+        .filter((id, i, arr) => arr.indexOf(id) === i),
       x: Number.isFinite(x) ? x : null,
       y: Number.isFinite(y) ? y : null,
       label: onde,
@@ -417,6 +453,7 @@ function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
     });
   });
 
+  // Emendas DENTRO da caixa (só multi-tecla / multi-módulo / inteligente)
   caixas.forEach((p) => {
     const interno = wagoInternoCaixa(p);
     if (!interno) return;
@@ -464,8 +501,11 @@ function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
 }
 
 /**
- * Wago na caixinha: interruptor duplo/triplo (fase) e tomada multi (F+N+PE).
- * Ex.: 2 módulos → 1 chega + 2 sai = 3 pontas → Wago 3P; 3 módulos → 4 pontas → Wago 5P.
+ * Wago na caixinha — só quando há derivação interna:
+ * - Interruptor duplo/triplo: 1 fase chega + 1 saída por tecla → Wago 3P (duplo)
+ * - Inteligente: +neutro (emenda)
+ * - Tomada multi: chega + 1 por módulo
+ * Interruptor simples / tomada simples: cabos no borne → sem Wago.
  */
 function wagoInternoCaixa(raw) {
   const p = normalizePoint(raw);
@@ -474,25 +514,33 @@ function wagoInternoCaixa(raw) {
   if (p.tipo === "interruptor") {
     const teclas = teclasDoInterruptor(p.variante || "simples");
     const usaN = interruptorUsaNeutro(p.variante);
-    // Comum multi-tecla: emenda de fase. Inteligente: +1 ponta do neutro (mesmo 1 tecla).
-    if (teclas < 2 && !usaN) return null;
-    const pontas = teclas + 1 + (usaN ? 1 : 0); // chega fase (+neutro) + 1 por tecla
-    const size = pickWagoSize(pontas);
+    if (teclas < 2 && !usaN) return null; // simples: borne direto
+    if (teclas >= 2) {
+      // Duplo: 3 pontas (fase + 2 retornos) → 3P; triplo: 4 → 5P
+      const pontas = teclas + 1;
+      return {
+        size: pickWagoSize(pontas),
+        qtd: 1,
+        pontas,
+        label: `int.${teclas}teclas`
+      };
+    }
+    // Inteligente 1 tecla: emenda do neutro (e fase se necessário)
+    const pontas = 2 + (usaN ? 1 : 0); // típico 3
     return {
-      size,
-      qtd: usaN ? 2 : 1, // fase(+retornos) e neutro
-      pontas,
-      label: usaN ? "int.inteligente" : `int.${teclas}teclas`
+      size: pickWagoSize(Math.max(3, pontas)),
+      qtd: usaN ? 1 : 1,
+      pontas: Math.max(3, pontas),
+      label: "int.inteligente"
     };
   }
 
   if (p.tipo === "tomada") {
     const mods = modulosTomada(p.modulos).modulos;
-    if (mods < 2) return null;
-    const pontas = mods + 1; // chega + 1 por módulo
-    const size = pickWagoSize(pontas);
+    if (mods < 2) return null; // simples no borne
+    const pontas = mods + 1;
     return {
-      size,
+      size: pickWagoSize(pontas),
       qtd: 3, // F + N + PE
       pontas,
       label: `tomada ${mods}mod`
@@ -507,14 +555,14 @@ function wagoInternoCaixa(raw) {
     let main = null;
     let extra = null;
     if (teclas >= 2 || usaN) {
-      const pontas = teclas + 1 + (usaN ? 1 : 0);
+      const pontas = teclas >= 2 ? teclas + 1 : 3;
       main = {
         size: pickWagoSize(pontas),
-        qtd: usaN ? 2 : 1,
+        qtd: 1,
         pontas,
-        label: usaN ? "conjugado int.inteligente" : `conjugado int${teclas}`
+        label: usaN && teclas < 2 ? "conjugado int.inteligente" : `conjugado int${teclas}`
       };
-      parts.push(usaN ? "intSmart" : `int${teclas}`);
+      parts.push(usaN && teclas < 2 ? "intSmart" : `int${teclas}`);
     }
     if (mods >= 2) {
       const pontas = mods + 1;

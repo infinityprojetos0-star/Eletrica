@@ -3288,7 +3288,7 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
       const wago = a?.wago;
       const wagoLocais = wago?.locais || [];
       const wagoHtml = wago?.porPolos
-        ? `<p class="hint" style="margin-bottom:8px">Clique no Wago (ou no local) para marcar na planta · Total <strong>${wago.unidades || 0}</strong> un · ${wago.caixas || 0} caixa(s)</p>
+        ? `<p class="hint" style="margin-bottom:8px">Só derivações (T de conduíte, passagem na luz, multi-tecla/módulo). Clique para marcar na planta · Total <strong>${wago.unidades || 0}</strong> un</p>
           <div class="pe-wago-grid">
             ${[2, 3, 5, 10]
               .map((pol) => {
@@ -3379,17 +3379,19 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
             <h3>Circuitos</h3>
             ${circHtml}
           </div>
-          <div class="pe-side-block">
-            <h3>Materiais do circuito</h3>
-            ${matCircHtml}
-          </div>
-          <div class="pe-side-block">
-            <h3>Wagos</h3>
-            ${wagoHtml || `<p class="hint">Rode a análise para estimar Wagos.</p>`}
-          </div>
-          <div class="pe-side-block">
-            <h3>Materiais (total)</h3>
-            ${matHtml || `<p class="hint">Rode a análise para gerar a lista.</p>`}
+          <div class="pe-mats-stack pe-analysis-span">
+            <div class="pe-side-block">
+              <h3>Materiais do circuito</h3>
+              ${matCircHtml}
+            </div>
+            <div class="pe-side-block">
+              <h3>Wagos</h3>
+              ${wagoHtml || `<p class="hint">Rode a análise para estimar Wagos (só em derivações).</p>`}
+            </div>
+            <div class="pe-side-block">
+              <h3>Materiais (total)</h3>
+              ${matHtml || `<p class="hint">Rode a análise para gerar a lista.</p>`}
+            </div>
           </div>
           ${
             avisos

@@ -1161,6 +1161,18 @@ tr:hover td { background: rgba(61,180,255,0.03); }
 .pe-analysis-span {
   grid-column: 1 / -1;
 }
+.pe-mats-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+.pe-mats-stack .pe-side-block {
+  width: 100%;
+}
+.pe-mats-stack .pe-mat-wrap {
+  max-height: 420px;
+}
 .pe-circ-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -1353,7 +1365,7 @@ tr:hover td { background: rgba(61,180,255,0.03); }
 .pe-mat-nota { opacity: 0.85; max-width: 42ch; }
 .pe-wago-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 10px;
 }
 .pe-wago-card {
