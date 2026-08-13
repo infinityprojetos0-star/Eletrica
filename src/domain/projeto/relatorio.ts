@@ -454,6 +454,7 @@ function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
           pontoIds: ptsEmenda.map((p) => p.id).filter(Boolean),
           x: Number.isFinite(x) ? x : null,
           y: Number.isFinite(y) ? y : null,
+          pontoNome: onde,
           label: `${onde} · ${w.papel}`,
           detalhe: detail,
           origem: "lampada-passagem"
@@ -524,6 +525,7 @@ function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
         .filter((id, i, arr) => arr.indexOf(id) === i),
       x: Number.isFinite(x) ? x : null,
       y: Number.isFinite(y) ? y : null,
+      pontoNome: onde,
       label: onde,
       detalhe: detail,
       origem: soLampadas ? "lampada-t" : "rede"
@@ -550,6 +552,7 @@ function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
         pontoIds: [p.id],
         x: Number(p.x),
         y: Number(p.y),
+        pontoNome: labelPonto(p),
         label: `${labelPonto(p)} (${block.label}${suffix})`,
         detalhe: detail,
         origem: "interno"

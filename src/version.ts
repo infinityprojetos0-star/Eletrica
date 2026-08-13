@@ -1,4 +1,4 @@
 /** Fonte única da versão do VoltES. */
-export const APP_VERSION = "2.0.22";
-export const CACHE_VERSION = "voltes-v72";
+export const APP_VERSION = "2.0.23";
+export const CACHE_VERSION = "voltes-v73";
 export const APP_BUILD_LABEL = "v" + APP_VERSION;
