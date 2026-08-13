@@ -106,6 +106,7 @@ function wagoPolosPorDirecoes(nDirecoes) {
 /**
  * Condutores emendados no ponto (cada um leva 1 Wago do mesmo tamanho).
  * Interruptor comum: só fase. Inteligente: fase + neutro.
+ * Lâmpada: tratado à parte (N e PE na passagem).
  * Demais: F(+fases)+N+PE conforme pólos.
  */
 function condutoresEmendaNoPonto(tiposPonto, polos, pontos = []) {
@@ -119,9 +120,27 @@ function condutoresEmendaNoPonto(tiposPonto, polos, pontos = []) {
         (p.tipo === "interruptor" || p.tipo === "conjugado") &&
         interruptorUsaNeutro(p.variante)
     );
-    return usaN ? 2 : 1; // +neutro no inteligente
+    return usaN ? 2 : 1;
+  }
+  if (tipos.length > 0 && tipos.every((t) => t === "lampada")) {
+    // Iluminação na passagem: N e PE (fase desce ao interruptor — não é o mesmo 3P)
+    return 2;
   }
   return nCondutoresOf(polos);
+}
+
+/**
+ * Emenda no ponto de luz (passagem):
+ * - Neutro: chega + luminária + segue → Wago 3P (1 un)
+ * - PE: idem → Wago 3P (1 un)
+ * - Fase: normalmente desce ao interruptor (não conta 3P genérico aqui)
+ */
+function wagosPassagemLampada(edgeEnds) {
+  if (edgeEnds < 2) return []; // ponta de ramo: cabo na luminária / sem passagem
+  return [
+    { papel: "Neutro", size: 3, qtd: 1, pontas: 3 },
+    { papel: "PE (aterramento)", size: 3, qtd: 1, pontas: 3 }
+  ];
 }
 
 /** Escolhe o menor In ≥ ib na tabela. */
@@ -405,17 +424,55 @@ function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
 
     // Pontas de cabo na emenda: direções do conduíte (+ luminária como derivação)
     const ptsEmenda = pts.filter((p) => !dispositivoUsaBorneDireto(p));
+    const soLampadas =
+      ptsEmenda.length > 0 && ptsEmenda.every((p) => p.tipo === "lampada");
+
+    // Iluminação: na passagem do ponto de luz → 1×3P Neutro + 1×3P PE
+    if (soLampadas && edgeEnds >= 2 && edgeEnds < 3) {
+      const node = graph?.nodes?.[ni];
+      const anchor = ptsEmenda[0] || pts[0] || null;
+      const x = Number(anchor?.x ?? node?.x);
+      const y = Number(anchor?.y ?? node?.y);
+      const onde =
+        ptsEmenda.map((p) => labelPonto(p)).filter(Boolean).join(" · ") || "ponto de luz";
+      wagosPassagemLampada(edgeEnds).forEach((w) => {
+        porPolos[w.size] = (porPolos[w.size] || 0) + w.qtd;
+        juncoes += 1;
+        const detail = `${cid} · ${onde} · ${w.papel}: ${w.pontas} pontas → ${w.qtd}× Wago ${w.size}P`;
+        if (detalhes.length < 40) detalhes.push(detail);
+        pushLocal({
+          size: w.size,
+          qtd: w.qtd,
+          pontas: w.pontas,
+          nCond: 1,
+          papel: w.papel,
+          circuitoId: cid,
+          circuitosIds: [cid],
+          pontoIds: ptsEmenda.map((p) => p.id).filter(Boolean),
+          x: Number.isFinite(x) ? x : null,
+          y: Number.isFinite(y) ? y : null,
+          label: `${onde} · ${w.papel}`,
+          detalhe: detail,
+          origem: "lampada-passagem"
+        });
+      });
+      return;
+    }
+
     const nPontas = edgeEnds + (ptsEmenda.length ? 1 : 0);
     if (nPontas < 3) return; // menos de 3 pontas = sem derivação típica
 
     juncoes += 1;
 
     const circ = circById[cid];
-    const nCond = condutoresEmendaNoPonto(
-      ptsEmenda.map((p) => p.tipo),
-      circ?.polos || 1,
-      ptsEmenda
-    );
+    // T de conduíte no ponto de luz: N+PE (2); demais cargas: F+N+PE
+    const nCond = soLampadas
+      ? 2
+      : condutoresEmendaNoPonto(
+          ptsEmenda.map((p) => p.tipo),
+          circ?.polos || 1,
+          ptsEmenda
+        );
     const size = pickWagoSize(nPontas);
     if (!size || nCond < 1) return;
 
@@ -432,15 +489,28 @@ function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
       ptsEmenda.map((p) => labelPonto(p)).filter(Boolean).join(" · ") ||
       pts.map((p) => labelPonto(p)).filter(Boolean).join(" · ") ||
       `junção nó ${ni}`;
-    const detail = `${cid} · ${onde}: ${nPontas} pontas → ${qtd}× Wago ${useSize}P`;
+    const papeis = soLampadas
+      ? "Neutro + PE"
+      : nCond >= 3
+        ? "F+N+PE"
+        : "fase";
+    const detail = `${cid} · ${onde} · ${papeis}: ${nPontas} pontas → ${qtd}× Wago ${useSize}P`;
     if (detalhes.length < 40) detalhes.push(detail);
+
+    // Quais circuitos passam neste nó (derivação compartilhada)
+    const circuitosNoNo = new Set([cid]);
+    Object.keys(nodeEdgeEnds || {}).forEach((otherCid) => {
+      if (Number(nodeEdgeEnds[otherCid]?.[ni]) > 0) circuitosNoNo.add(otherCid);
+    });
 
     pushLocal({
       size: useSize,
       qtd,
       pontas: nPontas,
       nCond,
+      papel: papeis,
       circuitoId: cid,
+      circuitosIds: [...circuitosNoNo],
       pontoIds: [...ptsEmenda, ...pts]
         .map((p) => p.id)
         .filter(Boolean)
@@ -449,7 +519,7 @@ function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
       y: Number.isFinite(y) ? y : null,
       label: onde,
       detalhe: detail,
-      origem: "rede"
+      origem: soLampadas ? "lampada-t" : "rede"
     });
   });
 
@@ -467,7 +537,9 @@ function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
         qtd: block.qtd,
         pontas: block.pontas,
         nCond: block.qtd,
+        papel: block.label || null,
         circuitoId: p.circuitoId || null,
+        circuitosIds: p.circuitoId ? [p.circuitoId] : [],
         pontoIds: [p.id],
         x: Number(p.x),
         y: Number(p.y),

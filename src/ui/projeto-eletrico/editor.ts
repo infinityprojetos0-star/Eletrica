@@ -2836,7 +2836,7 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
       // Conduítes: no modo "conduíte" só o tubo (sem fios/caminhos de circuito)
       const conduitMode = tool === "conduit" || !!conduitDraft;
       const hasCircFilter = !!selectedCircuitId && !conduitMode;
-      const hasWagoFilter = !!selectedWago && !conduitMode && !hasCircFilter;
+      const hasWagoFilter = !!selectedWago && !conduitMode;
       const wagoLocaisAtivos = hasWagoFilter
         ? (projeto.lastAnalise?.wago?.locais || []).filter((l) => {
             if (selectedWago.localId) return l.id === selectedWago.localId;
@@ -2846,6 +2846,17 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
       const wagoPontoIds = new Set(
         wagoLocaisAtivos.flatMap((l) => l.pontoIds || []).filter(Boolean)
       );
+      /** Circuitos ligados à derivação Wago selecionada */
+      const wagoCircIds = new Set(
+        wagoLocaisAtivos.flatMap((l) => {
+          const ids = l.circuitosIds?.length
+            ? l.circuitosIds
+            : l.circuitoId
+              ? [l.circuitoId]
+              : [];
+          return ids;
+        })
+      );
       const WIRE_GAP_M = 0.045;
 
       projeto.conduits.forEach((c) => {
@@ -2853,18 +2864,38 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
         if (pts.length < 2) return;
         const fios = fiosDoConduite(c);
         const carriesSelected =
-          hasCircFilter &&
-          (fios.some((f) => f.id === selectedCircuitId) || c.circuitoId === selectedCircuitId);
-        const dimmed = hasCircFilter && !carriesSelected;
+          (hasCircFilter &&
+            (fios.some((f) => f.id === selectedCircuitId) || c.circuitoId === selectedCircuitId)) ||
+          (hasWagoFilter &&
+            wagoCircIds.size > 0 &&
+            (fios.some((f) => wagoCircIds.has(f.id)) || wagoCircIds.has(c.circuitoId)));
+        const dimmed =
+          (hasCircFilter || (hasWagoFilter && wagoCircIds.size > 0)) && !carriesSelected;
         const selObj = selectedKind === "conduit" && selectedId === c.id;
 
         // eletroduto (tubo)
         drawPoly(
           pts,
           selObj ? "#ffb74d" : conduitMode ? "#546e7a" : "#90a4ae",
-          conduitMode ? (selObj ? 7 : 5.5) : hasCircFilter ? (dimmed ? 1.5 : 2.5) : 5,
+          conduitMode
+            ? selObj
+              ? 7
+              : 5.5
+            : hasCircFilter || hasWagoFilter
+              ? dimmed
+                ? 1.5
+                : 2.5
+              : 5,
           null,
-          conduitMode ? (selObj ? 0.85 : 0.65) : hasCircFilter ? (dimmed ? 0.1 : 0.28) : 0.4
+          conduitMode
+            ? selObj
+              ? 0.85
+              : 0.65
+            : hasCircFilter || hasWagoFilter
+              ? dimmed
+                ? 0.1
+                : 0.28
+              : 0.4
         );
 
         if (conduitMode) {
@@ -2876,7 +2907,7 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
           return;
         }
 
-        if (!hasCircFilter) {
+        if (!hasCircFilter && !hasWagoFilter) {
           if (!fios.length) {
             drawConduitPath(pts, selObj ? "#f57c00" : "#78909c", selObj, false, {
               thin: true,
@@ -2913,24 +2944,32 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
       });
 
       // Caminhos de circuito — ocultos no modo conduíte
-      if (hasCircFilter && !conduitMode) {
-        const circ = (projeto.lastAnalise?.circuits || []).find((x) => x.id === selectedCircuitId);
-        const caminhos = circ?.caminhos || [];
-        caminhos.forEach((cam) => {
-          if (cam.pontos?.length >= 2) {
-            drawConduitPath(cam.pontos, circ.cor || "#1565c0", true, false);
-            const mid = cam.pontos[Math.floor(cam.pontos.length / 2)];
-            drawFiosLabel(mid, [{ id: selectedCircuitId, cor: circ.cor }], true);
+      const circIdsToPaint = hasCircFilter
+        ? [selectedCircuitId]
+        : hasWagoFilter && wagoCircIds.size
+          ? [...wagoCircIds]
+          : [];
+      if (circIdsToPaint.length && !conduitMode) {
+        circIdsToPaint.forEach((cid) => {
+          const circ = (projeto.lastAnalise?.circuits || []).find((x) => x.id === cid);
+          if (!circ) return;
+          const caminhos = circ?.caminhos || [];
+          caminhos.forEach((cam) => {
+            if (cam.pontos?.length >= 2) {
+              drawConduitPath(cam.pontos, circ.cor || "#1565c0", true, false);
+              const mid = cam.pontos[Math.floor(cam.pontos.length / 2)];
+              drawFiosLabel(mid, [{ id: cid, cor: circ.cor }], true);
+            }
+          });
+          if (!caminhos.length && circ?.pontos?.length) {
+            const qdcPt = (projeto.points || []).find((p) => p.tipo === "qdc");
+            circ.pontos.forEach((pid) => {
+              const pt = (projeto.points || []).find((p) => p.id === pid);
+              if (!qdcPt || !pt) return;
+              drawPoly([qdcPt, pt], circ.cor || "#e53935", 2.5, [8, 6], 0.85);
+            });
           }
         });
-        if (!caminhos.length && circ?.pontos?.length) {
-          const qdcPt = (projeto.points || []).find((p) => p.tipo === "qdc");
-          circ.pontos.forEach((pid) => {
-            const pt = (projeto.points || []).find((p) => p.id === pid);
-            if (!qdcPt || !pt) return;
-            drawPoly([qdcPt, pt], circ.cor || "#e53935", 2.5, [8, 6], 0.85);
-          });
-        }
       }
 
       if (conduitDraft) {
@@ -2977,15 +3016,36 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
             highlight = true;
           }
         } else if (hasWagoFilter) {
-          if (!wagoPontoIds.has(n.id)) {
+          const noCircuitoDerivado =
+            wagoCircIds.size > 0 &&
+            ((n.circuitoId && wagoCircIds.has(n.circuitoId)) ||
+              (n.tipo === "interruptor" &&
+                (projeto.points || []).some(
+                  (lp) =>
+                    lp.tipo === "lampada" &&
+                    wagoCircIds.has(lp.circuitoId) &&
+                    syncComandos(n).includes(String(lp.interruptor || "").toLowerCase())
+                )));
+          const noLocalWago = wagoPontoIds.has(n.id);
+          if (!noLocalWago && !noCircuitoDerivado) {
             ctx2.save();
             ctx2.globalAlpha = 0.18;
             drawNbrSymbol(ctx2, n, ppm, false, "#888", projeto.symbolScale);
             ctx2.restore();
             return;
           }
-          stroke = "#ff6f00";
-          highlight = true;
+          if (noLocalWago) {
+            stroke = "#ff6f00";
+            highlight = true;
+          } else if (n.circuitoId && wagoCircIds.has(n.circuitoId)) {
+            stroke =
+              (projeto.lastAnalise?.circuits || []).find((x) => x.id === n.circuitoId)?.cor ||
+              stroke;
+            highlight = true;
+          } else {
+            stroke = "#ff6f00";
+            highlight = true;
+          }
         }
         drawNbrSymbol(ctx2, n, ppm, highlight, stroke, projeto.symbolScale);
       });
@@ -3017,7 +3077,13 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
           ctx2.font = "bold 11px Segoe UI, sans-serif";
           ctx2.textAlign = "center";
           ctx2.textBaseline = "bottom";
-          ctx2.fillText(`Wago ${loc.size}P ×${loc.qtd}`, px, py - 16);
+          const circTxt = (loc.circuitosIds || (loc.circuitoId ? [loc.circuitoId] : [])).join(", ");
+          const papelTxt = loc.papel ? ` · ${loc.papel}` : "";
+          ctx2.fillText(`Wago ${loc.size}P ×${loc.qtd}${papelTxt}`, px, py - 16);
+          if (circTxt) {
+            ctx2.font = "10px Segoe UI, sans-serif";
+            ctx2.fillText(circTxt, px, py - 4);
+          }
           ctx2.restore();
         });
       }
@@ -3309,8 +3375,15 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
                     ${locs
                       .map((l) => {
                         const locActive = selectedWago?.localId === l.id;
+                        const circs = (l.circuitosIds?.length
+                          ? l.circuitosIds
+                          : l.circuitoId
+                            ? [l.circuitoId]
+                            : []
+                        ).join(", ");
+                        const papel = l.papel ? ` · ${l.papel}` : "";
                         return `<button type="button" class="pe-wago-loc ${locActive ? "active" : ""}" data-wago-local="${escapeHtml(l.id)}" title="${escapeHtml(l.detalhe || l.label || "")}">
-                          <span>${escapeHtml(l.circuitoId || "—")} · ${escapeHtml(l.label || l.origem || "local")}</span>
+                          <span>${escapeHtml(circs || "—")}${escapeHtml(papel)} · ${escapeHtml(l.label || l.origem || "local")}</span>
                           <strong>×${l.qtd}</strong>
                         </button>`;
                       })
@@ -3450,9 +3523,15 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
           }
           paint();
           renderSide();
+          const circs = (loc?.circuitosIds?.length
+            ? loc.circuitosIds
+            : loc?.circuitoId
+              ? [loc.circuitoId]
+              : []
+          ).join(", ");
           ctx.toast?.(
             selectedWago
-              ? `Wago ${loc?.size}P · ${loc?.label || localId}`
+              ? `Wago ${loc?.size}P${loc?.papel ? ` · ${loc.papel}` : ""} · circuitos: ${circs || "—"}`
               : "Seleção de Wago limpa"
           );
         };
