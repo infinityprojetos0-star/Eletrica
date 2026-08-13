@@ -541,8 +541,9 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
               <div class="pe-hint" id="peHint">Grade 1 cm · Clique = selecionar · Arraste = mover · Edite no painel à direita</div>
               <div class="pe-vcb" id="peVcb" hidden title="Digite a distância e Enter (ex: 1.2 ou 80cm)"></div>
             </div>
-            <aside class="pe-side" id="peSide"></aside>
+            <aside class="pe-side" id="peSide" aria-label="Propriedades do ponto"></aside>
           </div>
+          <div class="pe-analysis" id="peAnalysis" aria-label="Análise NBR 5410"></div>
         </div>
       `;
       bindChrome();
@@ -3128,7 +3129,14 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
 
     function renderSide() {
       const side = root.querySelector("#peSide");
+      const analysis = root.querySelector("#peAnalysis");
       if (!side) return;
+
+      // Painel direito: só propriedades / configuração do objeto
+      side.innerHTML = inspectorHtml();
+      bindInspector();
+
+      if (!analysis) return;
       const a = projeto.lastAnalise;
       const circHtml = a?.circuits?.length
         ? `<p class="hint" style="margin-bottom:8px">${
@@ -3136,11 +3144,11 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
               ? `Caminho do fio <strong>${escapeHtml(selectedCircuitId)}</strong>. Iluminação: laje + descida/retorno · Tomada: laje via luzes + descida.`
               : "Clique num circuito para ver caminho, proteção e materiais dele."
           }</p>
+          <div class="pe-circ-grid">
           ${a.circuits
             .map((c) => {
               const active = selectedCircuitId === c.id;
               const nCam = c.caminhos?.length || 0;
-              const nCd = c.conduitesIds?.length || 0;
               const polosLabel =
                 c.polos >= 3 ? "3P" : c.polos >= 2 ? "2P" : "1P";
               const rot = c.roteamento?.modelo;
@@ -3163,8 +3171,9 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
             ${pathHint}
           </button>`;
             })
-            .join("")}`
-        : `<div class="empty"><strong>Sem análise</strong>Trace conduítes até o QDC e clique em Analisar NBR 5410.</div>`;
+            .join("")}
+          </div>`
+        : `<div class="empty"><strong>Sem análise</strong> Trace conduítes até o QDC e clique em Analisar NBR 5410.</div>`;
 
       const circSel = selectedCircuitId
         ? (a?.circuits || []).find((c) => c.id === selectedCircuitId)
@@ -3181,7 +3190,7 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
             </tbody></table>`
           : selectedCircuitId
             ? `<p class="hint">Sem materiais neste circuito — rode a análise de novo.</p>`
-            : `<p class="hint">Selecione um circuito acima para ver os materiais dele.</p>`;
+            : `<p class="hint">Selecione um circuito ao lado para ver os materiais dele.</p>`;
 
       const prot = a?.protecao;
       const idrItem = prot?.idr || prot?.drs?.[0];
@@ -3241,7 +3250,7 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
           : "";
 
       const matHtml = a?.materiais?.length
-        ? `<p class="hint" style="margin-bottom:6px">${a.materiais.length} item(ns) · atualizado com os circuitos ${escapeHtml(
+        ? `<p class="hint" style="margin-bottom:6px">${a.materiais.length} item(ns) · circuitos ${escapeHtml(
             (a.circuits || []).map((c) => c.id).join(", ") || "—"
           )}</p>
           <table class="pe-mat"><thead><tr><th>Item</th><th class="pe-mat-qtd">Qtd</th></tr></thead><tbody>
@@ -3256,11 +3265,11 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
             })
             .join("")}
           </tbody></table>
-          <button type="button" class="btn btn-primary btn-sm" id="peOrc" style="margin-top:10px;width:100%">Gerar orçamento</button>`
+          <button type="button" class="btn btn-primary btn-sm" id="peOrc" style="margin-top:10px">Gerar orçamento</button>`
         : "";
 
       const avisos = (a?.avisos || [])
-        .slice(0, 10)
+        .slice(0, 12)
         .map((x) => `<li>${escapeHtml(x)}</li>`)
         .join("");
 
@@ -3272,44 +3281,45 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
             ? "Trifásico"
             : "Bifásico");
 
-      side.innerHTML = `
-        ${inspectorHtml()}
-        <div class="pe-side-block">
-          <h3>Resumo</h3>
-          <p class="hint">${projeto.rooms.length} cômodo(s) · ${(projeto.arch || []).length} porta/janela · ${(projeto.walls || []).length} linha(s) · ${projeto.points.length} ponto(s) · ${projeto.conduits.length} conduíte(s)</p>
-          <p class="source-pill">Sistema: ${escapeHtml(sistLabel)} · PD ${Number(projeto.peDireitoM || 2.8).toFixed(2)} m · Aterramento: ${projeto.aterramento === false ? "passar PE" : "sim"}</p>
+      analysis.innerHTML = `
+        <div class="pe-analysis-head">
+          <h3>Análise NBR 5410</h3>
+          <p class="hint">${projeto.rooms.length} cômodo(s) · ${(projeto.arch || []).length} porta/janela · ${projeto.points.length} ponto(s) · ${projeto.conduits.length} conduíte(s)
+            · Sistema: ${escapeHtml(sistLabel)} · PD ${Number(projeto.peDireitoM || 2.8).toFixed(2)} m
+            · Aterramento: ${projeto.aterramento === false ? "passar PE" : "sim"}</p>
         </div>
-        <div class="pe-side-block">
-          <h3>Proteção</h3>
-          ${protHtml}
+        <div class="pe-analysis-grid">
+          <div class="pe-side-block">
+            <h3>Proteção</h3>
+            ${protHtml}
+          </div>
+          <div class="pe-side-block">
+            <h3>Balanceamento</h3>
+            ${balHtml}
+          </div>
+          <div class="pe-side-block pe-analysis-span">
+            <h3>Circuitos</h3>
+            ${circHtml}
+          </div>
+          <div class="pe-side-block">
+            <h3>Materiais do circuito</h3>
+            ${matCircHtml}
+          </div>
+          <div class="pe-side-block">
+            <h3>Materiais (total)</h3>
+            ${wagoHtml}
+            ${matHtml || `<p class="hint">Rode a análise para gerar a lista.</p>`}
+          </div>
+          ${
+            avisos
+              ? `<div class="pe-side-block pe-analysis-span"><h3>Avisos</h3><ul class="pe-avisos">${avisos}</ul></div>`
+              : ""
+          }
         </div>
-        <div class="pe-side-block">
-          <h3>Balanceamento</h3>
-          ${balHtml}
-        </div>
-        <div class="pe-side-block">
-          <h3>Circuitos</h3>
-          ${circHtml}
-        </div>
-        <div class="pe-side-block">
-          <h3>Materiais do circuito</h3>
-          ${matCircHtml}
-        </div>
-        <div class="pe-side-block">
-          <h3>Materiais (total)</h3>
-          ${wagoHtml}
-          ${matHtml || `<p class="hint">Rode a análise para gerar a lista.</p>`}
-        </div>
-        ${
-          avisos
-            ? `<div class="pe-side-block"><h3>Avisos</h3><ul class="pe-avisos">${avisos}</ul></div>`
-            : ""
-        }
-        <p class="hint" style="margin-top:8px">${escapeHtml(a?.disclaimer || "Auxiliar de projeto — confirme no projeto oficial.")}</p>
+        <p class="hint pe-analysis-foot">${escapeHtml(a?.disclaimer || "Auxiliar de projeto — confirme no projeto oficial.")}</p>
       `;
 
-      bindInspector();
-      side.querySelectorAll(".pe-circ[data-circ]").forEach((el) => {
+      analysis.querySelectorAll(".pe-circ[data-circ]").forEach((el) => {
         el.onclick = () => {
           const id = el.dataset.circ;
           selectedCircuitId = selectedCircuitId === id ? null : id;
@@ -3322,7 +3332,7 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
           );
         };
       });
-      const btnOrc = side.querySelector("#peOrc");
+      const btnOrc = analysis.querySelector("#peOrc");
       if (btnOrc) btnOrc.onclick = () => ctx.onCreateOrcamento?.(projeto, a);
     }
 
