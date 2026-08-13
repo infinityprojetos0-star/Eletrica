@@ -196,6 +196,7 @@ import { Store } from "../store/store";
 
   function buildCss() {
     const mx = 40;
+    const footH = 72;
     return `
 ${fontFaceCss()}
 #voltes-pdf-host,#voltes-pdf-host *{box-sizing:border-box;}
@@ -211,14 +212,14 @@ ${fontFaceCss()}
   -webkit-print-color-adjust:exact;print-color-adjust:exact;
 }
 .ve-page-inner{
-  display:block;
-  height:${A4_H - 48}px;padding-bottom:4px;box-sizing:border-box;
-  overflow:hidden;
+  display:flex;flex-direction:column;
+  height:${A4_H - footH}px;box-sizing:border-box;
+  overflow:hidden;padding:0;
 }
-.ve-hdr{position:relative;height:120px;width:100%;background:#fff;flex-shrink:0;}
+.ve-hdr{position:relative;height:118px;width:100%;background:#fff;flex-shrink:0;}
 .ve-logo-wrap{position:absolute;left:20px;top:4px;width:370px;}
 .ve-logo{
-  height:102px;width:auto;max-width:365px;
+  height:100px;width:auto;max-width:365px;
   object-fit:contain;object-position:left center;display:block;
 }
 .ve-logo-sub{
@@ -228,7 +229,7 @@ ${fontFaceCss()}
 .ve-logo-sub .ln{flex:1;height:1px;background:${C.border};}
 .ve-logo-sub .tx{white-space:nowrap;padding:0 3px 2px;}
 
-.ve-banner{position:absolute;top:0;right:0;width:380px;height:120px;overflow:hidden;}
+.ve-banner{position:absolute;top:0;right:0;width:380px;height:118px;overflow:hidden;}
 .ve-banner-img{position:absolute;inset:0;width:100%;height:100%;display:block;}
 .ve-banner-txt{position:absolute;inset:0;padding:14px 24px 10px 80px;color:#fff;z-index:2;}
 .ve-banner-txt h1{
@@ -238,19 +239,22 @@ ${fontFaceCss()}
 .ve-banner-txt p{margin:0 0 3px;font-size:11px;font-weight:400;line-height:1.25;text-align:left;color:#fff;}
 .ve-banner-txt .val{font-size:9.5px;margin-top:2px;}
 
-.ve-main{padding:6px ${mx}px 0;flex:1 1 auto;display:block;min-height:0;}
+.ve-main{
+  padding:8px ${mx}px 0;flex:1 1 auto;display:flex;flex-direction:column;
+  min-height:0;width:100%;
+}
 
 .ve-box{
   border:1px solid ${C.border};border-radius:6px;background:#fff;
-  margin-bottom:6px;overflow:visible;position:relative;
+  margin-bottom:7px;overflow:hidden;position:relative;width:100%;
 }
-.ve-box-pad{padding:6px 9px 7px;}
-.ve-box-tbl{padding:0;overflow:visible;}
-.ve-box-tbl .ve-title{padding:6px 9px 4px;margin:0;}
+.ve-box-pad{padding:7px 10px 8px;}
+.ve-box-tbl{padding:0;overflow:hidden;}
+.ve-box-tbl .ve-title{padding:6px 10px 4px;margin:0;}
 
 .ve-badge{
   display:inline-block;width:16px;height:16px;background:${C.primary};color:#fff;
-  text-align:center;line-height:16px;vertical-align:middle;
+  text-align:center;line-height:16px;vertical-align:middle;border-radius:50%;
 }
 .ve-title{
   font-size:10px;font-weight:700;color:${C.primary};
@@ -258,7 +262,6 @@ ${fontFaceCss()}
 }
 .ve-title .ve-badge{margin-right:6px;}
 
-/* Campos cliente — linhas simples (como pedrgit/orcamento), sem truncar */
 .ve-fields{width:100%;border-collapse:collapse;margin:0;table-layout:fixed;}
 .ve-fields td{
   border-bottom:1px solid ${C.border};padding:4px 0 3px;vertical-align:bottom;
@@ -277,37 +280,41 @@ ${fontFaceCss()}
 .ve-fields tr.two .lbl{width:78px;}
 .ve-fields tr.two td td{border-bottom:1px solid ${C.border};padding:4px 0 3px;}
 
-/* Tabela serviços/materiais */
 .ve-tbl{
-  width:calc(100% - 16px);margin:2px 8px 6px;border-collapse:separate;border-spacing:0;
-  border:1px solid ${C.tableLine};table-layout:fixed;
+  width:100%;max-width:100%;margin:0;border-collapse:collapse;table-layout:fixed;
+  border:none;
 }
 .ve-tbl th,.ve-tbl td{
-  border-top:1px solid ${C.tableLine};
-  padding:4px 6px;font-size:9px;line-height:1.25;vertical-align:middle;
+  border:1px solid ${C.tableLine};
+  border-left:none;border-right:none;
+  padding:5px 8px;font-size:9px;line-height:1.25;vertical-align:middle;
   word-wrap:break-word;overflow-wrap:anywhere;
 }
 .ve-tbl thead th{
-  background:${C.primary};color:#fff;font-weight:700;border-top:0;
-  padding:6px;line-height:1.2;
+  background:${C.primary};color:#fff;font-weight:700;
+  border-color:${C.primary};padding:7px 8px;line-height:1.2;
 }
-.ve-tbl th.c,.ve-tbl td.c{text-align:center;color:${C.primary};font-weight:600;width:12%;}
+.ve-tbl tbody tr:last-child td{border-bottom:none;}
+.ve-tbl th.c,.ve-tbl td.c{text-align:center;color:${C.primary};font-weight:600;width:11%;}
 .ve-tbl th.c{color:#fff;}
-.ve-tbl th.d,.ve-tbl td.d{text-align:left;width:62%;color:${C.text};font-weight:400;}
+.ve-tbl th.d,.ve-tbl td.d{text-align:left;width:64%;color:${C.text};font-weight:400;}
 .ve-tbl th.d{color:#fff;text-align:center;}
-.ve-tbl td.c:last-child,.ve-tbl th.c:last-child{width:26%;}
-.ve-page-note{font-size:7.5px;color:${C.muted};margin:0 8px 4px;font-style:italic;line-height:1.2;}
+.ve-tbl td.c:last-child,.ve-tbl th.c:last-child{width:25%;}
+.ve-page-note{font-size:7.5px;color:${C.muted};margin:4px 10px 6px;font-style:italic;line-height:1.2;}
 
-.ve-compact .ve-tbl th,.ve-compact .ve-tbl td{padding:3px 5px;font-size:8px;}
-.ve-compact .ve-tbl thead th{padding:5px;}
+.ve-compact .ve-tbl th,.ve-compact .ve-tbl td{padding:3px 6px;font-size:8px;}
+.ve-compact .ve-tbl thead th{padding:5px 6px;}
 .ve-compact .ve-box{margin-bottom:5px;}
 .ve-compact .ve-main{padding-top:4px;}
 .ve-compact .ve-garantia{font-size:7px;line-height:1.2;}
 .ve-compact .ve-title{font-size:9px;margin-bottom:3px;}
 .ve-compact .ve-total .val{font-size:16px;}
-.ve-compact .ve-sign{margin-top:6px;}
+.ve-compact .ve-sign{margin-top:8px;}
 
-.ve-2col{display:table;width:100%;table-layout:fixed;margin-bottom:6px;border-collapse:separate;border-spacing:6px 0;}
+.ve-2col{
+  display:table;width:100%;table-layout:fixed;margin-bottom:7px;
+  border-collapse:separate;border-spacing:7px 0;
+}
 .ve-2col > *{display:table-cell;vertical-align:top;}
 .ve-2col > .ve-box{width:50%;}
 .ve-2col.ve-final > .ve-box{width:58%;}
@@ -331,7 +338,7 @@ ${fontFaceCss()}
 
 .ve-total{
   border:2px solid ${C.secondary};border-radius:10px;
-  text-align:center;padding:10px 8px;background:#fff;vertical-align:middle;
+  text-align:center;padding:12px 8px;background:#fff;vertical-align:middle;
 }
 .ve-total .lbl{font-size:9px;font-weight:700;color:${C.primary};letter-spacing:0.25px;margin-bottom:6px;text-transform:uppercase;}
 .ve-total .val{
@@ -339,55 +346,58 @@ ${fontFaceCss()}
   white-space:nowrap;text-align:center;
 }
 
-.ve-sign{display:table;width:100%;margin:8px 0 4px;table-layout:fixed;}
+.ve-sign{display:table;width:100%;margin:10px 0 0;table-layout:fixed;flex-shrink:0;}
 .ve-sign .col{display:table-cell;width:50%;text-align:center;padding:0 18px;vertical-align:top;}
-.ve-sign .hline{border-top:1.5px solid ${C.primary};margin-bottom:3px;}
+.ve-sign .hline{border-top:1.5px solid ${C.primary};margin-bottom:4px;}
 .ve-sign .t{font-size:8px;font-weight:700;color:${C.text};}
 .ve-sign .navy{color:${C.primary};}
 .ve-sign .sub{font-size:8px;font-weight:700;margin-top:2px;color:${C.text};}
 
+.ve-push{flex:1 1 auto;min-height:6px;width:100%;}
+
 .ve-contact{
-  margin:6px ${mx}px 0;padding-top:6px;
-  border-top:1.5px solid ${C.secondary};
+  margin:0 ${mx}px;padding:10px 0 8px;
+  border-top:2px solid ${C.secondary};
   display:table;width:calc(100% - ${mx * 2}px);table-layout:fixed;
+  flex-shrink:0;
 }
 .ve-contact .left,.ve-contact .right{
-  display:table-cell;width:50%;vertical-align:middle;padding:2px 10px;height:28px;
+  display:table-cell;width:50%;vertical-align:middle;padding:4px 10px;height:32px;
 }
 .ve-contact .left{border-right:1px solid ${C.border};}
 .ve-contact .ico{
-  display:inline-block;width:18px;height:18px;vertical-align:middle;margin-right:8px;line-height:0;
+  display:inline-block;width:20px;height:20px;vertical-align:middle;margin-right:8px;line-height:0;
 }
-.ve-contact .ico svg{display:block;width:16px;height:16px;}
+.ve-contact .ico svg{display:block;width:18px;height:18px;}
 .ve-contact .fone{
-  font-size:13px;font-weight:700;color:${C.primary};line-height:18px;
+  font-size:14px;font-weight:700;color:${C.primary};line-height:20px;
   display:inline-block;vertical-align:middle;
 }
 .ve-contact .slogan{
-  font-size:9px;font-weight:700;color:${C.primary};line-height:1.2;
+  font-size:9.5px;font-weight:700;color:${C.primary};line-height:1.25;
   display:inline-block;vertical-align:middle;
 }
-.ve-contact .slogan b{color:${C.secondary};font-size:10px;}
+.ve-contact .slogan b{color:${C.secondary};font-size:10.5px;}
 
 .ve-foot{
   position:absolute;left:0;right:0;bottom:0;
-  width:100%;height:48px;margin:0;
+  width:100%;height:${footH}px;margin:0;
   background:${C.primary};color:#fff;
   display:table;table-layout:fixed;
 }
 .ve-foot .cell{
   display:table-cell;vertical-align:middle;text-align:left;
-  border-right:1px solid rgba(255,255,255,0.28);padding:0 6px;height:48px;
+  border-right:1px solid rgba(255,255,255,0.28);padding:0 8px;height:${footH}px;
 }
 .ve-foot .cell:last-child{border-right:none;}
 .ve-foot .ico{
-  display:inline-block;width:16px;height:16px;vertical-align:middle;margin-right:5px;line-height:0;
+  display:inline-block;width:20px;height:20px;vertical-align:middle;margin-right:7px;line-height:0;
 }
-.ve-foot .ico svg{display:block;width:14px;height:14px;}
+.ve-foot .ico svg{display:block;width:18px;height:18px;}
 .ve-foot .ft{
   display:inline-block;vertical-align:middle;
-  font-size:7px;font-weight:700;line-height:1.1;letter-spacing:0.1px;
-  text-transform:uppercase;color:#fff;max-width:78px;
+  font-size:8px;font-weight:700;line-height:1.15;letter-spacing:0.15px;
+  text-transform:uppercase;color:#fff;max-width:92px;
 }
 `;
   }
@@ -413,11 +423,12 @@ ${fontFaceCss()}
 
   function pageFooterHtml(fone) {
     const footCell = (icon, lines) =>
-      `<div class="cell"><span class="ico">${svgIcon(icon, 14)}</span><span class="ft">${lines}</span></div>`;
+      `<div class="cell"><span class="ico">${svgIcon(icon, 18)}</span><span class="ft">${lines}</span></div>`;
     return `
+  <div class="ve-push"></div>
   <div class="ve-contact">
     <div class="left">
-      <span class="ico">${svgIcon("phone", 16)}</span><span class="fone">${esc(fone)}</span>
+      <span class="ico">${svgIcon("phone", 18)}</span><span class="fone">${esc(fone)}</span>
     </div>
     <div class="right">
       <span class="ico"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><path fill="${C.secondary}" d="M13 2 3 14h8l-1 8 10-12h-8l1-8z"/></svg></span>
