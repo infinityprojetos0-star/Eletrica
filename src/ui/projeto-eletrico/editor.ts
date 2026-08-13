@@ -3118,7 +3118,12 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
               .filter(Boolean)
               .join("")}
           </ul>
-          <p class="hint">${a.wago.caixas || 0} caixa(s) · ${a.wago.juncoes || 0} junção(ões) · total ${a.wago.unidades || 0} un</p>`
+          <p class="hint">Conta pontas de cabo (chega/sai/dispositivo). 4 pontas → Wago 5P. Total ${a.wago.unidades || 0} un</p>
+          ${
+            a.wago.detalhes?.length
+              ? `<p class="hint">${a.wago.detalhes.map((d) => escapeHtml(d)).join(" · ")}</p>`
+              : ""
+          }`
         : a?.wago
           ? `<p class="hint">${escapeHtml(a.wago.nota || "")}</p>`
           : "";

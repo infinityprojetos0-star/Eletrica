@@ -488,12 +488,15 @@ function polylineLength(verts) {
       qdcNode >= 0 ? dijkstra(graph, qdcNode) : { distArr: [], prev: [], prevEdge: [] };
 
     const conduitUse = {};
+    /** Arestas únicas por circuito (para contar pontas/Wago nos nós) */
+    const circEdgeMap = {}; // circId -> Map(edgeKey -> {a,b})
     circuits.forEach((circ) => {
       let maxLen = 0;
       let sumLen = 0;
       let nPath = 0;
       circ.caminhos = []; // polilinhas QDC→ponto (caminho mais curto na rede)
       const conduitesDoCirc = new Set();
+      if (!circEdgeMap[circ.id]) circEdgeMap[circ.id] = new Map();
       circ.pontos.forEach((pid) => {
         const pt = byId[pid];
         if (!pt) return;
@@ -504,6 +507,10 @@ function polylineLength(verts) {
           // só arestas da rede (mais curto); ramais QDC/ponto somados à parte
           len = fromQdc.distArr[ni] + qdcStub + ptStub;
           pathEdgesFromPrev(fromQdc.prev, fromQdc.prevEdge, ni).forEach((e) => {
+            const a = Math.min(e.a, e.b);
+            const b = Math.max(e.a, e.b);
+            const ekey = e.conduitId ? `${e.conduitId}:${a}-${b}` : `x:${a}-${b}`;
+            circEdgeMap[circ.id].set(ekey, { a: e.a, b: e.b });
             if (!e.conduitId) return;
             if (!conduitUse[e.conduitId]) conduitUse[e.conduitId] = {};
             conduitUse[e.conduitId][circ.id] =
@@ -618,11 +625,21 @@ function polylineLength(verts) {
       return p ? { ...normalizePoint(orig), circuitoId: p.circuitoId } : normalizePoint(orig);
     });
 
+    // Pontas de cabo por nó/circuito (arestas incidentes únicas do caminho)
+    const nodeEdgeEnds = {};
+    Object.entries(circEdgeMap).forEach(([cid, map]) => {
+      nodeEdgeEnds[cid] = {};
+      map.forEach((e) => {
+        nodeEdgeEnds[cid][e.a] = (nodeEdgeEnds[cid][e.a] || 0) + 1;
+        nodeEdgeEnds[cid][e.b] = (nodeEdgeEnds[cid][e.b] || 0) + 1;
+      });
+    });
+
     const balanceamento = balancearCargas(circuits, sistema);
     avisos.push(...(balanceamento.avisos || []));
 
     const protecao = dimensionarProtecao(circuits, sistema, balanceamento);
-    const wago = contarWagos({ ...projeto, points: pointsOut }, graph, circuits);
+    const wago = contarWagos({ ...projeto, points: pointsOut }, graph, circuits, nodeEdgeEnds);
 
     const projetoMat = { ...projeto, points: pointsOut, conduits, arch: projeto.arch || [], sistema };
     const materiaisPorCircuito = montarMateriaisPorCircuito(

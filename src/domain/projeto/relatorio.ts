@@ -71,12 +71,38 @@ function labelPolosDj(polos) {
   return "monopolar";
 }
 
-function wagoPolosPorDirecoes(nDirecoes) {
-  const d = Math.max(2, Number(nDirecoes) || 2);
-  if (d <= 2) return 2;
-  if (d === 3) return 3;
-  if (d <= 5) return 5;
+/**
+ * Escolhe Wago pela qtd de pontas de cabo.
+ * Não existe 4 pólos → usa 5. Acima de 5 até 10 → 10.
+ */
+function pickWagoSize(nPontas) {
+  const n = Math.max(0, Number(nPontas) || 0);
+  if (n < 2) return 0;
+  if (n === 2) return 2;
+  if (n === 3) return 3;
+  if (n <= 5) return 5; // 4 ou 5 pontas
+  if (n <= 10) return 10;
   return 10;
+}
+
+/** @deprecated use pickWagoSize */
+function wagoPolosPorDirecoes(nDirecoes) {
+  return pickWagoSize(nDirecoes);
+}
+
+/**
+ * Condutores emendados no ponto (cada um leva 1 Wago do mesmo tamanho).
+ * Interruptor/sensor: só fase. Demais: F(+fases)+N+PE conforme pólos.
+ */
+function condutoresEmendaNoPonto(tiposPonto, polos) {
+  const tipos = tiposPonto || [];
+  if (
+    tipos.length > 0 &&
+    tipos.every((t) => t === "interruptor" || t === "sensor" || t === "campainha")
+  ) {
+    return 1;
+  }
+  return nCondutoresOf(polos);
 }
 
 /** Escolhe o menor In ≥ ib na tabela. */
@@ -268,61 +294,99 @@ function dimensionarProtecao(circuits, sistema, balanceamento) {
 }
 
 /**
- * Wago por caminhos: separa 2, 3, 5 e 10 pólos.
- * - Caixa/ponto: cabo + dispositivo → 2 direções → Wago 2 × nCondutores
- * - Junção na rede (grau ≥ 3): Wago 3/5/10 × nCondutores conforme nº de saídas
+ * Wago pela lógica de pontas de cabo (ex. do usuário):
+ * - Neutro no ponto de luz (passa + luminária + segue) → 3 pontas → Wago 3P
+ * - Fase no ponto de luz (passa + interruptor + segue) → 3 pontas → Wago 3P
+ * - 4 pontas (chega + 2 derivações + segue) → Wago 5P (não existe 4P)
+ *
+ * Em cada nó da rede, por circuito:
+ *   pontas = arestas do caminho nesse nó + pontos desse circuito ancorados no nó
+ * Cada condutor (F/N/PE…) leva 1 Wago do tamanho escolhido.
+ *
+ * @param nodeEdgeEnds { [circId]: { [nodeIdx]: number } }
  */
-function contarWagos(projeto, graph, circuits = []) {
+function contarWagos(projeto, graph, circuits = [], nodeEdgeEnds = {}) {
   const porPolos = { 2: 0, 3: 0, 5: 0, 10: 0 };
   const circById = Object.fromEntries((circuits || []).map((c) => [c.id, c]));
-
   const points = (projeto.points || []).map((p) => normalizePoint(p));
   const caixas = points.filter((p) => p.tipo && p.tipo !== "qdc");
 
+  const qdc = points.find((p) => p.tipo === "qdc");
+  const qdcNode = qdc && graph?.snap ? graph.snap[qdc.id] : -1;
+
+  /** pontos do circuito ancorados em cada nó (exceto QDC) */
+  const nodeCircPoints = {};
   caixas.forEach((p) => {
-    const circ = circById[p.circuitoId];
-    const nCond = circ ? nCondutoresOf(circ.polos) : 3;
-    // Emenda cabo↔dispositivo: 2 vias por condutor
-    porPolos[2] += nCond;
+    if (!p.circuitoId) return;
+    const ni = graph?.snap?.[p.id];
+    if (ni == null || ni < 0) return;
+    if (ni === qdcNode) return;
+    const k = `${p.circuitoId}@${ni}`;
+    if (!nodeCircPoints[k]) nodeCircPoints[k] = [];
+    nodeCircPoints[k].push(p);
   });
 
-  const degree = {};
-  (graph?.edges || []).forEach((e) => {
-    degree[e.a] = (degree[e.a] || 0) + 1;
-    degree[e.b] = (degree[e.b] || 0) + 1;
+  const keys = new Set(Object.keys(nodeCircPoints));
+  Object.entries(nodeEdgeEnds || {}).forEach(([cid, nodes]) => {
+    Object.keys(nodes || {}).forEach((ni) => keys.add(`${cid}@${ni}`));
   });
-
-  // Condutores médios dos circuitos (para junções da rede)
-  const nCondMed =
-    circuits.length > 0
-      ? Math.round(
-          circuits.reduce((s, c) => s + nCondutoresOf(c.polos), 0) / circuits.length
-        )
-      : 3;
 
   let juncoes = 0;
-  Object.values(degree).forEach((d) => {
-    if (d < 3) return;
-    juncoes += 1;
-    const wPolos = wagoPolosPorDirecoes(d);
-    porPolos[wPolos] += nCondMed;
+  const detalhes = [];
+
+  keys.forEach((k) => {
+    const at = k.lastIndexOf("@");
+    const cid = k.slice(0, at);
+    const ni = Number(k.slice(at + 1));
+    if (!Number.isFinite(ni) || ni === qdcNode) return;
+
+    const edgeEnds = Number(nodeEdgeEnds?.[cid]?.[ni]) || 0;
+    const pts = nodeCircPoints[k] || [];
+    // Ignora vértices “de passagem” (2 arestas sem caixa) — não são emenda real
+    if (pts.length === 0 && edgeEnds < 3) return;
+
+    const nPontas = edgeEnds + pts.length;
+    if (nPontas < 2) return;
+
+    if (edgeEnds >= 3 || pts.length >= 2) juncoes += 1;
+
+    const circ = circById[cid];
+    const nCond = condutoresEmendaNoPonto(
+      pts.map((p) => p.tipo),
+      circ?.polos || 1
+    );
+    const size = pickWagoSize(nPontas);
+    if (!size || nCond < 1) return;
+
+    const qtdPorCond = nPontas > 10 ? Math.ceil(nPontas / 10) : 1;
+    const useSize = nPontas > 10 ? 10 : size;
+    porPolos[useSize] += nCond * qtdPorCond;
+
+    if (detalhes.length < 8) {
+      const onde =
+        pts.map((p) => p.tipo).filter(Boolean).join("/") || `nó ${ni}`;
+      detalhes.push(
+        `${cid}@${onde}: ${nPontas} pontas → ${nCond}× Wago ${useSize}P`
+      );
+    }
   });
 
   const unidades = Object.values(porPolos).reduce((s, n) => s + n, 0);
-  const detalhe = [2, 3, 5, 10]
+  const resumoPolos = [2, 3, 5, 10]
     .filter((p) => porPolos[p] > 0)
-    .map((p) => `${porPolos[p]}× Wago ${p}P`)
+    .map((p) => `${porPolos[p]}× ${p}P`)
     .join(" · ");
 
   return {
     porPolos,
     unidades,
-    pacotes: 0, // itens separados por pólos no BOM
+    pacotes: 0,
     caixas: caixas.length,
     juncoes,
+    detalhes,
     nota:
-      detalhe ||
-      `${caixas.length} caixa(s) · ${juncoes} junção(ões) — sem conectores estimados`
+      resumoPolos ||
+      "Sem emendas com 2+ pontas — nada a estimar de Wago"
   };
 }
 
@@ -476,6 +540,7 @@ export {
   resolvePolos,
   nCondutoresOf,
   labelPolosDj,
+  pickWagoSize,
   TENSOES_PONTO,
   balancearCargas,
   dimensionarProtecao,
