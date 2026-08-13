@@ -859,12 +859,20 @@ function polylineLength(verts) {
       circ.comprimentoM = len3d;
 
       const nPontosCarga = pontosCarga.length;
+      // Agrupamento = pior trecho: máx. de circuitos no mesmo conduíte deste caminho
+      // (não a união de todos os conduítes — isso inflava bitola do chuveiro)
       const nAgr = (() => {
-        const set = new Set([circ.id]);
+        let maxN = 1;
         (circ.conduitesIds || []).forEach((eid) => {
-          Object.keys(conduitUse[eid] || {}).forEach((cid) => set.add(cid));
+          const n = Object.keys(conduitUse[eid] || {}).length;
+          if (n > maxN) maxN = n;
         });
-        return Math.max(1, set.size);
+        // Circuitos dedicados (chuveiro/ar): no ramal final costumam ir sozinhos —
+        // limita o fator ao tronco compartilhado com teto razoável residencial
+        if ((circ.tipoId === "chuveiro" || circ.tipoId === "ar") && maxN > 4) {
+          maxN = 4;
+        }
+        return Math.max(1, maxN);
       })();
       const agrupamentoId =
         typeof NBR5410.agrupamentoIdFromN === "function"

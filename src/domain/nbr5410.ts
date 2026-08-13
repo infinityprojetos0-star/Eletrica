@@ -52,7 +52,7 @@ import { getPrecoByModo } from "../data/catalog";
       curva: "C",
       fp: 1,
       drRecomendado: true,
-      descricao: "Tomadas gerais — mín. 2,5 mm² · DJ 20 A (16 A se poucas tomadas)"
+      descricao: "Tomadas gerais — mín. 2,5 mm² · DJ mín. 20 A"
     },
     {
       id: "chuveiro",
@@ -194,23 +194,23 @@ import { getPrecoByModo } from "../data/catalog";
 
   function escolherDisjuntor(ib, izCorrigida) {
     for (const In of DISJUNTORES) {
-      if (In >= ib && In <= izCorrigida + 1e-9) return In;
+      if (In >= ib - 1e-9 && In <= izCorrigida + 1e-9) return In;
     }
-    const minOk = DISJUNTORES.find((In) => In >= ib) || DISJUNTORES[DISJUNTORES.length - 1];
-    return minOk;
+    return null;
   }
 
   /**
-   * TUG: prática de obra — DJ 20 A; com poucas tomadas (≤2) pode 16 A.
-   * Sempre Ib ≤ In ≤ Iz.
+   * Menor In comercial com: In ≥ max(Ib, inMin) e In ≤ Iz.
+   * TUG: inMin = 20 A (nunca 6/10/16 A).
    */
-  function escolherDisjuntorTug(ib, izCorrigida, nPontos) {
-    const n = Number(nPontos) || 0;
-    const preferidos = n > 0 && n <= 2 ? [16, 20] : [20, 16];
-    for (const In of preferidos) {
-      if (In >= ib - 1e-9 && In <= izCorrigida + 1e-9) return In;
-    }
-    return escolherDisjuntor(ib, izCorrigida);
+  function escolherDisjuntorComPiso(ib, izCorrigida, inMin = 0) {
+    const need = Math.max(Number(ib) || 0, Number(inMin) || 0);
+    return escolherDisjuntor(need, izCorrigida);
+  }
+
+  /** Próximo In comercial ≥ ib (sem teto Iz) — só para diagnóstico. */
+  function proximoDisjuntorAcima(ib) {
+    return DISJUNTORES.find((In) => In >= ib - 1e-9) || DISJUNTORES[DISJUNTORES.length - 1];
   }
 
   /**
@@ -233,6 +233,13 @@ import { getPrecoByModo } from "../data/catalog";
     return { dV, pct, okTerminal: pct <= 4, okOrigem: pct <= 7 };
   }
 
+  /**
+   * Dimensionamento:
+   * 1) Ib = P/(V·fp) [com fases]
+   * 2) Cabo = menor bitola com Iz·ka·kt ≥ Ib (e ≥ DJ mínimo, ex. TUG 20 A)
+   * 3) DJ = menor In com Ib ≤ In ≤ Iz (e In ≥ piso do tipo)
+   * Ex.: Ib 34 A → 4 mm² (32 A) não serve → 6 mm² (41 A) → DJ 40 A.
+   */
   function dimensionar(input) {
     const tipo = tipoById(input.tipoId);
     const potenciaW = Number(input.potenciaW ?? tipo.potenciaPadrao ?? 0);
@@ -244,7 +251,6 @@ import { getPrecoByModo } from "../data/catalog";
     const { ka, kt, k } = fatorK(input.agrupamentoId || "1", input.tempId || "30");
     const forcarDr = input.dr === true || (input.dr !== false && tipo.drRecomendado);
 
-    // TUE em tomada: bitola máx. 4 mm² (borne). Chuveiro/ar/motor podem subir.
     const secaoMax =
       input.secaoMax != null
         ? Number(input.secaoMax)
@@ -252,10 +258,51 @@ import { getPrecoByModo } from "../data/catalog";
           ? SECAO_MAX_TOMADA_TUE
           : null;
 
+    // TUG: disjuntor mínimo 20 A → cabo precisa aguentar pelo menos 20 A
+    const inMin = tipo.id === "tug" ? 20 : Number(input.inMin) || 0;
+
     const ib = correnteProjeto({ potenciaW, tensaoV, fases: fases === 3 ? 3 : 1, fp });
-    const cabo = escolherCabo(ib, tipo.secaoMin, k, secaoMax);
+    const ibParaCabo = Math.max(ib, inMin);
+
+    const avisos = [];
+    let precisaDividirCircuito = false;
+
+    // 1) Menor bitola cuja Iz corrigida ≥ corrente de projeto (e piso do DJ)
+    let cabo = escolherCabo(ibParaCabo, tipo.secaoMin, k, secaoMax);
     let secao = cabo.secao;
     let izCorrigida = cabo.izCorrigida;
+    if (cabo.alerta) avisos.push(cabo.alerta);
+
+    // 2) Disjuntor: Ib ≤ In ≤ Iz (com piso TUG 20 A)
+    let disjuntorIn = escolherDisjuntorComPiso(ib, izCorrigida, inMin);
+
+    // 3) Se não cabe DJ no cabo (ex.: Ib 43 A e Iz 41 A), sobe bitola até caber
+    for (let guard = 0; guard < 12; guard++) {
+      if (disjuntorIn != null && disjuntorIn <= izCorrigida + 1e-9 && izCorrigida + 1e-9 >= ibParaCabo) {
+        break;
+      }
+      const idx = CABOS.findIndex((c) => c.secao === secao);
+      const next = CABOS[idx + 1];
+      if (!next || (secaoMax != null && next.secao > secaoMax + 1e-9)) {
+        precisaDividirCircuito = secaoMax != null;
+        // Nunca escolher In < Ib. Mantém o menor In ≥ Ib e avisa.
+        disjuntorIn = proximoDisjuntorAcima(Math.max(ib, inMin));
+        avisos.push(
+          `Não há bitola${secaoMax != null ? ` ≤ ${secaoMax} mm²` : ""} com Iz ≥ Ib ${ib.toFixed(1)} A ` +
+            `e DJ ≥ ${Math.max(ib, inMin).toFixed(0)} A (Iz atual ${izCorrigida.toFixed(1)} A, ka=${ka}). ` +
+            (secaoMax != null
+              ? "Divida o circuito TUE, use 220 V ou reduza o agrupamento."
+              : "Consulte projeto / aumente bitola manualmente.")
+        );
+        break;
+      }
+      secao = next.secao;
+      izCorrigida = next.iz * k;
+      disjuntorIn = escolherDisjuntorComPiso(ib, izCorrigida, inMin);
+      avisos.push(`Cabo ${secao} mm² (Iz ${izCorrigida.toFixed(1)} A) para caber Ib/DJ.`);
+    }
+
+    // 4) Queda de tensão: sobe bitola se > 4%, depois revalida DJ
     let queda = quedaTensao({
       comprimentoM,
       correnteA: ib,
@@ -263,18 +310,13 @@ import { getPrecoByModo } from "../data/catalog";
       tensaoV,
       fases: fases === 3 ? 3 : 1
     });
-
-    const avisos = [];
-    if (cabo.alerta) avisos.push(cabo.alerta);
-
-    // Aumenta seção por queda de tensão — sem passar do teto TUE (4 mm²)
     while (!queda.okTerminal && secao < CABOS[CABOS.length - 1].secao) {
       const idx = CABOS.findIndex((c) => c.secao === secao);
       const next = CABOS[idx + 1];
       if (!next) break;
       if (secaoMax != null && next.secao > secaoMax + 1e-9) {
         avisos.push(
-          `Queda ${queda.pct.toFixed(2)}% com ${secao} mm² — não sobe bitola (limite ${secaoMax} mm² em borne de tomada). Considere encurtar o circuito ou dividir.`
+          `Queda ${queda.pct.toFixed(2)}% — bitola limitada a ${secaoMax} mm² (borne). Encurte o circuito ou divida.`
         );
         break;
       }
@@ -287,61 +329,30 @@ import { getPrecoByModo } from "../data/catalog";
         tensaoV,
         fases: fases === 3 ? 3 : 1
       });
-      avisos.push(`Seção aumentada para ${secao} mm² por queda de tensão (limite ~4%).`);
+      avisos.push(`Seção aumentada para ${secao} mm² por queda de tensão (~4%).`);
+      const dj2 = escolherDisjuntorComPiso(ib, izCorrigida, inMin);
+      if (dj2 != null) disjuntorIn = dj2;
     }
 
-    if (secao < tipo.secaoMin) {
-      secao = tipo.secaoMin;
-      const c = CABOS.find((x) => x.secao === secao) || cabo;
-      izCorrigida = c.iz * k;
+    // Garante DJ final coerente (Ib ≤ In ≤ Iz) quando possível
+    const djFinal = escolherDisjuntorComPiso(ib, izCorrigida, inMin);
+    if (djFinal != null) {
+      disjuntorIn = djFinal;
+    } else if (disjuntorIn == null) {
+      disjuntorIn = proximoDisjuntorAcima(Math.max(ib, inMin));
     }
 
-    let precisaDividirCircuito = false;
-    if (secaoMax != null && ib > izCorrigida + 0.05) {
-      precisaDividirCircuito = true;
+    // Sanidade: se In < Ib, corrige (nunca proteger a menos)
+    if (disjuntorIn + 1e-9 < Math.max(ib, inMin)) {
+      disjuntorIn = proximoDisjuntorAcima(Math.max(ib, inMin));
+      precisaDividirCircuito = precisaDividirCircuito || secaoMax != null;
       avisos.push(
-        `Ib ${ib.toFixed(1)} A > Iz ${izCorrigida.toFixed(1)} A em ${secao} mm² (ka=${ka}, kt=${kt}). ` +
-          `TUE não pode passar de ${secaoMax} mm² no borne — divida em 2 circuitos ou use 220 V / menos agrupamento.`
+        `DJ ajustado para ${disjuntorIn} A (≥ Ib ${ib.toFixed(1)} A). Verifique se Iz ${izCorrigida.toFixed(1)} A ainda protege o cabo.`
       );
     }
 
-    let disjuntorIn =
-      tipo.id === "tug"
-        ? escolherDisjuntorTug(ib, izCorrigida, nPontos)
-        : escolherDisjuntor(ib, izCorrigida);
-
-    // Garante cabo compatível com Ib e In ≤ Iz (respeitando secaoMax)
-    for (let guard = 0; guard < 8; guard++) {
-      if (disjuntorIn <= izCorrigida + 1e-9 && izCorrigida + 1e-9 >= ib) break;
-      const idx = CABOS.findIndex((c) => c.secao === secao);
-      const next = CABOS[idx + 1];
-      if (!next || (secaoMax != null && next.secao > secaoMax + 1e-9)) {
-        if (secaoMax != null) {
-          precisaDividirCircuito = true;
-          // Protege o cabo: In ≤ Iz mesmo que Ib fique acima (alerta já emitido)
-          disjuntorIn = escolherDisjuntor(Math.min(ib, izCorrigida), izCorrigida);
-          if (tipo.id === "tug") {
-            disjuntorIn = escolherDisjuntorTug(Math.min(ib, izCorrigida), izCorrigida, nPontos);
-          }
-        } else {
-          avisos.push(
-            `Disjuntor ${disjuntorIn} A / Ib ${ib.toFixed(1)} A acima da tabela de cabos embutida.`
-          );
-        }
-        break;
-      }
-      secao = next.secao;
-      izCorrigida = next.iz * k;
-      avisos.push(`Cabo ajustado para ${secao} mm² (Ib/disjuntor).`);
-      disjuntorIn =
-        tipo.id === "tug"
-          ? escolherDisjuntorTug(ib, izCorrigida, nPontos)
-          : escolherDisjuntor(ib, izCorrigida);
-    }
-
-    // TUG: reforça preferência 20 A / 16 A após cabo final
-    if (tipo.id === "tug") {
-      disjuntorIn = escolherDisjuntorTug(ib, izCorrigida, nPontos);
+    if (secaoMax != null && (ib > izCorrigida + 0.05 || disjuntorIn > izCorrigida + 1e-9)) {
+      precisaDividirCircuito = true;
     }
 
     const polos =
@@ -379,6 +390,7 @@ import { getPrecoByModo } from "../data/catalog";
         fp,
         comprimentoM,
         nPontos,
+        inMin,
         agrupamentoId: input.agrupamentoId || "1",
         tempId: input.tempId || "30",
         ka,
@@ -397,7 +409,7 @@ import { getPrecoByModo } from "../data/catalog";
       precisaDividirCircuito,
       avisos: [...new Set(avisos)],
       disclaimer:
-        "Cálculo auxiliar conforme critérios simplificados da NBR 5410 (B1, agrupamento, queda). Confirme método de instalação e proteção no projeto oficial."
+        "Cálculo auxiliar NBR 5410: cabo com Iz·k ≥ Ib; disjuntor com Ib ≤ In ≤ Iz. Confirme método de instalação no projeto oficial."
     };
   }
 
