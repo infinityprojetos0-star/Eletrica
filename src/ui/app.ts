@@ -7,6 +7,7 @@ import { PDF } from "../pdf/pdf";
 import { NBR5410 } from "../domain/nbr5410";
 import { PreProjeto } from "../domain/preprojeto";
 import { ProjetoEletrico } from "./projeto-eletrico/editor";
+import { sugerirServicosProjeto } from "../domain/projeto/circuits";
 import {
   money,
   formatDate,
@@ -1935,8 +1936,18 @@ export function initApp() {
           render();
         },
         onCreateOrcamento: (proj, analise) => {
-          if (!analise?.materiais?.length) return toast("Rode a análise antes");
-          const clientes = getState().clientes;
+          if (!analise?.materiais?.length && !analise?.maoObra?.length) {
+            return toast("Rode a análise antes");
+          }
+          const st = getState();
+          const modo = getPrecoModo();
+          const maoObra =
+            analise.maoObra?.length
+              ? analise.maoObra
+              : sugerirServicosProjeto(proj, analise, st.servicos, modo);
+          const nServ = maoObra.length;
+          const nMat = (analise.materiais || []).length;
+          const clientes = st.clientes;
           openModal(
             "Orçamento do projeto elétrico",
             `
@@ -1950,7 +1961,7 @@ export function initApp() {
               <div class="field full"><label>Título</label>
                 <input id="peOrcTitulo" value="Projeto elétrico — ${proj.nome}" />
               </div>
-              <p class="hint" style="grid-column:1/-1">${analise.circuits.length} circuitos · lista NBR 5410 auxiliar</p>
+              <p class="hint" style="grid-column:1/-1">${analise.circuits?.length || 0} circuitos · <strong>${nServ}</strong> serviços · <strong>${nMat}</strong> materiais (modelo VoltES / NBR 5410)</p>
             </div>
             `,
             `<button class="btn btn-secondary" id="peOrcCancel">Cancelar</button>
@@ -1958,20 +1969,61 @@ export function initApp() {
           );
           document.getElementById("peOrcCancel").onclick = closeModal;
           document.getElementById("peOrcOk").onclick = () => {
-            const modo = getPrecoModo();
-            const itens = analise.materiais.map((m) => ({
-              id: uid("item"),
-              tipo: "produto",
-              refId: m.refId || null,
-              nome: m.nome,
-              unidade: m.unidade || "un",
-              qtd: m.qtd,
-              preco: Number(m.preco || 0),
-              precoMin: m.precoMin,
-              precoMed: m.precoMed,
-              precoMax: m.precoMax,
-              nota: m.nota || ""
-            }));
+            const itensServ = (maoObra || []).map((m) => {
+              const sv = st.servicos.find((x) => x.id === m.refId);
+              const base = sv ? getPrecoByModo(sv, modo) : Number(m.preco || 0);
+              const ocultas = sv
+                ? despesasDoServico(sv.id, st).map((d) => ({
+                    id: d.id,
+                    nome: d.nome,
+                    valor: Number(d.valor) || 0,
+                    global: !!d.global
+                  }))
+                : [];
+              const custoOculto = ocultas.reduce((t, d) => t + d.valor, 0);
+              return {
+                id: uid("item"),
+                tipo: "servico",
+                refId: m.refId || null,
+                nome: m.nome,
+                unidade: m.unidade || "un",
+                qtd: Number(m.qtd) || 1,
+                precoBase: base,
+                custoOculto,
+                despesasOcultas: ocultas,
+                preco: base + custoOculto,
+                precoMin: m.precoMin ?? sv?.precoMin,
+                precoMed: m.precoMed ?? sv?.preco,
+                precoMax: m.precoMax ?? sv?.precoMax,
+                precoModo: modo,
+                nota: m.nota || ""
+              };
+            });
+            const itensMat = (analise.materiais || []).map((m) => {
+              const prod = m.refId ? st.produtos.find((x) => x.id === m.refId) : null;
+              const unit = prod ? getPrecoByModo(prod, modo) : Number(m.preco || 0);
+              // Cabos no catálogo são rolo 100 m → preço/m já vem de analise (÷100)
+              const precoUnit =
+                m.unidade === "m" && m.preco != null && Number(m.preco) > 0
+                  ? Number(m.preco)
+                  : m.unidade === "m" && prod
+                    ? unit / 100
+                    : unit;
+              return {
+                id: uid("item"),
+                tipo: "produto",
+                refId: m.refId || null,
+                nome: m.nome,
+                unidade: m.unidade || "un",
+                qtd: m.qtd,
+                preco: precoUnit,
+                precoMin: m.precoMin ?? prod?.precoMin,
+                precoMed: m.precoMed ?? prod?.preco,
+                precoMax: m.precoMax ?? prod?.precoMax,
+                precoModo: modo,
+                nota: m.nota || ""
+              };
+            });
             const data = {
               id: uid("orc"),
               codigo: `ORC-${Date.now().toString(36).toUpperCase()}`,
@@ -1980,10 +2032,10 @@ export function initApp() {
               data: todayISO(),
               validade: 15,
               observacoes:
-                `Gerado do projeto elétrico "${proj.nome}". ${analise.disclaimer}`,
+                `Gerado do projeto elétrico "${proj.nome}". Serviços e materiais conforme a planta (NBR 5410 auxiliar). ${analise.disclaimer || ""}`,
               nf: "nao",
               precoModo: modo,
-              itens,
+              itens: [...itensServ, ...itensMat],
               status: "pendente",
               origem: "projeto-eletrico",
               projetoId: proj.id,
@@ -1991,9 +2043,10 @@ export function initApp() {
             };
             Store.update({ orcamentos: [...getState().orcamentos, data] });
             closeModal();
-            toast("Orçamento criado a partir do projeto");
+            toast(`Orçamento criado · ${itensServ.length} serviços · ${itensMat.length} materiais`);
             peEditingId = null;
             navigate("orcamentos");
+            openOrcamentoForm(data);
           };
         }
       });

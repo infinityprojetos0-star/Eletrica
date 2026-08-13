@@ -413,7 +413,7 @@ function polylineLength(verts) {
     }));
   }
 
-  function analisar(projeto, { produtos, modoPreco } = {}) {
+  function analisar(projeto, { produtos, servicos, modoPreco } = {}) {
     const uso = projeto.uso === "comercial" ? "comercial" : "residencial";
     const sistema = resolveSistema(projeto);
     const lim =
@@ -1076,6 +1076,12 @@ function polylineLength(verts) {
       balanceamento
     });
 
+    const maoObra = sugerirServicosProjeto(projetoMat, {
+      circuits,
+      protecao,
+      wago
+    }, servicos, modoPreco || "medio");
+
     return {
       uso,
       sistema,
@@ -1087,6 +1093,7 @@ function polylineLength(verts) {
       points: pointsOut,
       materiais,
       materiaisPorCircuito,
+      maoObra,
       protecao,
       balanceamento,
       wago,
@@ -1402,6 +1409,182 @@ function polylineLength(verts) {
     return consolidarItens(itens);
   }
 
+  /**
+   * Conta pontos da planta para mão de obra (espelha o pré-projeto / catálogo Engehall).
+   */
+  function contarPontosProjeto(projeto) {
+    const tot = {
+      tomadas10: 0,
+      tomadas20: 0,
+      interruptores: 0,
+      paralelos: 0,
+      dimmers: 0,
+      pontosLuz: 0,
+      spots: 0,
+      ventiladores: 0,
+      sensores: 0,
+      chuveiros: 0,
+      ares: 0,
+      fogoes: 0,
+      caixas: 0
+    };
+
+    const bumpInt = (variante) => {
+      const v = String(variante || "simples");
+      if (v === "paralelo" || v === "intermediario") tot.paralelos += 1;
+      else if (v === "dimmer") tot.dimmers += 1;
+      else if (v === "sensor_embutido") tot.sensores += 1;
+      else tot.interruptores += 1;
+    };
+
+    (projeto.points || []).forEach((raw) => {
+      const p = normalizePoint(raw);
+      if (p.tipo === "tomada") {
+        const mods = Math.max(1, modulosTomada(p.modulos).modulos);
+        if (p.usoCircuito === "tue" || Number(p.amperagem) >= 20) tot.tomadas20 += mods;
+        else tot.tomadas10 += mods;
+        tot.caixas += 1;
+      } else if (p.tipo === "conjugado") {
+        const mods = Math.max(1, modulosTomada(p.modulos).modulos);
+        if (p.usoCircuito === "tue" || Number(p.amperagem) >= 20) tot.tomadas20 += mods;
+        else tot.tomadas10 += mods;
+        bumpInt(p.variante);
+        tot.caixas += 1;
+      } else if (p.tipo === "interruptor") {
+        bumpInt(p.variante);
+        tot.caixas += 1;
+      } else if (p.tipo === "lampada") {
+        const v = String(p.variante || "ponto");
+        if (v === "ventilador") tot.ventiladores += 1;
+        else if (v === "spot") tot.spots += 1;
+        else tot.pontosLuz += 1;
+        tot.caixas += 1;
+      } else if (p.tipo === "chuveiro") {
+        tot.chuveiros += 1;
+        tot.caixas += 1;
+      } else if (p.tipo === "ar") {
+        tot.ares += 1;
+        tot.caixas += 1;
+      } else if (p.tipo === "fogao") {
+        tot.fogoes += 1;
+        tot.caixas += 1;
+      } else if (p.tipo === "sensor") {
+        tot.sensores += 1;
+        tot.caixas += 1;
+      }
+    });
+
+    return tot;
+  }
+
+  /**
+   * Serviços (mão de obra) a partir dos pontos reais do projeto + análise NBR.
+   */
+  function sugerirServicosProjeto(projeto, analise, servicos, modo = "medio") {
+    const list = servicos || [];
+    const find = (pred) => list.find(pred);
+    const itens = [];
+    const p = contarPontosProjeto(projeto);
+    const circuits = analise?.circuits || [];
+    const protecao = analise?.protecao || null;
+
+    const add = (sv, qtd, nomeExtra, nota) => {
+      if (!sv || !(qtd > 0)) return;
+      const base =
+        typeof getPrecoByModo === "function" ? getPrecoByModo(sv, modo) : Number(sv.preco || 0);
+      itens.push({
+        tipo: "servico",
+        refId: sv.id,
+        nome: nomeExtra || sv.nome,
+        unidade: sv.unidade || "un",
+        qtd: Math.ceil(qtd),
+        preco: base,
+        precoMin: sv.precoMin,
+        precoMed: sv.preco,
+        precoMax: sv.precoMax,
+        nota: nota || "Gerado do projeto elétrico"
+      });
+    };
+
+    add(find((s) => s.id === "srv-2" || /tomada nova/i.test(s.nome || "")), p.tomadas10);
+    add(find((s) => s.id === "srv-3" || /tomada 20A|20A \/ 220/i.test(s.nome || "")), p.tomadas20);
+    add(find((s) => s.id === "srv-5" || /interruptor novo/i.test(s.nome || "")), p.interruptores);
+    add(find((s) => s.id === "srv-29" || /paralelo|three-way/i.test(s.nome || "")), p.paralelos);
+    add(find((s) => s.id === "srv-6" || /dimmer/i.test(s.nome || "")), p.dimmers);
+    add(find((s) => s.id === "srv-8" || /ponto de ilumina/i.test(s.nome || "")), p.pontosLuz);
+    add(find((s) => s.id === "srv-9" || /spot/i.test(s.nome || "")), p.spots);
+    add(find((s) => s.id === "srv-11" || /ventilador/i.test(s.nome || "")), p.ventiladores);
+    add(find((s) => s.id === "srv-10" || /sensor/i.test(s.nome || "")), p.sensores);
+    add(find((s) => s.id === "srv-12" || /chuveiro el/i.test(s.nome || "")), p.chuveiros);
+    add(find((s) => s.id === "srv-13" || /ar-condicionado/i.test(s.nome || "")), p.ares);
+    if (p.fogoes) {
+      add(
+        find((s) => s.id === "srv-3" || /20A|220V/i.test(s.nome || "")),
+        p.fogoes,
+        "Circuito / ponto para fogão ou forno"
+      );
+    }
+
+    const nCirc = circuits.length;
+    if (nCirc > 0) {
+      if (projeto.uso === "comercial" || nCirc > 12) {
+        add(
+          find((s) => s.id === "srv-23" || /quadro comercial/i.test(s.nome || "")),
+          1,
+          nCirc <= 24 ? "Montagem de quadro comercial" : "Montagem de quadro comercial (ampliado)",
+          `${nCirc} circuito(s)`
+        );
+      } else {
+        add(
+          find((s) => s.id === "srv-16" || /quadro \(até 12/i.test(s.nome || "")),
+          1,
+          "Montagem de quadro (até 12 circuitos)",
+          `${nCirc} circuito(s)`
+        );
+      }
+      add(
+        find((s) => s.id === "srv-14" || /troca de disjuntor/i.test(s.nome || "")),
+        nCirc,
+        "Instalação de disjuntor (por circuito)",
+        "1 por circuito da análise"
+      );
+    }
+
+    if (protecao?.idr || (protecao?.drs || []).length) {
+      add(find((s) => s.id === "srv-15" || /disjuntor dr|\bidr\b/i.test(s.nome || "")), 1);
+    }
+    const qDps = Number(protecao?.resumo?.qtdDpsModulos) || 0;
+    if (qDps > 0) {
+      add(find((s) => s.id === "srv-26" || /dps/i.test(s.nome || "")), qDps);
+    }
+    if (projeto.aterramento === false) {
+      add(find((s) => s.id === "srv-18" || /aterramento/i.test(s.nome || "")), 1);
+    }
+
+    // Passagem de cabo: metros de conduíte (mín. 1 se houver pontos)
+    let metrosTubo = 0;
+    (projeto.conduits || []).forEach((c) => {
+      metrosTubo += polylineLength(c.points || []);
+    });
+    if (metrosTubo > 0.5) {
+      add(
+        find((s) => s.id === "srv-27" || /passagem de cabo/i.test(s.nome || "")),
+        Math.ceil(metrosTubo),
+        null,
+        "Metros de conduíte traçado"
+      );
+    } else if (p.caixas > 0) {
+      add(
+        find((s) => s.id === "srv-19" || /passagem de fia/i.test(s.nome || "")),
+        p.caixas,
+        null,
+        "Estimativa por ponto (sem metragem de conduíte)"
+      );
+    }
+
+    return itens;
+  }
+
   /* ===================== UI / Editor ===================== */
 
 
@@ -1419,6 +1602,8 @@ export {
   packCircuits,
   renumerarCircuitos,
   consolidarItens,
+  contarPontosProjeto,
+  sugerirServicosProjeto,
   analisar,
   montarMateriais
 };

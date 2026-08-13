@@ -453,6 +453,7 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
       selectedCircuitId = null;
       const analise = analisar(projeto, {
         produtos: ctx.produtos,
+        servicos: ctx.servicos,
         modoPreco: ctx.precoModo
       });
       projeto.points = analise.points;
@@ -464,10 +465,11 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
       refreshSelectionUI();
       const nCirc = analise.circuits?.length || 0;
       const nMat = analise.materiais?.length || 0;
+      const nServ = analise.maoObra?.length || 0;
       const ids = (analise.circuits || []).map((c) => c.id).join(", ");
       const comPath = (analise.circuits || []).filter((c) => (c.caminhos || []).length).length;
       ctx.toast?.(
-        `Circuitos ${ids || "—"} · ${nMat} materiais · ${comPath}/${nCirc} com caminho`
+        `Circuitos ${ids || "—"} · ${nServ} serviços · ${nMat} materiais · ${comPath}/${nCirc} com caminho`
       );
     }
 
@@ -3536,6 +3538,24 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
             <div class="pe-side-block">
               <h3>Materiais (total)</h3>
               ${matHtml || `<p class="hint">Rode a análise para gerar a lista.</p>`}
+            </div>
+            <div class="pe-side-block">
+              <h3>Serviços (mão de obra)</h3>
+              ${
+                a?.maoObra?.length
+                  ? `<p class="hint" style="margin-bottom:6px">${a.maoObra.length} item(ns) identificados nos pontos da planta</p>
+                    <div class="pe-mat-wrap"><table class="pe-mat"><thead><tr><th>Serviço</th><th class="pe-mat-qtd">Qtd</th></tr></thead><tbody>
+                    ${a.maoObra
+                      .map(
+                        (m) =>
+                          `<tr><td><div class="pe-mat-nome">${escapeHtml(m.nome)}</div>${
+                            m.nota ? `<div class="hint">${escapeHtml(m.nota)}</div>` : ""
+                          }</td><td class="pe-mat-qtd"><strong>${m.qtd}</strong> ${escapeHtml(m.unidade || "")}</td></tr>`
+                      )
+                      .join("")}
+                    </tbody></table></div>`
+                  : `<p class="hint">Rode a análise para estimar serviços pelos pontos (tomadas, luz, quadro…).</p>`
+              }
             </div>
           </div>
           ${
