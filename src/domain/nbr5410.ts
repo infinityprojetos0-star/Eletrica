@@ -4,18 +4,24 @@ import { getPrecoByModo } from "../data/catalog";
 
   const DISJUNTORES = [6, 10, 16, 20, 25, 32, 40, 50, 63, 70, 80, 100, 125, 160];
 
-  /** Iz aproximado (A) — PVC 70 °C, B1, 2 carregados */
+  /**
+   * Iz (A) — Cu PVC 70 °C, método B1 (eletroduto embutido), 2 condutores carregados.
+   * Valores de referência práticos (NBR 5410 / tabelas de obra, ex. Engehall).
+   */
   const CABOS = [
-    { secao: 1.5, iz: 15.5 },
-    { secao: 2.5, iz: 21 },
-    { secao: 4, iz: 28 },
-    { secao: 6, iz: 36 },
-    { secao: 10, iz: 50 },
-    { secao: 16, iz: 68 },
-    { secao: 25, iz: 89 },
-    { secao: 35, iz: 110 },
-    { secao: 50, iz: 134 }
+    { secao: 1.5, iz: 17.5 },
+    { secao: 2.5, iz: 24 },
+    { secao: 4, iz: 32 },
+    { secao: 6, iz: 41 },
+    { secao: 10, iz: 57 },
+    { secao: 16, iz: 76 },
+    { secao: 25, iz: 101 },
+    { secao: 35, iz: 125 },
+    { secao: 50, iz: 151 }
   ];
+
+  /** Bitola máxima em bornes de tomada TUE (acima disso não entra no terminal). */
+  const SECAO_MAX_TOMADA_TUE = 4;
 
   const TIPOS = [
     {
@@ -29,16 +35,6 @@ import { getPrecoByModo } from "../data/catalog";
       descricao: "Circuito de iluminação (mín. 1,5 mm² — NBR 5410)"
     },
     {
-      id: "tug",
-      label: "Tomadas de uso geral (TUG)",
-      secaoMin: 2.5,
-      polos: 1,
-      curva: "C",
-      fp: 1,
-      drRecomendado: true,
-      descricao: "Tomadas gerais — mín. 2,5 mm²"
-    },
-    {
       id: "tue",
       label: "Tomada de uso específico (TUE)",
       secaoMin: 2.5,
@@ -46,7 +42,17 @@ import { getPrecoByModo } from "../data/catalog";
       curva: "C",
       fp: 1,
       drRecomendado: true,
-      descricao: "Carga dedicada (ex.: forno, micro-ondas)"
+      descricao: "Carga dedicada em tomada — bitola máx. 4 mm² (borne); acima disso dividir circuito"
+    },
+    {
+      id: "tug",
+      label: "Tomadas de uso geral (TUG)",
+      secaoMin: 2.5,
+      polos: 1,
+      curva: "C",
+      fp: 1,
+      drRecomendado: true,
+      descricao: "Tomadas gerais — mín. 2,5 mm² · DJ 20 A (16 A se poucas tomadas)"
     },
     {
       id: "chuveiro",
@@ -96,12 +102,22 @@ import { getPrecoByModo } from "../data/catalog";
     }
   ];
 
+  /**
+   * Fator de agrupamento (redução de Iz) — circuitos no mesmo eletroduto.
+   * Ids legados "2-3"/"4-5"/… mantidos por compatibilidade.
+   */
   const FATOR_AGRUPAMENTO = [
     { id: "1", label: "1 circuito no eletroduto", k: 1 },
-    { id: "2-3", label: "2 a 3 circuitos", k: 0.8 },
-    { id: "4-5", label: "4 a 5 circuitos", k: 0.7 },
-    { id: "6-7", label: "6 a 7 circuitos", k: 0.65 },
-    { id: "8+", label: "8 ou mais circuitos", k: 0.6 }
+    { id: "2", label: "2 circuitos", k: 0.8 },
+    { id: "3", label: "3 circuitos", k: 0.7 },
+    { id: "4", label: "4 circuitos", k: 0.65 },
+    { id: "5", label: "5 circuitos", k: 0.6 },
+    { id: "6", label: "6 circuitos", k: 0.57 },
+    { id: "7+", label: "7 ou mais circuitos", k: 0.54 },
+    { id: "2-3", label: "2 a 3 circuitos", k: 0.7 },
+    { id: "4-5", label: "4 a 5 circuitos", k: 0.65 },
+    { id: "6-7", label: "6 a 7 circuitos", k: 0.57 },
+    { id: "8+", label: "8 ou mais circuitos", k: 0.54 }
   ];
 
   const FATOR_TEMP = [
@@ -110,6 +126,17 @@ import { getPrecoByModo } from "../data/catalog";
     { id: "40", label: "40 °C", k: 0.87 },
     { id: "45", label: "45 °C", k: 0.79 }
   ];
+
+  function agrupamentoIdFromN(n) {
+    const q = Math.max(1, Math.round(Number(n) || 1));
+    if (q <= 1) return "1";
+    if (q === 2) return "2";
+    if (q === 3) return "3";
+    if (q === 4) return "4";
+    if (q === 5) return "5";
+    if (q === 6) return "6";
+    return "7+";
+  }
 
   function tipos() {
     return TIPOS.slice();
@@ -135,11 +162,27 @@ import { getPrecoByModo } from "../data/catalog";
     return { ka, kt, k: ka * kt };
   }
 
-  function escolherCabo(ib, secaoMin, k) {
+  function izCabo(secao, k) {
+    const cabo = CABOS.find((c) => c.secao === secao);
+    if (!cabo) return 0;
+    return cabo.iz * (Number(k) || 1);
+  }
+
+  function escolherCabo(ib, secaoMin, k, secaoMax = null) {
     for (const cabo of CABOS) {
       if (cabo.secao + 1e-9 < secaoMin) continue;
+      if (secaoMax != null && cabo.secao - 1e-9 > secaoMax) continue;
       const izCorrigida = cabo.iz * k;
       if (izCorrigida + 1e-9 >= ib) return { ...cabo, izCorrigida };
+    }
+    // Sem cabo ≤ secaoMax que aguente Ib
+    if (secaoMax != null) {
+      const capped = [...CABOS].reverse().find((c) => c.secao <= secaoMax + 1e-9) || CABOS[0];
+      return {
+        ...capped,
+        izCorrigida: capped.iz * k,
+        alerta: `Ib acima da capacidade de ${capped.secao} mm² com os fatores aplicados.`
+      };
     }
     const last = CABOS[CABOS.length - 1];
     return {
@@ -153,9 +196,21 @@ import { getPrecoByModo } from "../data/catalog";
     for (const In of DISJUNTORES) {
       if (In >= ib && In <= izCorrigida + 1e-9) return In;
     }
-    // Se nenhum cabe entre Ib e Iz, pega o menor ≥ Ib e alerta
     const minOk = DISJUNTORES.find((In) => In >= ib) || DISJUNTORES[DISJUNTORES.length - 1];
     return minOk;
+  }
+
+  /**
+   * TUG: prática de obra — DJ 20 A; com poucas tomadas (≤2) pode 16 A.
+   * Sempre Ib ≤ In ≤ Iz.
+   */
+  function escolherDisjuntorTug(ib, izCorrigida, nPontos) {
+    const n = Number(nPontos) || 0;
+    const preferidos = n > 0 && n <= 2 ? [16, 20] : [20, 16];
+    for (const In of preferidos) {
+      if (In >= ib - 1e-9 && In <= izCorrigida + 1e-9) return In;
+    }
+    return escolherDisjuntor(ib, izCorrigida);
   }
 
   /**
@@ -185,11 +240,20 @@ import { getPrecoByModo } from "../data/catalog";
     const fases = Number(input.fases || (tipo.polos >= 2 && tensaoV >= 220 ? 2 : 1)) || 1;
     const fp = Number(input.fp ?? tipo.fp ?? 1);
     const comprimentoM = Number(input.comprimentoM) || 0;
+    const nPontos = Number(input.nPontos) || 0;
     const { ka, kt, k } = fatorK(input.agrupamentoId || "1", input.tempId || "30");
     const forcarDr = input.dr === true || (input.dr !== false && tipo.drRecomendado);
 
+    // TUE em tomada: bitola máx. 4 mm² (borne). Chuveiro/ar/motor podem subir.
+    const secaoMax =
+      input.secaoMax != null
+        ? Number(input.secaoMax)
+        : tipo.id === "tue"
+          ? SECAO_MAX_TOMADA_TUE
+          : null;
+
     const ib = correnteProjeto({ potenciaW, tensaoV, fases: fases === 3 ? 3 : 1, fp });
-    const cabo = escolherCabo(ib, tipo.secaoMin, k);
+    const cabo = escolherCabo(ib, tipo.secaoMin, k, secaoMax);
     let secao = cabo.secao;
     let izCorrigida = cabo.izCorrigida;
     let queda = quedaTensao({
@@ -200,14 +264,20 @@ import { getPrecoByModo } from "../data/catalog";
       fases: fases === 3 ? 3 : 1
     });
 
-    // Aumenta seção se queda > 4% (terminal) enquanto houver cabo maior
     const avisos = [];
     if (cabo.alerta) avisos.push(cabo.alerta);
 
+    // Aumenta seção por queda de tensão — sem passar do teto TUE (4 mm²)
     while (!queda.okTerminal && secao < CABOS[CABOS.length - 1].secao) {
       const idx = CABOS.findIndex((c) => c.secao === secao);
       const next = CABOS[idx + 1];
       if (!next) break;
+      if (secaoMax != null && next.secao > secaoMax + 1e-9) {
+        avisos.push(
+          `Queda ${queda.pct.toFixed(2)}% com ${secao} mm² — não sobe bitola (limite ${secaoMax} mm² em borne de tomada). Considere encurtar o circuito ou dividir.`
+        );
+        break;
+      }
       secao = next.secao;
       izCorrigida = next.iz * k;
       queda = quedaTensao({
@@ -226,25 +296,54 @@ import { getPrecoByModo } from "../data/catalog";
       izCorrigida = c.iz * k;
     }
 
-    let disjuntorIn = escolherDisjuntor(ib, izCorrigida);
-    // Garante cabo compatível com Ib e com o disjuntor (In ≤ Iz)
+    let precisaDividirCircuito = false;
+    if (secaoMax != null && ib > izCorrigida + 0.05) {
+      precisaDividirCircuito = true;
+      avisos.push(
+        `Ib ${ib.toFixed(1)} A > Iz ${izCorrigida.toFixed(1)} A em ${secao} mm² (ka=${ka}, kt=${kt}). ` +
+          `TUE não pode passar de ${secaoMax} mm² no borne — divida em 2 circuitos ou use 220 V / menos agrupamento.`
+      );
+    }
+
+    let disjuntorIn =
+      tipo.id === "tug"
+        ? escolherDisjuntorTug(ib, izCorrigida, nPontos)
+        : escolherDisjuntor(ib, izCorrigida);
+
+    // Garante cabo compatível com Ib e In ≤ Iz (respeitando secaoMax)
     for (let guard = 0; guard < 8; guard++) {
       if (disjuntorIn <= izCorrigida + 1e-9 && izCorrigida + 1e-9 >= ib) break;
       const idx = CABOS.findIndex((c) => c.secao === secao);
       const next = CABOS[idx + 1];
-      if (!next) {
-        avisos.push(
-          `Disjuntor ${disjuntorIn} A / Ib ${ib.toFixed(1)} A acima da tabela de cabos embutida.`
-        );
+      if (!next || (secaoMax != null && next.secao > secaoMax + 1e-9)) {
+        if (secaoMax != null) {
+          precisaDividirCircuito = true;
+          // Protege o cabo: In ≤ Iz mesmo que Ib fique acima (alerta já emitido)
+          disjuntorIn = escolherDisjuntor(Math.min(ib, izCorrigida), izCorrigida);
+          if (tipo.id === "tug") {
+            disjuntorIn = escolherDisjuntorTug(Math.min(ib, izCorrigida), izCorrigida, nPontos);
+          }
+        } else {
+          avisos.push(
+            `Disjuntor ${disjuntorIn} A / Ib ${ib.toFixed(1)} A acima da tabela de cabos embutida.`
+          );
+        }
         break;
       }
       secao = next.secao;
       izCorrigida = next.iz * k;
       avisos.push(`Cabo ajustado para ${secao} mm² (Ib/disjuntor).`);
-      disjuntorIn = escolherDisjuntor(ib, izCorrigida);
+      disjuntorIn =
+        tipo.id === "tug"
+          ? escolherDisjuntorTug(ib, izCorrigida, nPontos)
+          : escolherDisjuntor(ib, izCorrigida);
     }
 
-    // Se o caller informar polos (sistema mono/bi/tri + tensão), prevalece sobre o tipo.
+    // TUG: reforça preferência 20 A / 16 A após cabo final
+    if (tipo.id === "tug") {
+      disjuntorIn = escolherDisjuntorTug(ib, izCorrigida, nPontos);
+    }
+
     const polos =
       input.polos != null && input.polos !== ""
         ? Math.max(1, Number(input.polos) || 1)
@@ -255,7 +354,7 @@ import { getPrecoByModo } from "../data/catalog";
         ? Math.max(2, Number(input.nCondutores) || 2)
         : polos >= 3
           ? 5
-          : 3; // 1P/2P: F(+N/+F)+PE · 3P: 3F+N+PE
+          : 3;
     const metrosCabo = comprimentoM > 0 ? comprimentoM * nCondutores : 0;
 
     const eletroduto =
@@ -279,11 +378,13 @@ import { getPrecoByModo } from "../data/catalog";
         fases,
         fp,
         comprimentoM,
+        nPontos,
         agrupamentoId: input.agrupamentoId || "1",
         tempId: input.tempId || "30",
         ka,
         kt,
-        k
+        k,
+        secaoMax
       },
       ib,
       cabo: { secao, iz: CABOS.find((c) => c.secao === secao)?.iz || cabo.iz, izCorrigida },
@@ -293,9 +394,10 @@ import { getPrecoByModo } from "../data/catalog";
       metrosCabo,
       nCondutores,
       eletroduto,
+      precisaDividirCircuito,
       avisos: [...new Set(avisos)],
       disclaimer:
-        "Cálculo auxiliar conforme critérios simplificados da NBR 5410. Confirme método de instalação, fatores de correção e proteção no projeto oficial."
+        "Cálculo auxiliar conforme critérios simplificados da NBR 5410 (B1, agrupamento, queda). Confirme método de instalação e proteção no projeto oficial."
     };
   }
 
@@ -459,5 +561,37 @@ import { getPrecoByModo } from "../data/catalog";
   }
 
 
-export { TIPOS, FATOR_AGRUPAMENTO, FATOR_TEMP, CABOS, DISJUNTORES, tipos, tipoById, correnteProjeto, dimensionar, sugerirMateriais, sugerirServicos, quedaTensao };
-export const NBR5410 = { TIPOS, FATOR_AGRUPAMENTO, FATOR_TEMP, CABOS, DISJUNTORES, tipos, tipoById, correnteProjeto, dimensionar, sugerirMateriais, sugerirServicos, quedaTensao };
+export {
+  TIPOS,
+  FATOR_AGRUPAMENTO,
+  FATOR_TEMP,
+  CABOS,
+  DISJUNTORES,
+  SECAO_MAX_TOMADA_TUE,
+  tipos,
+  tipoById,
+  correnteProjeto,
+  agrupamentoIdFromN,
+  izCabo,
+  dimensionar,
+  sugerirMateriais,
+  sugerirServicos,
+  quedaTensao
+};
+export const NBR5410 = {
+  TIPOS,
+  FATOR_AGRUPAMENTO,
+  FATOR_TEMP,
+  CABOS,
+  DISJUNTORES,
+  SECAO_MAX_TOMADA_TUE,
+  tipos,
+  tipoById,
+  correnteProjeto,
+  agrupamentoIdFromN,
+  izCabo,
+  dimensionar,
+  sugerirMateriais,
+  sugerirServicos,
+  quedaTensao
+};

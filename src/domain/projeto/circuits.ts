@@ -858,25 +858,48 @@ function polylineLength(verts) {
       );
       circ.comprimentoM = len3d;
 
+      const nPontosCarga = pontosCarga.length;
+      const nAgr = (() => {
+        const set = new Set([circ.id]);
+        (circ.conduitesIds || []).forEach((eid) => {
+          Object.keys(conduitUse[eid] || {}).forEach((cid) => set.add(cid));
+        });
+        return Math.max(1, set.size);
+      })();
+      const agrupamentoId =
+        typeof NBR5410.agrupamentoIdFromN === "function"
+          ? NBR5410.agrupamentoIdFromN(nAgr)
+          : nAgr >= 8
+            ? "8+"
+            : nAgr >= 4
+              ? "4-5"
+              : nAgr >= 2
+                ? "2-3"
+                : "1";
+
+      const dimOpts = {
+        tipoId: circ.tipoId || "livre",
+        potenciaW: circ.potenciaVA,
+        tensaoV: tensao,
+        fases: fasesCirc,
+        polos,
+        nCondutores: nCond,
+        comprimentoM: circ.comprimentoM,
+        nPontos: nPontosCarga,
+        agrupamentoId,
+        tempId: "30",
+        dr: circ.tipoId === "tug" || circ.tipoId === "chuveiro" || circ.tipoId === "tue",
+        // TUE: máx. 4 mm² no borne; chuveiro/ar sem teto
+        secaoMax: circ.tipoId === "tue" ? 4 : null
+      };
+
       const dim =
-        typeof NBR5410 !== "undefined"
-          ? NBR5410.dimensionar({
-              tipoId: circ.tipoId || "livre",
-              potenciaW: circ.potenciaVA,
-              tensaoV: tensao,
-              fases: fasesCirc,
-              polos,
-              nCondutores: nCond,
-              comprimentoM: circ.comprimentoM,
-              agrupamentoId:
-                circuits.length >= 8 ? "8+" : circuits.length >= 4 ? "4-5" : circuits.length >= 2 ? "2-3" : "1",
-              tempId: "30",
-              dr: circ.tipoId === "tug" || circ.tipoId === "chuveiro" || circ.tipoId === "tue"
-            })
-          : null;
+        typeof NBR5410 !== "undefined" ? NBR5410.dimensionar(dimOpts) : null;
 
       circ.tensaoV = tensao;
       circ.dimensionamento = dim;
+      circ.agrupamentoId = agrupamentoId;
+      circ.nAgrupados = nAgr;
 
       // Metragem 3D por papel (a partir dos caminhos reais)
       const pd = Math.max(2.2, Number(projeto.peDireitoM) || 2.8);
@@ -940,17 +963,8 @@ function polylineLength(verts) {
         // Se soma de correntes exige DJ/cabo maior, redimensiona
         if (ibSoma > ibPot + 0.05) {
           const dim2 = NBR5410.dimensionar({
-            tipoId: circ.tipoId || "livre",
-            potenciaW: Math.max(circ.potenciaVA, ibSoma * tensao),
-            tensaoV: tensao,
-            fases: fasesCirc,
-            polos,
-            nCondutores: nCond,
-            comprimentoM: circ.comprimentoM,
-            agrupamentoId:
-              circuits.length >= 8 ? "8+" : circuits.length >= 4 ? "4-5" : circuits.length >= 2 ? "2-3" : "1",
-            tempId: "30",
-            dr: circ.tipoId === "tug" || circ.tipoId === "chuveiro" || circ.tipoId === "tue"
+            ...dimOpts,
+            potenciaW: Math.max(circ.potenciaVA, ibSoma * tensao)
           });
           if (dim2) {
             circ.dimensionamento = dim2;
@@ -962,6 +976,7 @@ function polylineLength(verts) {
             circ.eletroduto = dim2.eletroduto;
             circ.dr = dim2.dr;
             circ.avisos = dim2.avisos || [];
+            circ.precisaDividirCircuito = !!dim2.precisaDividirCircuito;
             if (dim2.disjuntor) dim2.disjuntor.polos = polos;
           }
         } else {
@@ -969,6 +984,12 @@ function polylineLength(verts) {
           circ.eletroduto = dim.eletroduto;
           circ.dr = dim.dr;
           circ.avisos = dim.avisos || [];
+          circ.precisaDividirCircuito = !!dim.precisaDividirCircuito;
+        }
+        if (circ.precisaDividirCircuito) {
+          avisos.push(
+            `${circ.id} (TUE): corrente acima da capacidade de 4 mm² com agrupamento — divida o circuito ou reduza fatores (tensão/agrupamento).`
+          );
         }
         circ.metrosPorCondutor = Math.ceil(circ.comprimentoM * 1.1);
       } else {
