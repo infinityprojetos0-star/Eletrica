@@ -3363,15 +3363,18 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
         : `<p class="hint">Rode a análise para ver o balanceamento de fases.</p>`;
 
       const wago = a?.wago;
-      const wagoLocais = wago?.locais || [];
+      const wagoLocais = Array.isArray(wago?.locais)
+        ? wago.locais
+        : Object.values(wago?.locais || {});
       const wagoPorPonto = (() => {
         const map = new Map();
         wagoLocais.forEach((l) => {
+          if (!l || typeof l !== "object") return;
           const ids = (l.pontoIds || []).filter(Boolean);
           const key = ids.length
             ? ids.slice().sort().join("|")
-            : `xy:${Number(l.x).toFixed(2)},${Number(l.y).toFixed(2)}`;
-          let nome = l.pontoNome;
+            : `xy:${Number(l.x) || 0},${Number(l.y) || 0}`;
+          let nome = l.pontoNome || "";
           if (!nome && ids.length) {
             nome = ids
               .map((id) => {
@@ -3382,9 +3385,14 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
               .join(" · ");
           }
           if (!nome) {
-            nome = String(l.label || "")
-              .replace(/\s*·\s*(Neutro|PE[^·]*|F\+N\+PE|fase)\s*$/i, "")
-              .trim() || l.origem || "Local";
+            const raw = String(l.label || "");
+            nome =
+              raw
+                .replace(/\s*·\s*(Neutro|PE[^·]*|F\+N\+PE|F\+N|fase).*$/i, "")
+                .replace(/\s*\([^)]*\)\s*$/, "")
+                .trim() ||
+              l.origem ||
+              "Ponto";
           }
           if (!map.has(key)) {
             map.set(key, { key, nome, pontoIds: ids, itens: [], qtdTotal: 0 });
@@ -3393,10 +3401,12 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
           g.itens.push(l);
           g.qtdTotal += Number(l.qtd) || 0;
         });
-        return [...map.values()].sort((a, b) => a.nome.localeCompare(b.nome, "pt"));
+        return [...map.values()].sort((a, b) =>
+          String(a.nome).localeCompare(String(b.nome), "pt")
+        );
       })();
       const wagoHtml = wago?.porPolos
-        ? `<p class="hint" style="margin-bottom:8px">Só derivações (T de conduíte, passagem na luz, multi-tecla/módulo). Clique no ponto ou no Wago para marcar na planta · Total <strong>${wago.unidades || 0}</strong> un</p>
+        ? `<p class="hint" style="margin-bottom:8px">Só derivações (T de conduíte, passagem na luz, multi-tecla/módulo). Clique na linha para marcar na planta · Total <strong>${wago.unidades || 0}</strong> un · <strong>${wagoPorPonto.length}</strong> ponto(s)</p>
           <div class="pe-wago-resumo">
             ${[2, 3, 5, 10]
               .map((pol) => {
@@ -3414,18 +3424,17 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
               .filter(Boolean)
               .join("")}
           </div>
-          <div class="pe-wago-pontos">
-            ${wagoPorPonto
-              .map((g) => {
-                const pontoActive = selectedWago?.pontoKey === g.key && !selectedWago?.localId;
-                return `<div class="pe-wago-ponto ${pontoActive ? "active" : ""}">
-                  <button type="button" class="pe-wago-ponto-head" data-wago-ponto="${escapeHtml(g.key)}">
-                    <span class="pe-wago-ponto-nome">${escapeHtml(g.nome)}</span>
-                    <strong class="pe-wago-qtd">${g.qtdTotal} un</strong>
-                  </button>
-                  <div class="pe-wago-locs">
-                    ${g.itens
-                      .map((l) => {
+          ${
+            wagoPorPonto.length
+              ? `<div class="pe-mat-wrap pe-wago-wrap"><table class="pe-mat pe-wago-table"><thead><tr>
+                  <th>Ponto</th><th>Wago</th><th>Papel</th><th>Circuito</th><th class="pe-mat-qtd">Qtd</th>
+                </tr></thead><tbody>
+                ${wagoPorPonto
+                  .map((g) => {
+                    const pontoActive =
+                      selectedWago?.pontoKey === g.key && !selectedWago?.localId;
+                    const rows = g.itens
+                      .map((l, idx) => {
                         const locActive = selectedWago?.localId === l.id;
                         const circs = (l.circuitosIds?.length
                           ? l.circuitosIds
@@ -3433,21 +3442,30 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
                             ? [l.circuitoId]
                             : []
                         ).join(", ");
-                        return `<button type="button" class="pe-wago-loc ${locActive ? "active" : ""}" data-wago-local="${escapeHtml(l.id)}" title="${escapeHtml(l.detalhe || "")}">
-                          <span class="pe-wago-loc-main">
-                            <strong>Wago ${l.size}P</strong>
-                            ${l.papel ? `<span class="pe-wago-papel">${escapeHtml(l.papel)}</span>` : ""}
-                            <span class="hint">circuito ${escapeHtml(circs || "—")}</span>
-                          </span>
-                          <strong>×${l.qtd}</strong>
-                        </button>`;
+                        const pontoCell =
+                          idx === 0
+                            ? `<td class="pe-wago-td-ponto" rowspan="${g.itens.length}">
+                                <button type="button" class="pe-wago-ponto-link ${pontoActive ? "active" : ""}" data-wago-ponto="${escapeHtml(g.key)}">
+                                  <span>${escapeHtml(g.nome)}</span>
+                                  <strong>${g.qtdTotal} un</strong>
+                                </button>
+                              </td>`
+                            : "";
+                        return `<tr class="pe-wago-row ${locActive ? "active" : ""}" data-wago-local="${escapeHtml(l.id)}" title="${escapeHtml(l.detalhe || "")}">
+                          ${pontoCell}
+                          <td><strong>${Number(l.size) || "—"}P</strong></td>
+                          <td>${escapeHtml(l.papel || "—")}</td>
+                          <td>${escapeHtml(circs || "—")}</td>
+                          <td class="pe-mat-qtd"><strong>×${Number(l.qtd) || 0}</strong></td>
+                        </tr>`;
                       })
-                      .join("")}
-                  </div>
-                </div>`;
-              })
-              .join("")}
-          </div>`
+                      .join("");
+                    return rows;
+                  })
+                  .join("")}
+                </tbody></table></div>`
+              : `<p class="hint">Nenhum local de Wago listado — rode a análise de novo.</p>`
+          }`
         : wago
           ? `<p class="hint">${escapeHtml(wago.nota || "")}</p>`
           : "";
@@ -3564,8 +3582,9 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
           );
         };
       });
-      analysis.querySelectorAll(".pe-wago-ponto-head[data-wago-ponto]").forEach((el) => {
-        el.onclick = () => {
+      analysis.querySelectorAll(".pe-wago-ponto-head[data-wago-ponto], .pe-wago-ponto-link[data-wago-ponto]").forEach((el) => {
+        el.onclick = (ev) => {
+          ev.stopPropagation();
           const pontoKey = el.dataset.wagoPonto;
           selectedCircuitId = null;
           if (selectedWago?.pontoKey === pontoKey && !selectedWago?.localId) {
@@ -3583,11 +3602,15 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
           );
         };
       });
-      analysis.querySelectorAll(".pe-wago-loc[data-wago-local]").forEach((el) => {
+      analysis.querySelectorAll(".pe-wago-loc[data-wago-local], tr.pe-wago-row[data-wago-local]").forEach((el) => {
         el.onclick = (ev) => {
+          if (ev.target.closest?.("[data-wago-ponto]")) return;
           ev.stopPropagation();
           const localId = el.dataset.wagoLocal;
-          const loc = (projeto.lastAnalise?.wago?.locais || []).find((l) => l.id === localId);
+          const locaisAll = Array.isArray(projeto.lastAnalise?.wago?.locais)
+            ? projeto.lastAnalise.wago.locais
+            : Object.values(projeto.lastAnalise?.wago?.locais || {});
+          const loc = locaisAll.find((l) => l.id === localId);
           selectedCircuitId = null;
           if (selectedWago?.localId === localId) {
             selectedWago = null;

@@ -1393,6 +1393,56 @@ tr:hover td { background: rgba(61,180,255,0.03); }
   color: #ffb74d;
 }
 .pe-wago-chip span { color: #ff6f00; font-weight: 700; }
+.pe-wago-wrap { max-height: 420px; }
+.pe-wago-table td,
+.pe-wago-table th {
+  color: var(--text);
+  vertical-align: top;
+}
+.pe-wago-table .pe-wago-td-ponto {
+  min-width: 10rem;
+  max-width: 18rem;
+  border-right: 1px solid var(--border);
+  background: rgba(255,255,255,0.02);
+}
+.pe-wago-ponto-link {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 650;
+}
+.pe-wago-ponto-link strong {
+  color: #ff6f00;
+  font-size: 0.8rem;
+}
+.pe-wago-ponto-link:hover,
+.pe-wago-ponto-link.active {
+  color: #ffb74d;
+}
+.pe-wago-row {
+  cursor: pointer;
+}
+.pe-wago-row:hover td {
+  background: rgba(255, 111, 0, 0.08);
+}
+.pe-wago-row.active td {
+  background: rgba(255, 111, 0, 0.16);
+  color: #ffb74d;
+}
+.pe-wago-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 10px;
+}
 .pe-wago-pontos {
   display: flex;
   flex-direction: column;
@@ -1405,6 +1455,7 @@ tr:hover td { background: rgba(61,180,255,0.03); }
   border-radius: 10px;
   background: rgba(255,255,255,0.03);
   overflow: hidden;
+  color: var(--text);
 }
 .pe-wago-ponto.active {
   border-color: rgba(255, 111, 0, 0.65);
@@ -1427,6 +1478,7 @@ tr:hover td { background: rgba(61,180,255,0.03); }
 .pe-wago-ponto-nome {
   font-weight: 650;
   font-size: 0.92rem;
+  color: var(--text);
 }
 .pe-wago-card {
   border: 1px solid var(--border);
@@ -1474,7 +1526,7 @@ tr:hover td { background: rgba(61,180,255,0.03); }
   border: 0;
   border-bottom: 1px solid rgba(255,255,255,0.04);
   background: transparent;
-  color: var(--text-muted, #9aa);
+  color: var(--text);
   font-size: 0.78rem;
   cursor: pointer;
 }
