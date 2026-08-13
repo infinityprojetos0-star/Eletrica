@@ -640,15 +640,16 @@ function materiaisDoCircuito(circ, projeto, produtos, modo, wagoShareUn) {
   const caboId = caboMap[Number(circ.bitola)] || null;
   const conds = circ.condutores || condutoresColoridos(circ.polos || 1, true);
   conds.forEach((c) => {
+    const metrosCabo = Number(c.metros) > 0 ? Math.ceil(c.metros) : metros1;
     itens.push(
       lineProd(
         produtos,
         modo,
         caboId,
         `Cabo ${circ.bitola} mm² ${c.corLabel} — ${c.papel}`,
-        metros1,
+        metrosCabo,
         "m",
-        `L≈${(circ.comprimentoM || 0).toFixed(1)} m (planta+PD) · ${circ.id}`
+        `L≈${metrosCabo} m · ${circ.id}${circ.roteamento?.modelo ? ` · ${circ.roteamento.modelo}` : ""}`
       )
     );
   });

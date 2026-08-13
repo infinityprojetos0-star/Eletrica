@@ -3133,7 +3133,7 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
       const circHtml = a?.circuits?.length
         ? `<p class="hint" style="margin-bottom:8px">${
             selectedCircuitId
-              ? `Caminho do fio <strong>${escapeHtml(selectedCircuitId)}</strong> (QDC → pontos). Clique de novo para ver todos.`
+              ? `Caminho do fio <strong>${escapeHtml(selectedCircuitId)}</strong>. Iluminação: laje + descida/retorno · Tomada: laje via luzes + descida.`
               : "Clique num circuito para ver caminho, proteção e materiais dele."
           }</p>
           ${a.circuits
@@ -3143,13 +3143,20 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
               const nCd = c.conduitesIds?.length || 0;
               const polosLabel =
                 c.polos >= 3 ? "3P" : c.polos >= 2 ? "2P" : "1P";
+              const rot = c.roteamento?.modelo;
+              const rotHint =
+                rot === "iluminacao-laje-retorno"
+                  ? " · laje + retorno"
+                  : rot === "laje-descida"
+                    ? " · laje→descida"
+                    : "";
               const pathHint =
                 nCam === 0
                   ? `<div class="hint" style="color:#e53935">Sem caminho no conduíte até o QDC — ligue o conduíte e analise de novo.</div>`
                   : "";
               return `<button type="button" class="pe-circ ${active ? "active" : ""}" data-circ="${escapeHtml(c.id)}" style="border-left:4px solid ${c.cor}">
             <strong>${escapeHtml(c.id)}</strong> · ${escapeHtml(c.dimensionamento?.tipo?.label || c.tipoId || "")}
-            <div class="hint">${c.pontos.length} ponto(s) · ${nCam} caminho(s) · L≈${c.comprimentoM?.toFixed?.(1) || "—"} m · ${c.tensaoV || "—"} V · fase ${escapeHtml(c.fase || "—")}</div>
+            <div class="hint">${c.pontos.length} ponto(s) · ${nCam} caminho(s)${rotHint} · L≈${c.comprimentoM?.toFixed?.(1) || "—"} m · ${c.tensaoV || "—"} V · fase ${escapeHtml(c.fase || "—")}</div>
             <div>${c.bitola || "—"} mm² · DJ ${polosLabel} ${c.disjuntor || "—"}A · Ib ${(c.ib != null ? Number(c.ib).toFixed(1) : "—")} A · queda ${c.quedaPct != null ? c.quedaPct.toFixed(2) + "%" : "—"} · ${Math.round(c.potenciaVA || 0)} W</div>
             ${pathHint}
           </button>`;

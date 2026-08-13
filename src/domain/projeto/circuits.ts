@@ -32,6 +32,7 @@ import {
   labelPolosDj,
   condutoresColoridos,
   comprimentoCircuito3D,
+  comprimentoPath3D,
   balancearCargas,
   dimensionarProtecao,
   contarWagos,
@@ -534,10 +535,6 @@ function polylineLength(verts) {
     vincularInterruptoresIluminacao(points, circuits, byId);
 
     const graph = buildGraph({ ...projeto, points });
-    const qdcNode = qdc ? graph.snap[qdc.id] : -1;
-    const qdcStub = qdc ? graph.stub[qdc.id] || 0 : 0;
-    const fromQdc =
-      qdcNode >= 0 ? dijkstra(graph, qdcNode) : { distArr: [], prev: [], prevEdge: [] };
 
     const conduitUse = {};
     /** Arestas únicas por circuito (para contar pontas/Wago nos nós) */
@@ -575,15 +572,56 @@ function polylineLength(verts) {
       return { len, edges, pontos: pts };
     }
 
+    /**
+     * Tomada/TUE/carga: F+N(+PE) saem do QDC pela laje entre pontos de iluminação;
+     * no cômodo descem pela parede até a caixa (e seguem entre caixas na parede).
+     * Escolhe a lâmpada-hub que minimiza QDC→lâmpada(laje) + lâmpada→ponto(descida).
+     */
+    function pathViaLajeIluminacao(destinoId) {
+      if (!qdc) return null;
+      const hubs = points.filter((p) => p.tipo === "lampada");
+      if (!hubs.length) return pathEntrePontos(qdc.id, destinoId);
+
+      let best = null;
+      hubs.forEach((L) => {
+        const laje = pathEntrePontos(qdc.id, L.id);
+        const descida = pathEntrePontos(L.id, destinoId);
+        if (!laje || !descida) return;
+        const len = laje.len + descida.len;
+        if (best && len >= best.len) return;
+        best = {
+          len,
+          edges: [...(laje.edges || []), ...(descida.edges || [])],
+          pontos: dedupePoly([...(laje.pontos || []), ...(descida.pontos || []).slice(1)]),
+          lampId: L.id,
+          lenLaje: laje.len,
+          lenDescida: descida.len,
+          pontosLaje: laje.pontos,
+          pontosDescida: descida.pontos
+        };
+      });
+      return best || pathEntrePontos(qdc.id, destinoId);
+    }
+
+    // Todas as lâmpadas do projeto (hubs de laje para tomadas)
+    const lampsProjeto = points.filter((p) => p.tipo === "lampada");
+
     circuits.forEach((circ) => {
       let maxLen = 0;
       let sumLen = 0;
       let nPath = 0;
-      circ.caminhos = []; // polilinhas QDC→ponto (caminho mais curto na rede)
+      let maxLaje = 0;
+      let maxDescida = 0;
+      circ.caminhos = [];
       const conduitesDoCirc = new Set();
       if (!circEdgeMap[circ.id]) circEdgeMap[circ.id] = new Map();
 
-      // Iluminação: também roteia fase QDC → interruptor → lâmpada (retorno)
+      /*
+       * ILUMINAÇÃO (prática BR):
+       * - Neutro (+PE): QDC → lâmpada pela laje
+       * - Fase: QDC → lâmpada pela laje, desce até o interruptor
+       * - Retorno: sobe do interruptor até a lâmpada
+       */
       if (circ.tipoId === "iluminacao" && qdc) {
         const lamps = circ.pontos
           .map((pid) => byId[pid])
@@ -593,6 +631,32 @@ function polylineLength(verts) {
           .filter(Boolean);
 
         lamps.forEach((lamp) => {
+          const laje = pathEntrePontos(qdc.id, lamp.id);
+          if (!laje) {
+            if (qdc) {
+              const len = dist(lamp, qdc) * 1.35;
+              avisos.push(
+                `Lâmpada "${labelPonto(lamp)}" sem conduíte até o QDC — comprimento estimado ×1,35.`
+              );
+              maxLen = Math.max(maxLen, len);
+              sumLen += len;
+            }
+            return;
+          }
+
+          registerEdges(circ.id, laje.edges);
+          laje.edges.forEach((e) => e.conduitId && conduitesDoCirc.add(e.conduitId));
+          maxLaje = Math.max(maxLaje, laje.len);
+
+          // Neutro / PE na laje
+          circ.caminhos.push({
+            pontoId: lamp.id,
+            pontos: laje.pontos,
+            label: `${labelPonto(lamp)} · neutro (laje)`,
+            via: "neutro-laje",
+            papel: "neutro"
+          });
+
           const letters = String(lamp.interruptor || "")
             .toLowerCase()
             .split(/[\/,;\s]+/)
@@ -604,101 +668,137 @@ function polylineLength(verts) {
           });
 
           if (!sws.length) {
-            // sem interruptor vinculado: QDC → lâmpada
-            const ni = graph.snap[lamp.id];
-            if (qdcNode >= 0 && ni >= 0 && fromQdc.distArr[ni] < Infinity) {
-              const len = fromQdc.distArr[ni] + qdcStub + (graph.stub[lamp.id] || 0);
-              registerEdges(circ.id, pathEdgesFromPrev(fromQdc.prev, fromQdc.prevEdge, ni));
-              pathEdgesFromPrev(fromQdc.prev, fromQdc.prevEdge, ni).forEach((e) => {
-                if (e.conduitId) conduitesDoCirc.add(e.conduitId);
-              });
-              let pathPts = pathPointsFromPrev(graph, fromQdc.prev, ni);
-              pathPts = [{ x: qdc.x, y: qdc.y }, ...pathPts, { x: lamp.x, y: lamp.y }];
-              pathPts = dedupePoly(pathPts);
-              circ.caminhos.push({
-                pontoId: lamp.id,
-                pontos: pathPts,
-                label: labelPonto(lamp),
-                via: "direto"
-              });
-              maxLen = Math.max(maxLen, len);
-              sumLen += len;
-              nPath++;
-            }
+            // Sem interruptor: fase segue com o neutro até a lâmpada
+            circ.caminhos.push({
+              pontoId: lamp.id,
+              pontos: laje.pontos,
+              label: `${labelPonto(lamp)} · fase (laje)`,
+              via: "fase-laje",
+              papel: "fase"
+            });
+            maxLen = Math.max(maxLen, laje.len);
+            sumLen += laje.len;
+            nPath++;
             return;
           }
 
-          // Fase: QDC → interruptor → lâmpada (retorno). Usa o pior interruptor.
           sws.forEach((sw) => {
-            const leg1 = pathEntrePontos(qdc.id, sw.id);
-            const leg2 = pathEntrePontos(sw.id, lamp.id);
-            if (leg1 && leg2) {
-              registerEdges(circ.id, leg1.edges);
-              registerEdges(circ.id, leg2.edges);
-              leg1.edges.forEach((e) => e.conduitId && conduitesDoCirc.add(e.conduitId));
-              leg2.edges.forEach((e) => e.conduitId && conduitesDoCirc.add(e.conduitId));
-              const pathPts = dedupePoly([...(leg1.pontos || []), ...(leg2.pontos || []).slice(1)]);
-              const len = leg1.len + leg2.len;
-              circ.caminhos.push({
-                pontoId: lamp.id,
-                interruptorId: sw.id,
-                pontos: pathPts,
-                label: `${labelPonto(lamp)} via ${labelPonto(sw)}`,
-                via: "fase-retorno"
-              });
-              maxLen = Math.max(maxLen, len);
-              sumLen += len;
-              nPath++;
-            } else {
+            const drop = pathEntrePontos(lamp.id, sw.id);
+            if (!drop) {
               avisos.push(
-                `Iluminação "${labelPonto(lamp)}": sem conduíte contínuo QDC → ${labelPonto(sw)} → lâmpada.`
+                `Iluminação "${labelPonto(lamp)}": sem conduíte lâmpada → ${labelPonto(sw)} (fase/retorno).`
               );
+              maxLen = Math.max(maxLen, laje.len);
+              return;
             }
-          });
+            registerEdges(circ.id, drop.edges);
+            drop.edges.forEach((e) => e.conduitId && conduitesDoCirc.add(e.conduitId));
+            maxDescida = Math.max(maxDescida, drop.len);
 
-          // Neutro/PE costuma ir QDC → lâmpada: garante esse trecho na rede também
-          const direto = pathEntrePontos(qdc.id, lamp.id);
-          if (direto) {
-            registerEdges(circ.id, direto.edges);
-            direto.edges.forEach((e) => e.conduitId && conduitesDoCirc.add(e.conduitId));
-            maxLen = Math.max(maxLen, direto.len);
-          }
+            // Fase: QDC → lâmpada (laje) → desce ao interruptor
+            const fasePts = dedupePoly([...(laje.pontos || []), ...(drop.pontos || []).slice(1)]);
+            circ.caminhos.push({
+              pontoId: lamp.id,
+              interruptorId: sw.id,
+              pontos: fasePts,
+              label: `${labelPonto(lamp)} · fase via ${labelPonto(sw)}`,
+              via: "fase-laje-descida",
+              papel: "fase"
+            });
+
+            // Retorno: interruptor → lâmpada (mesmo trecho, sentido inverso)
+            const retPts = [...(drop.pontos || [])].reverse();
+            circ.caminhos.push({
+              pontoId: lamp.id,
+              interruptorId: sw.id,
+              pontos: retPts,
+              label: `${labelPonto(lamp)} · retorno de ${labelPonto(sw)}`,
+              via: "retorno",
+              papel: "retorno"
+            });
+
+            const lenFase = laje.len + drop.len;
+            maxLen = Math.max(maxLen, lenFase);
+            sumLen += lenFase;
+            nPath++;
+          });
         });
-      } else {
-        // Demais circuitos: QDC → cada ponto
-        circ.pontos.forEach((pid) => {
+
+        circ.roteamento = {
+          modelo: "iluminacao-laje-retorno",
+          comprimentoLajeM: maxLaje,
+          comprimentoDescidaM: maxDescida
+        };
+      } else if (qdc) {
+        /*
+         * TOMADA / TUE / CHUVEIRO / AR:
+         * F+N(+PE) pela laje entre pontos de luz; no cômodo descem à caixa;
+         * entre caixas interligadas seguem na parede.
+         */
+        const cargaIds = circ.pontos.filter((pid) => {
+          const p = byId[pid];
+          return p && p.tipo !== "interruptor";
+        });
+
+        cargaIds.forEach((pid) => {
           const pt = byId[pid];
           if (!pt) return;
-          const ni = graph.snap[pid];
-          const ptStub = graph.stub[pid] || 0;
-          let len = 0;
-          if (qdcNode >= 0 && ni >= 0 && fromQdc.distArr[ni] < Infinity) {
-            len = fromQdc.distArr[ni] + qdcStub + ptStub;
-            const edges = pathEdgesFromPrev(fromQdc.prev, fromQdc.prevEdge, ni);
-            registerEdges(circ.id, edges);
-            edges.forEach((e) => e.conduitId && conduitesDoCirc.add(e.conduitId));
-            let pathPts = pathPointsFromPrev(graph, fromQdc.prev, ni);
-            if (qdc) pathPts = [{ x: qdc.x, y: qdc.y }, ...pathPts];
-            pathPts = [...pathPts, { x: pt.x, y: pt.y }];
-            pathPts = dedupePoly(pathPts);
-            if (pathPts.length >= 2) {
+
+          let route = null;
+          if (lampsProjeto.length && pt.tipo !== "lampada") {
+            route = pathViaLajeIluminacao(pid);
+          }
+          if (!route) {
+            const direto = pathEntrePontos(qdc.id, pid);
+            if (direto) {
+              route = {
+                ...direto,
+                lampId: null,
+                lenLaje: direto.len,
+                lenDescida: 0
+              };
+            }
+          }
+
+          if (route) {
+            registerEdges(circ.id, route.edges);
+            (route.edges || []).forEach((e) => e.conduitId && conduitesDoCirc.add(e.conduitId));
+            maxLaje = Math.max(maxLaje, route.lenLaje || route.len || 0);
+            maxDescida = Math.max(maxDescida, route.lenDescida || 0);
+            maxLen = Math.max(maxLen, route.len);
+            sumLen += route.len;
+            nPath++;
+            if (route.pontos && route.pontos.length >= 2) {
               circ.caminhos.push({
                 pontoId: pid,
-                pontos: pathPts,
-                label: labelPonto(pt)
+                lampHubId: route.lampId || null,
+                pontos: route.pontos,
+                label: route.lampId
+                  ? `${labelPonto(pt)} · laje via luz → descida`
+                  : labelPonto(pt),
+                via: route.lampId ? "laje-descida" : "direto",
+                papel: "fase-neutro-pe"
               });
             }
-            nPath++;
-          } else if (qdc) {
-            len = dist(pt, qdc) * 1.35;
+          } else {
+            const len = dist(pt, qdc) * 1.35;
             avisos.push(
               `Ponto "${labelPonto(pt)}" sem caminho de conduíte até o QDC — comprimento estimado ×1,35.`
             );
-          } else {
-            len = 12;
+            maxLen = Math.max(maxLen, len);
+            sumLen += len;
           }
-          maxLen = Math.max(maxLen, len);
-          sumLen += len;
+        });
+
+        circ.roteamento = {
+          modelo: "laje-descida",
+          comprimentoLajeM: maxLaje,
+          comprimentoDescidaM: maxDescida
+        };
+      } else {
+        circ.pontos.forEach(() => {
+          maxLen = Math.max(maxLen, 12);
+          sumLen += 12;
         });
       }
 
@@ -758,7 +858,47 @@ function polylineLength(verts) {
 
       circ.tensaoV = tensao;
       circ.dimensionamento = dim;
-      circ.condutores = condutoresColoridos(polos, incluiPe);
+
+      // Metragem 3D por papel (a partir dos caminhos reais)
+      const pd = Math.max(2.2, Number(projeto.peDireitoM) || 2.8);
+      const proj3d = { ...projeto, points, peDireitoM: pd };
+      let mLaje = 0;
+      let mFase = 0;
+      let mRetorno = 0;
+      (circ.caminhos || []).forEach((cam) => {
+        const L = comprimentoPath3D(cam.pontos || [], proj3d, pd);
+        if (!L) return;
+        if (cam.papel === "neutro" || cam.via === "neutro-laje") mLaje = Math.max(mLaje, L);
+        if (cam.papel === "fase" || cam.via === "fase-laje" || cam.via === "fase-laje-descida") {
+          mFase = Math.max(mFase, L);
+        }
+        if (cam.papel === "retorno" || cam.via === "retorno") mRetorno = Math.max(mRetorno, L);
+        if (cam.via === "laje-descida" || cam.via === "direto") mFase = Math.max(mFase, L);
+      });
+      if (circ.roteamento) {
+        circ.roteamento.comprimentoLajeM = mLaje || circ.roteamento.comprimentoLajeM;
+        circ.roteamento.comprimentoDescidaM = mRetorno || circ.roteamento.comprimentoDescidaM;
+      }
+
+      const baseConds = condutoresColoridos(polos, incluiPe);
+      const mPadrao = Math.ceil((circ.comprimentoM || 0) * 1.1);
+      if (circ.tipoId === "iluminacao" && mRetorno > 0.05) {
+        circ.condutores = baseConds.map((c) => {
+          const papel = String(c.papel || "").toLowerCase();
+          if (papel.includes("fase")) {
+            return { ...c, metros: Math.ceil((mFase || circ.comprimentoM) * 1.1) };
+          }
+          return { ...c, metros: Math.ceil((mLaje || circ.comprimentoM) * 1.1) };
+        });
+        circ.condutores.push({
+          papel: "Retorno",
+          cor: "branco",
+          corLabel: "branco",
+          metros: Math.ceil(mRetorno * 1.1)
+        });
+      } else {
+        circ.condutores = baseConds.map((c) => ({ ...c, metros: mPadrao }));
+      }
       if (dim) {
         circ.bitola = dim.cabo.secao;
         circ.disjuntor = dim.disjuntor.In;
@@ -934,7 +1074,8 @@ function polylineLength(verts) {
             circs: []
           };
         }
-        metrosCaboDet[k].metros += metros1;
+        const m = Number(c.metros) > 0 ? Math.ceil(c.metros) : metros1;
+        metrosCaboDet[k].metros += m;
         if (!metrosCaboDet[k].circs.includes(circ.id)) metrosCaboDet[k].circs.push(circ.id);
       });
     });
