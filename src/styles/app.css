@@ -535,6 +535,85 @@ th {
 tr:last-child td { border-bottom: none; }
 tr:hover td { background: rgba(61,180,255,0.03); }
 
+/* Listas verticais (mobile-first cards) */
+.stack-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+.stack-item {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 14px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.02);
+}
+.stack-item-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.stack-item-head strong {
+  font-size: 0.98rem;
+  line-height: 1.35;
+  word-break: break-word;
+}
+.stack-item-code {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+.stack-item-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.stack-meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  font-size: 0.86rem;
+}
+.stack-meta-row > span:first-child {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex: 0 0 auto;
+  padding-top: 2px;
+}
+.stack-meta-row > span:last-child {
+  text-align: right;
+  min-width: 0;
+  word-break: break-word;
+}
+.stack-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--border);
+}
+.stack-item-actions .status-select,
+.stack-item-actions select {
+  flex: 1 1 140px;
+  min-height: 40px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  color: inherit;
+}
+.stack-item-actions .btn {
+  flex: 1 1 auto;
+}
+
 .badge {
   display: inline-flex;
   align-items: center;
@@ -1656,10 +1735,14 @@ tr:hover td { background: rgba(61,180,255,0.03); }
     min-height: 40px;
     padding: 8px 10px;
   }
-  #quickOrcamento {
-    min-height: 44px;
-    padding: 10px 14px;
+  #quickOrcamento { display: none; }
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
   }
+  .toolbar .btn { width: 100%; justify-content: center; }
+  .toolbar .spacer { display: none; }
   .nav-item { min-height: 44px; }
   .btn-sm { min-height: 40px; padding: 9px 12px; }
   .pe-tool { min-width: 44px; min-height: 44px; }
@@ -1669,8 +1752,92 @@ tr:hover td { background: rgba(61,180,255,0.03); }
     gap: 6px;
     align-items: center;
   }
-  .table-wrap { -webkit-overflow-scrolling: touch; }
-  .table-wrap table { min-width: 560px; }
+
+  /* Tabelas → cards verticais no celular */
+  .table-wrap {
+    overflow: visible;
+    border: none;
+    border-radius: 0;
+    -webkit-overflow-scrolling: touch;
+  }
+  .table-wrap table {
+    min-width: 0 !important;
+    width: 100%;
+  }
+  .table-wrap thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    border: 0;
+  }
+  .table-wrap tbody {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+  }
+  .table-wrap tr {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: rgba(255,255,255,0.02);
+  }
+  .table-wrap tr:hover td { background: transparent; }
+  .table-wrap tr:last-child td { border-bottom: none; }
+  .table-wrap td {
+    display: grid;
+    grid-template-columns: minmax(72px, 32%) 1fr;
+    gap: 8px 10px;
+    align-items: start;
+    padding: 4px 0;
+    border: none;
+    font-size: 0.9rem;
+    word-break: break-word;
+  }
+  .table-wrap td::before {
+    content: attr(data-label);
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding-top: 3px;
+  }
+  .table-wrap td:not([data-label])::before,
+  .table-wrap td[data-label=""]::before {
+    display: none;
+  }
+  .table-wrap td:not([data-label]),
+  .table-wrap td[data-label=""] {
+    display: block;
+  }
+  .table-wrap td[colspan] {
+    display: block;
+    grid-template-columns: 1fr;
+  }
+  .table-wrap td[colspan]::before { display: none; }
+  .table-wrap td.actions-cell {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 6px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--border);
+  }
+  .table-wrap td.actions-cell::before { display: none; }
+  .table-wrap td.actions-cell .btn,
+  .table-wrap td.actions-cell select {
+    flex: 1 1 auto;
+    min-height: 40px;
+  }
+  .stack-list { padding: 10px; gap: 10px; }
   .content {
     padding-left: 14px;
     padding-right: 14px;

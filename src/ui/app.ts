@@ -185,6 +185,44 @@ export function initApp() {
     return `${prefix}-${String(n).padStart(3, "0")}`;
   }
 
+  /** No mobile, tabelas viram cards verticais via data-label */
+  function enhanceTablesForMobile(root = content) {
+    if (!root) return;
+    root.querySelectorAll(".table-wrap table").forEach((table) => {
+      const headers = [...table.querySelectorAll("thead th")].map((th) =>
+        (th.textContent || "").trim()
+      );
+      table.querySelectorAll("tbody tr").forEach((tr) => {
+        const cells = [...tr.children];
+        if (cells.length === 1 && cells[0].hasAttribute("colspan")) return;
+        cells.forEach((td, i) => {
+          const label = headers[i] || "";
+          const isActions =
+            td.classList.contains("actions-cell") ||
+            !label ||
+            /^ações?$/i.test(label) ||
+            label === "—";
+          if (isActions) {
+            td.classList.add("actions-cell");
+            td.setAttribute("data-label", "");
+          } else if (!td.getAttribute("data-label")) {
+            td.setAttribute("data-label", label);
+          }
+        });
+      });
+    });
+  }
+
+  function stackMeta(rows) {
+    return `<div class="stack-item-meta">${rows
+      .filter(Boolean)
+      .map(
+        ([label, value]) =>
+          `<div class="stack-meta-row"><span>${label}</span><span>${value}</span></div>`
+      )
+      .join("")}</div>`;
+  }
+
   // ─── VIEWS ───────────────────────────────────────────────
 
   function renderDashboard() {
@@ -312,28 +350,32 @@ export function initApp() {
       </div>
       <div class="toolbar">
         <button class="btn btn-primary" id="btnNovoCliente">+ Novo cliente</button>
-        <div class="spacer"></div>
       </div>
       <div class="card" style="padding:0">
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Nome</th><th>Tipo</th><th>Documento</th><th>Telefone</th><th>Status</th><th>Ações</th></tr></thead>
-            <tbody>
-              ${list.length ? list.map((c) => `
-                <tr>
-                  <td><strong>${c.nome}</strong><div style="color:var(--text-dim);font-size:.8rem">${c.email || ""}</div></td>
-                  <td>${c.tipo === "pj" ? "PJ" : "PF"}</td>
-                  <td>${c.documento || "—"}</td>
-                  <td>${c.telefone || "—"}</td>
-                  <td><span class="badge badge-${c.status}">${c.status}</span></td>
-                  <td class="actions-cell">
-                    <button class="btn btn-sm btn-secondary" data-edit="${c.id}">Editar</button>
-                    <button class="btn btn-sm btn-danger" data-del="${c.id}">Excluir</button>
-                  </td>
-                </tr>`).join("") : `<tr><td colspan="6"><div class="empty"><strong>Nenhum cliente</strong>Cadastre o primeiro cliente para começar.</div></td></tr>`}
-            </tbody>
-          </table>
-        </div>
+        ${
+          list.length
+            ? `<div class="stack-list">${list
+                .map(
+                  (c) => `<article class="stack-item">
+                    <div class="stack-item-head">
+                      <strong>${c.nome}</strong>
+                      <div class="stack-item-code">${c.email || c.telefone || ""}</div>
+                    </div>
+                    ${stackMeta([
+                      ["Tipo", c.tipo === "pj" ? "PJ" : "PF"],
+                      ["Documento", c.documento || "—"],
+                      ["Telefone", c.telefone || "—"],
+                      ["Status", `<span class="badge badge-${c.status}">${c.status}</span>`]
+                    ])}
+                    <div class="stack-item-actions">
+                      <button class="btn btn-sm btn-secondary" data-edit="${c.id}">Editar</button>
+                      <button class="btn btn-sm btn-danger" data-del="${c.id}">Excluir</button>
+                    </div>
+                  </article>`
+                )
+                .join("")}</div>`
+            : `<div class="empty"><strong>Nenhum cliente</strong>Cadastre o primeiro cliente para começar.</div>`
+        }
       </div>
     `;
 
@@ -407,50 +449,59 @@ export function initApp() {
     content.innerHTML = `
       <div class="toolbar">
         <button class="btn btn-primary" id="btnNovoOrc">+ Novo orçamento</button>
-        <div class="spacer"></div>
       </div>
       <div class="card" style="padding:0">
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Código</th><th>Título</th><th>Cliente</th><th>Data</th><th>Total</th><th>NF</th><th>Status</th><th>Ações</th></tr></thead>
-            <tbody>
-              ${list.length ? list.map((o) => {
-                const cli = s.clientes.find((c) => c.id === o.clienteId);
-                const nf = o.notaFiscal || "a_definir";
-                const nfBadge = nf === "sim" ? "aprovado" : nf === "nao" ? "rejeitado" : "pendente";
-                const emNome =
-                  nf === "sim"
-                    ? o.nfEmissorNome || getEmissorNf(o.nfEmissorId, s)?.nome || ""
-                    : "";
-                const totalPdf = orcamentoTotal(o);
-                const matFora = o.incluirMateriaisNoPdf === false;
-                const matValor = matFora ? orcamentoTotalMateriais(o, s) : 0;
-                return `<tr>
-                  <td>${o.codigo}</td>
-                  <td><strong>${o.titulo}</strong></td>
-                  <td>${cli?.nome || "—"}</td>
-                  <td>${formatDate(o.data)}</td>
-                  <td>
-                    <strong>${money(totalPdf)}</strong>
-                    ${matFora && matValor > 0 ? `<div style="font-size:.72rem;color:var(--text-dim);margin-top:2px">PDF · só mão de obra<br/>materiais ${money(matValor)} (ref.)</div>` : ""}
-                  </td>
-                  <td><span class="badge badge-${nfBadge}" title="${emNome || "Nota fiscal"}">${nfLabel(nf)}${emNome ? ` · ${emNome}` : ""}</span></td>
-                  <td><span class="badge badge-${o.status}">${o.status}</span></td>
-                  <td class="actions-cell">
-                    <button class="btn btn-sm btn-secondary" data-pdf="${o.id}">PDF</button>
-                    <button class="btn btn-sm btn-secondary" data-edit="${o.id}">Editar</button>
-                    <select class="status-select" data-status="${o.id}" style="background:var(--bg-soft);border:1px solid var(--border);border-radius:8px;padding:6px 8px">
-                      <option value="pendente" ${o.status === "pendente" ? "selected" : ""}>Pendente</option>
-                      <option value="aprovado" ${o.status === "aprovado" ? "selected" : ""}>Aprovado</option>
-                      <option value="rejeitado" ${o.status === "rejeitado" ? "selected" : ""}>Rejeitado</option>
-                    </select>
-                    <button class="btn btn-sm btn-danger" data-del="${o.id}">Excluir</button>
-                  </td>
-                </tr>`;
-              }).join("") : `<tr><td colspan="8"><div class="empty"><strong>Nenhum orçamento</strong>Crie o primeiro orçamento profissional.</div></td></tr>`}
-            </tbody>
-          </table>
-        </div>
+        ${
+          list.length
+            ? `<div class="stack-list">${list
+                .map((o) => {
+                  const cli = s.clientes.find((c) => c.id === o.clienteId);
+                  const nf = o.notaFiscal || "a_definir";
+                  const nfBadge = nf === "sim" ? "aprovado" : nf === "nao" ? "rejeitado" : "pendente";
+                  const emNome =
+                    nf === "sim"
+                      ? o.nfEmissorNome || getEmissorNf(o.nfEmissorId, s)?.nome || ""
+                      : "";
+                  const totalPdf = orcamentoTotal(o);
+                  const matFora = o.incluirMateriaisNoPdf === false;
+                  const matValor = matFora ? orcamentoTotalMateriais(o, s) : 0;
+                  return `<article class="stack-item">
+                    <div class="stack-item-head">
+                      <div class="stack-item-code">${o.codigo}</div>
+                      <strong>${o.titulo}</strong>
+                    </div>
+                    ${stackMeta([
+                      ["Cliente", cli?.nome || "—"],
+                      ["Data", formatDate(o.data)],
+                      [
+                        "Total",
+                        `<strong>${money(totalPdf)}</strong>${
+                          matFora && matValor > 0
+                            ? `<div style="font-size:.72rem;color:var(--text-dim);margin-top:2px">PDF · só mão de obra · mat. ${money(matValor)}</div>`
+                            : ""
+                        }`
+                      ],
+                      [
+                        "NF",
+                        `<span class="badge badge-${nfBadge}">${nfLabel(nf)}${emNome ? ` · ${emNome}` : ""}</span>`
+                      ],
+                      ["Status", `<span class="badge badge-${o.status}">${o.status}</span>`]
+                    ])}
+                    <div class="stack-item-actions">
+                      <button class="btn btn-sm btn-secondary" data-pdf="${o.id}">PDF</button>
+                      <button class="btn btn-sm btn-secondary" data-edit="${o.id}">Editar</button>
+                      <select class="status-select" data-status="${o.id}">
+                        <option value="pendente" ${o.status === "pendente" ? "selected" : ""}>Pendente</option>
+                        <option value="aprovado" ${o.status === "aprovado" ? "selected" : ""}>Aprovado</option>
+                        <option value="rejeitado" ${o.status === "rejeitado" ? "selected" : ""}>Rejeitado</option>
+                      </select>
+                      <button class="btn btn-sm btn-danger" data-del="${o.id}">Excluir</button>
+                    </div>
+                  </article>`;
+                })
+                .join("")}</div>`
+            : `<div class="empty"><strong>Nenhum orçamento</strong>Crie o primeiro orçamento profissional.</div>`
+        }
       </div>
     `;
 
@@ -924,30 +975,33 @@ export function initApp() {
         <button class="tab ${servicoFiltro === "comercial" ? "active" : ""}" data-f="comercial">Comercial</button>
       </div>
       <div class="card" style="padding:0">
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Serviço</th><th>Categoria</th><th>Tipo</th><th>Unidade</th><th>Mínimo · Médio · Máximo</th><th>Embutido</th><th>Tempo</th><th>Ações</th></tr></thead>
-            <tbody>
-              ${list.map((sv) => {
-                const emb = custoOcultoServico(sv.id, s);
-                return `
-                <tr>
-                  <td><strong>${sv.nome}</strong><div style="color:var(--text-dim);font-size:.8rem;max-width:320px">${sv.descricao || ""}</div></td>
-                  <td>${sv.categoria}</td>
-                  <td>${sv.tipo}</td>
-                  <td>${sv.unidade}</td>
-                  <td>${priceRangeHtml(sv)}</td>
-                  <td title="Soma no unitário · oculto no PDF">${emb > 0 ? money(emb) : "—"}</td>
-                  <td>${sv.tempo || "—"}</td>
-                  <td class="actions-cell">
-                    <button class="btn btn-sm btn-secondary" data-edit="${sv.id}">Editar</button>
-                    <button class="btn btn-sm btn-danger" data-del="${sv.id}">Excluir</button>
-                  </td>
-                </tr>`;
-              }).join("")}
-            </tbody>
-          </table>
-        </div>
+        ${
+          list.length
+            ? `<div class="stack-list">${list
+                .map((sv) => {
+                  const emb = custoOcultoServico(sv.id, s);
+                  return `<article class="stack-item">
+                    <div class="stack-item-head">
+                      <strong>${sv.nome}</strong>
+                      <div class="stack-item-code">${sv.descricao || sv.categoria || ""}</div>
+                    </div>
+                    ${stackMeta([
+                      ["Categoria", sv.categoria],
+                      ["Tipo", sv.tipo],
+                      ["Unidade", sv.unidade],
+                      ["Preço", priceRangeHtml(sv)],
+                      ["Embutido", emb > 0 ? money(emb) : "—"],
+                      ["Tempo", sv.tempo || "—"]
+                    ])}
+                    <div class="stack-item-actions">
+                      <button class="btn btn-sm btn-secondary" data-edit="${sv.id}">Editar</button>
+                      <button class="btn btn-sm btn-danger" data-del="${sv.id}">Excluir</button>
+                    </div>
+                  </article>`;
+                })
+                .join("")}</div>`
+            : `<div class="empty"><strong>Nenhum serviço</strong></div>`
+        }
       </div>
       </div>
     `;
@@ -2157,34 +2211,34 @@ export function initApp() {
         <div class="card">
           ${
             projetos.length
-              ? `<div class="table-wrap"><table>
-                  <thead><tr><th>Nome</th><th>Uso</th><th>Pontos</th><th>Conduítes</th><th>Circuitos</th><th></th></tr></thead>
-                  <tbody>
-                    ${projetos
-                      .slice()
-                      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-                      .map((p) => {
-                        const nPts = p._stub ? p._indexPoints || 0 : (p.points || []).length;
-                        const nCond = p._stub ? p._indexConduits || 0 : (p.conduits || []).length;
-                        const nCirc = p._stub
-                          ? p._indexCircuits || "—"
-                          : p.lastAnalise?.circuits?.length || "—";
-                        const badge = p._stub || p._cloudNewer ? ` <span class="hint">nuvem</span>` : "";
-                        return `<tr>
-                          <td><strong>${p.nome}</strong>${badge}<div class="hint">${p.criadoEm || ""}</div></td>
-                          <td>${p.uso === "comercial" ? "Comercial" : "Residencial"}</td>
-                          <td>${nPts}</td>
-                          <td>${nCond}</td>
-                          <td>${nCirc}</td>
-                          <td class="actions-cell">
-                            <button class="btn btn-secondary btn-sm" data-open="${p.id}">Abrir</button>
-                            <button class="btn btn-ghost btn-sm" data-del="${p.id}">Excluir</button>
-                          </td>
-                        </tr>`;
-                      })
-                      .join("")}
-                  </tbody>
-                </table></div>`
+              ? `<div class="stack-list">${projetos
+                  .slice()
+                  .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+                  .map((p) => {
+                    const nPts = p._stub ? p._indexPoints || 0 : (p.points || []).length;
+                    const nCond = p._stub ? p._indexConduits || 0 : (p.conduits || []).length;
+                    const nCirc = p._stub
+                      ? p._indexCircuits || "—"
+                      : p.lastAnalise?.circuits?.length || "—";
+                    const badge = p._stub || p._cloudNewer ? ` <span class="hint">nuvem</span>` : "";
+                    return `<article class="stack-item">
+                      <div class="stack-item-head">
+                        <strong>${p.nome}</strong>${badge}
+                        <div class="stack-item-code">${p.criadoEm || ""}</div>
+                      </div>
+                      ${stackMeta([
+                        ["Uso", p.uso === "comercial" ? "Comercial" : "Residencial"],
+                        ["Pontos", String(nPts)],
+                        ["Conduítes", String(nCond)],
+                        ["Circuitos", String(nCirc)]
+                      ])}
+                      <div class="stack-item-actions">
+                        <button class="btn btn-secondary btn-sm" data-open="${p.id}">Abrir</button>
+                        <button class="btn btn-ghost btn-sm" data-del="${p.id}">Excluir</button>
+                      </div>
+                    </article>`;
+                  })
+                  .join("")}</div>`
               : `<div class="empty"><strong>Nenhum projeto</strong>Crie o primeiro para desenhar a planta no grid.</div>`
           }
         </div>
@@ -2365,6 +2419,7 @@ export function initApp() {
           </label>
         </div>
       `;
+      enhanceTablesForMobile(matBox);
     };
 
     document.getElementById("nbrCalc").onclick = () => {
@@ -2548,28 +2603,34 @@ export function initApp() {
         <button class="btn btn-primary" id="btnNovoContrato">+ Novo contrato</button>
       </div>
       <div class="card" style="padding:0">
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Código</th><th>Título</th><th>Cliente</th><th>Mensal</th><th>Meses</th><th>Status</th><th>Ações</th></tr></thead>
-            <tbody>
-              ${s.contratos.length ? s.contratos.map((ct) => {
-                const cli = s.clientes.find((c) => c.id === ct.clienteId);
-                return `<tr>
-                  <td>${ct.codigo}</td>
-                  <td><strong>${ct.titulo}</strong></td>
-                  <td>${cli?.nome || "—"}</td>
-                  <td>${money(ct.valorMensal)}</td>
-                  <td>${ct.meses}</td>
-                  <td><span class="badge badge-${ct.status === "ativo" ? "ativo" : "inativo"}">${ct.status}</span></td>
-                  <td class="actions-cell">
-                    <button class="btn btn-sm btn-secondary" data-pdf="${ct.id}">PDF</button>
-                    <button class="btn btn-sm btn-danger" data-del="${ct.id}">Excluir</button>
-                  </td>
-                </tr>`;
-              }).join("") : `<tr><td colspan="7"><div class="empty"><strong>Nenhum contrato</strong>Crie contratos de manutenção recorrente.</div></td></tr>`}
-            </tbody>
-          </table>
-        </div>
+        ${
+          s.contratos.length
+            ? `<div class="stack-list">${s.contratos
+                .map((ct) => {
+                  const cli = s.clientes.find((c) => c.id === ct.clienteId);
+                  return `<article class="stack-item">
+                    <div class="stack-item-head">
+                      <div class="stack-item-code">${ct.codigo}</div>
+                      <strong>${ct.titulo}</strong>
+                    </div>
+                    ${stackMeta([
+                      ["Cliente", cli?.nome || "—"],
+                      ["Mensal", money(ct.valorMensal)],
+                      ["Meses", String(ct.meses)],
+                      [
+                        "Status",
+                        `<span class="badge badge-${ct.status === "ativo" ? "ativo" : "inativo"}">${ct.status}</span>`
+                      ]
+                    ])}
+                    <div class="stack-item-actions">
+                      <button class="btn btn-sm btn-secondary" data-pdf="${ct.id}">PDF</button>
+                      <button class="btn btn-sm btn-danger" data-del="${ct.id}">Excluir</button>
+                    </div>
+                  </article>`;
+                })
+                .join("")}</div>`
+            : `<div class="empty"><strong>Nenhum contrato</strong>Crie contratos de manutenção recorrente.</div>`
+        }
       </div>
     `;
 
@@ -2820,6 +2881,7 @@ export function initApp() {
     };
     try {
       map[currentView]();
+      enhanceTablesForMobile(content);
     } catch (err) {
       console.error(err);
       const msg = String(err?.message || err || "Erro ao renderizar a tela");
