@@ -188,24 +188,72 @@ import { FirebaseApp } from "./firebase";
     };
   }
 
+  /** Firebase às vezes devolve arrays como objeto {0:…,1:…} */
+  function asArray(v) {
+    if (!v) return [];
+    if (Array.isArray(v)) return v;
+    if (typeof v === "object") return Object.values(v);
+    return [];
+  }
+
+  const PROJETO_ARRAY_KEYS = ["rooms", "arch", "points", "conduits", "walls", "dims", "guides"];
+
+  function normalizeProjeto(p) {
+    if (!p || typeof p !== "object") return p;
+    const out = { ...p };
+    PROJETO_ARRAY_KEYS.forEach((k) => {
+      if (out[k] != null) out[k] = asArray(out[k]);
+    });
+    delete out._stub;
+    delete out._cloudNewer;
+    return out;
+  }
+
   function slimItem(item) {
-    if (!item || typeof item !== "object") return item;
+    if (item == null) return item;
+    if (typeof item !== "object") return item;
+    // Arrays (pontos, cômodos, conduítes…) precisam continuar arrays
+    if (Array.isArray(item)) {
+      return item.map((x) => slimItem(x)).filter((x) => x !== undefined);
+    }
     const out = {};
     Object.keys(item).forEach((k) => {
       const v = item[k];
       if (v == null) return;
       if (typeof v === "string" && v.startsWith("data:")) return;
       if (typeof v === "string" && v.length > 4000) return;
-      // Análise completa é recalculável — nunca sobe pra nuvem
-      if (k === "lastAnalise") return;
+      // Análise completa é recalculável — nuvem guarda só resumo leve
+      if (k === "lastAnalise") {
+        const slim = slimAnalise(v);
+        if (slim) out[k] = slim;
+        return;
+      }
+      if (k === "_stub" || k === "_cloudNewer") return;
       if (typeof v === "object") {
         const nested = slimItem(v);
-        if (nested && (Array.isArray(nested) || Object.keys(nested).length)) out[k] = nested;
+        if (nested === undefined) return;
+        if (Array.isArray(nested)) {
+          out[k] = nested;
+          return;
+        }
+        if (nested && Object.keys(nested).length) out[k] = nested;
         return;
       }
       out[k] = v;
     });
     return DataCache.sanitizeFirebase(out);
+  }
+
+  /** Garante planta completa na nuvem (objetos essenciais) */
+  function slimProjeto(p) {
+    if (!p || typeof p !== "object") return p;
+    const base = normalizeProjeto(p);
+    const slim = slimItem(base);
+    // Reafirma arrays essenciais mesmo se vazios (estrutura do editor)
+    PROJETO_ARRAY_KEYS.forEach((k) => {
+      if (!Array.isArray(slim[k])) slim[k] = asArray(base[k]);
+    });
+    return slim;
   }
 
   function stamp(item, ts = now()) {
@@ -391,11 +439,15 @@ import { FirebaseApp } from "./firebase";
       const nextMap = listToMap(next[key]);
       Object.keys(nextMap).forEach((id) => {
         if (!same(contentOf(prevMap[id]), contentOf(nextMap[id])) || !prevMap[id]) {
-          DataCache.queuePatch(`${key}/${id}`, slimItem(nextMap[id]));
+          const payload = key === "projetos" ? slimProjeto(nextMap[id]) : slimItem(nextMap[id]);
+          DataCache.queuePatch(`${key}/${id}`, payload);
         }
       });
       (next[`_deleted_${key}`] || []).forEach((id) => {
         DataCache.queuePatch(`${key}/${id}`, null);
+        if (key === "projetos") {
+          DataCache.queuePatch(`meta/projetosIndex/${id}`, null);
+        }
       });
     });
 
@@ -494,6 +546,25 @@ import { FirebaseApp } from "./firebase";
       const rev = new Date().toISOString();
       updates["meta/projetosRev"] = rev;
       DataCache.setMeta({ projetosRev: rev });
+      validPaths.forEach((path) => {
+        if (!path.startsWith("projetos/")) return;
+        const id = path.slice("projetos/".length);
+        const val = updates[path];
+        if (val == null) {
+          updates[`meta/projetosIndex/${id}`] = null;
+          return;
+        }
+        updates[`meta/projetosIndex/${id}`] = {
+          id,
+          nome: val.nome || "Projeto",
+          uso: val.uso || "residencial",
+          updatedAt: val.updatedAt || Date.now(),
+          points: Array.isArray(val.points) ? val.points.length : 0,
+          conduits: Array.isArray(val.conduits) ? val.conduits.length : 0,
+          circuits: val.lastAnalise?.circuits?.length || 0
+        };
+        DataCache.setMeta({ [`projSynced:${id}`]: val.updatedAt || Date.now() });
+      });
     }
 
     // Garante meta/precoModo válido se estiver no pacote
@@ -887,77 +958,143 @@ import { FirebaseApp } from "./firebase";
     return { empty: false, updatedAt };
   }
 
-  /** Baixa projetos só quando a revisão mudou (outro aparelho salvou) */
-  async function pullProjetosCloud() {
-    let remote = null;
-    try {
-      remote = await pullNode("projetos");
-    } catch (err) {
-      console.warn("Firebase pull projetos:", err);
-      return { empty: true, error: true };
+  /** Baixa o corpo de UM projeto — só quando o usuário abre */
+  async function ensureProjetoFromCloud(id) {
+    if (!id) return null;
+    const local = (state.projetos || []).find((p) => p.id === id) || null;
+
+    if (!cloudReady || !FirebaseApp.isReady()) {
+      return local ? normalizeProjeto(local) : null;
     }
 
-    if (!remote || !Object.keys(remote).length) {
-      return { empty: true };
+    let remoteTs = null;
+    try {
+      remoteTs = await pullNode(`projetos/${id}/updatedAt`);
+    } catch {
+      remoteTs = null;
+    }
+
+    const localTs = local?.updatedAt || 0;
+    const syncedTs = DataCache.getMeta()[`projSynced:${id}`];
+    const isStub = !!(local && local._stub);
+    const pending = DataCache.getPending()[`projetos/${id}`];
+
+    // Cache local completo e alinhado com a nuvem → não baixa
+    if (
+      local &&
+      !isStub &&
+      !local._cloudNewer &&
+      remoteTs != null &&
+      localTs >= remoteTs &&
+      syncedTs === remoteTs
+    ) {
+      return normalizeProjeto(local);
+    }
+    // Só existe local (nunca na nuvem)
+    if (local && !isStub && remoteTs == null) {
+      return normalizeProjeto(local);
+    }
+    // Edição local pendente mais nova que a nuvem
+    if (pending?.value != null && (pending.ts || 0) >= (remoteTs || 0)) {
+      return normalizeProjeto(pending.value);
+    }
+
+    let remote = null;
+    try {
+      remote = await pullNode(`projetos/${id}`);
+    } catch (err) {
+      console.warn("Firebase ensure projeto:", err);
+      return local ? normalizeProjeto(local) : null;
+    }
+
+    if (!remote) return local ? normalizeProjeto(local) : null;
+
+    const normalized = normalizeProjeto(remote);
+    let merged = normalized;
+    if (local && !isStub && !isNewer(normalized, local)) {
+      merged = normalizeProjeto(local);
+    } else if (local && !isStub) {
+      merged = normalizeProjeto({ ...local, ...normalized, id });
     }
 
     applyingRemote = true;
-    const bag = { projetos: mergeLists(state.projetos || [], mapToList(remote)) };
-    Object.entries(DataCache.getPending()).forEach(([path, op]) => {
-      if (path.startsWith("projetos/")) applyPendingOnto(bag, path, op.value);
-    });
-    state = { ...state, projetos: bag.projetos };
+    const list = (state.projetos || []).slice();
+    const idx = list.findIndex((p) => p.id === id);
+    if (idx >= 0) list[idx] = merged;
+    else list.push(merged);
+    state = { ...state, projetos: list };
     persistCache();
     applyingRemote = false;
     emit();
-    return { empty: false };
+
+    DataCache.setMeta({ [`projSynced:${id}`]: merged.updatedAt || remoteTs || Date.now() });
+    return merged;
   }
 
   /**
-   * Cache-first: só baixa projetos se meta/projetosRev for diferente do cache.
-   * Na 1ª vez (sem rev), baixa uma vez e grava a rev.
+   * Na aba Projetos: só índice leve (nome/contagens), sem baixar a planta.
+   * Projetos remotos aparecem como stub até o usuário abrir.
    */
-  async function syncProjetosIfNeeded() {
-    let remoteRev = null;
+  async function syncProjetosIndex() {
+    if (!cloudReady || !FirebaseApp.isReady()) return { skipped: true };
+    let index = null;
     try {
-      remoteRev = await pullNode("meta/projetosRev");
+      index = await pullNode("meta/projetosIndex");
     } catch {
-      remoteRev = null;
-    }
-    const localRev = DataCache.getMeta().projetosRev;
-
-    // Cache hit — não gasta download dos projetos
-    if (remoteRev && localRev && remoteRev === localRev) {
       return { skipped: true };
     }
+    if (!index || !Object.keys(index).length) return { empty: true };
 
-    const result = await pullProjetosCloud();
-
-    if (result.empty) {
-      // Nuvem sem projetos: sobe só os que o usuário já editou neste aparelho
-      (state.projetos || []).forEach((p) => {
-        if (p?.id && (p.updatedAt || 0) > 0) {
-          DataCache.queuePatch(`projetos/${p.id}`, slimItem(p));
-        }
-      });
-      if (remoteRev) {
-        DataCache.setMeta({ projetosRev: remoteRev });
-      } else if (!localRev) {
-        DataCache.setMeta({ projetosRev: "local-seed" });
+    applyingRemote = true;
+    const map = listToMap(state.projetos || []);
+    let changed = false;
+    Object.values(index).forEach((stub) => {
+      if (!stub?.id) return;
+      const local = map[stub.id];
+      if (!local) {
+        map[stub.id] = {
+          id: stub.id,
+          nome: stub.nome || "Projeto",
+          uso: stub.uso || "residencial",
+          rooms: [],
+          arch: [],
+          points: [],
+          conduits: [],
+          walls: [],
+          dims: [],
+          guides: [],
+          criadoEm: "",
+          updatedAt: stub.updatedAt || 0,
+          _stub: true,
+          _indexPoints: stub.points || 0,
+          _indexConduits: stub.conduits || 0,
+          _indexCircuits: stub.circuits || 0
+        };
+        changed = true;
+        return;
       }
-      return { skipped: false, empty: true };
+      if ((stub.updatedAt || 0) > (local.updatedAt || 0)) {
+        map[stub.id] = {
+          ...local,
+          nome: stub.nome || local.nome,
+          _cloudNewer: true,
+          _indexPoints: stub.points,
+          _indexConduits: stub.conduits,
+          _indexCircuits: stub.circuits
+        };
+        changed = true;
+      }
+    });
+    if (changed) {
+      state = { ...state, projetos: Object.values(map) };
+      persistCache();
+      emit();
     }
-
-    const rev = remoteRev || new Date().toISOString();
-    DataCache.setMeta({ projetosRev: rev });
-    if (!remoteRev) {
-      ignoreProjetosPullUntil = Date.now() + 5000;
-      DataCache.queuePatch("meta/projetosRev", rev);
-    }
-    return { skipped: false, empty: false };
+    applyingRemote = false;
+    return { empty: false, changed };
   }
 
-  /** Só escuta meta/updatedAt — listas leves */
+  /** Só escuta meta/updatedAt — listas leves (sem projetos) */
   function bindMetaUpdatedAt() {
     const ref = FirebaseApp.ref(`${ROOT}/meta/updatedAt`);
     if (!ref) return;
@@ -972,25 +1109,6 @@ import { FirebaseApp } from "./firebase";
       if (prev && prev === v) return;
       DataCache.setMeta({ cloudUpdatedAt: v });
       pullAndMergeCloud().catch((err) => console.warn("Firebase pull on meta:", err));
-    });
-    listeners.push(() => ref.off("value", cb));
-  }
-
-  /** Outro aparelho salvou projeto → baixa só projetos */
-  function bindProjetosRev() {
-    const ref = FirebaseApp.ref(`${ROOT}/meta/projetosRev`);
-    if (!ref) return;
-    const cb = ref.on("value", (snap) => {
-      const v = snap.val();
-      if (!v) return;
-      if (Date.now() < ignoreProjetosPullUntil) {
-        DataCache.setMeta({ projetosRev: v });
-        return;
-      }
-      const prev = DataCache.getMeta().projetosRev;
-      if (prev && prev === v) return;
-      DataCache.setMeta({ projetosRev: v });
-      pullProjetosCloud().catch((err) => console.warn("Firebase pull projetos on rev:", err));
     });
     listeners.push(() => ref.off("value", cb));
   }
@@ -1209,15 +1327,13 @@ import { FirebaseApp } from "./firebase";
         }
       }
 
-      // Projetos: só baixa se a revisão mudou (senão usa cache local)
-      await syncProjetosIfNeeded();
+      // Projetos NÃO baixam no boot — só índice/planta ao abrir a aba / o projeto
 
       listeners.forEach((off) => off());
       listeners = [];
       bindEmpresa();
       bindMeta();
       bindMetaUpdatedAt();
-      bindProjetosRev();
 
       cloudReady = true;
       await flushPending();
@@ -1239,5 +1355,15 @@ import { FirebaseApp } from "./firebase";
   }
 
 
-export { get, set, update, reset, refreshCatalog, initCloud, getStatus };
-export const Store = { get, set, update, reset, refreshCatalog, initCloud, getStatus };
+export { get, set, update, reset, refreshCatalog, initCloud, getStatus, ensureProjetoFromCloud, syncProjetosIndex };
+export const Store = {
+  get,
+  set,
+  update,
+  reset,
+  refreshCatalog,
+  initCloud,
+  getStatus,
+  ensureProjetoFromCloud,
+  syncProjetosIndex
+};

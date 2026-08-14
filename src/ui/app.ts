@@ -67,6 +67,7 @@ export function initApp() {
     comodos: []
   };
   let peEditingId = null;
+  let peOpening = false;
 
   const icons = {
     tomada: (c = "#3db4ff") => `<svg viewBox="0 0 80 80" fill="none"><rect x="18" y="10" width="44" height="60" rx="10" fill="${c}" opacity=".15" stroke="${c}" stroke-width="2.5"/><circle cx="32" cy="34" r="5" fill="${c}"/><circle cx="48" cy="34" r="5" fill="${c}"/><path d="M40 46v14" stroke="${c}" stroke-width="3" stroke-linecap="round"/><path d="M34 60h12" stroke="${c}" stroke-width="3" stroke-linecap="round"/></svg>`,
@@ -1971,32 +1972,43 @@ export function initApp() {
     const projetos = getState().projetos || [];
 
     if (peEditingId) {
-      const projeto = projetos.find((p) => p.id === peEditingId);
-      if (!projeto) {
-        peEditingId = null;
-        return renderProjetoEletrico();
+      if (peOpening) {
+        content.innerHTML = `<div class="view-enter"><div class="empty">Sincronizando projeto…</div></div>`;
+        return;
       }
-      content.innerHTML = `<div id="peRoot" class="view-enter"></div>`;
-      ProjetoEletrico.mount(document.getElementById("peRoot"), {
-        projeto,
-        produtos: getState().produtos,
-        servicos: getState().servicos,
-        precoModo: getPrecoModo(),
-        openModal,
-        closeModal,
-        toast,
-        onSave: (next) => {
-          const list = (getState().projetos || []).slice();
-          const idx = list.findIndex((p) => p.id === next.id);
-          if (idx >= 0) list[idx] = { ...next, updatedAt: Date.now() };
-          else list.push({ ...next, updatedAt: Date.now() });
-          Store.update({ projetos: list });
-        },
-        onBack: () => {
+
+      const mountEditor = (projeto) => {
+        peOpening = false;
+        if (!projeto) {
           peEditingId = null;
-          render();
-        },
-        onCreateOrcamento: (proj, analise) => {
+          toast("Projeto não encontrado");
+          return renderProjetoEletrico();
+        }
+        content.innerHTML = `<div id="peRoot" class="view-enter"></div>`;
+        ProjetoEletrico.mount(document.getElementById("peRoot"), {
+          projeto,
+          produtos: getState().produtos,
+          servicos: getState().servicos,
+          precoModo: getPrecoModo(),
+          openModal,
+          closeModal,
+          toast,
+          onSave: (next) => {
+            const list = (getState().projetos || []).slice();
+            const idx = list.findIndex((p) => p.id === next.id);
+            const saved = { ...next, updatedAt: Date.now() };
+            delete saved._stub;
+            delete saved._cloudNewer;
+            if (idx >= 0) list[idx] = saved;
+            else list.push(saved);
+            Store.update({ projetos: list });
+          },
+          onBack: () => {
+            peEditingId = null;
+            peOpening = false;
+            render();
+          },
+          onCreateOrcamento: (proj, analise) => {
           if (!analise?.materiais?.length && !analise?.maoObra?.length) {
             return toast("Rode a análise antes");
           }
@@ -2109,11 +2121,26 @@ export function initApp() {
             closeModal();
             toast(`Orçamento criado · ${itensServ.length} serviços · ${itensMat.length} materiais`);
             peEditingId = null;
+            peOpening = false;
             navigate("orcamentos");
             openOrcamentoForm(data);
           };
         }
-      });
+        });
+      };
+
+      // Baixa a planta só ao abrir (se a nuvem estiver mais nova que o cache)
+      peOpening = true;
+      content.innerHTML = `<div class="view-enter"><div class="empty">Sincronizando projeto…</div></div>`;
+      const localFallback = projetos.find((p) => p.id === peEditingId) || null;
+      Store.ensureProjetoFromCloud(peEditingId)
+        .then((projeto) => mountEditor(projeto))
+        .catch((err) => {
+          console.error(err);
+          peOpening = false;
+          toast("Falha ao baixar — abrindo cache local");
+          mountEditor(localFallback);
+        });
       return;
     }
 
@@ -2137,12 +2164,17 @@ export function initApp() {
                       .slice()
                       .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
                       .map((p) => {
-                        const nCirc = p.lastAnalise?.circuits?.length || "—";
+                        const nPts = p._stub ? p._indexPoints || 0 : (p.points || []).length;
+                        const nCond = p._stub ? p._indexConduits || 0 : (p.conduits || []).length;
+                        const nCirc = p._stub
+                          ? p._indexCircuits || "—"
+                          : p.lastAnalise?.circuits?.length || "—";
+                        const badge = p._stub || p._cloudNewer ? ` <span class="hint">nuvem</span>` : "";
                         return `<tr>
-                          <td><strong>${p.nome}</strong><div class="hint">${p.criadoEm || ""}</div></td>
+                          <td><strong>${p.nome}</strong>${badge}<div class="hint">${p.criadoEm || ""}</div></td>
                           <td>${p.uso === "comercial" ? "Comercial" : "Residencial"}</td>
-                          <td>${(p.points || []).length}</td>
-                          <td>${(p.conduits || []).length}</td>
+                          <td>${nPts}</td>
+                          <td>${nCond}</td>
                           <td>${nCirc}</td>
                           <td class="actions-cell">
                             <button class="btn btn-secondary btn-sm" data-open="${p.id}">Abrir</button>
@@ -2158,6 +2190,16 @@ export function initApp() {
         </div>
       </div>
     `;
+
+    // Índice leve (nomes) — no máx. 1x a cada 30s nesta aba
+    if (!renderProjetoEletrico._idxAt || Date.now() - renderProjetoEletrico._idxAt > 30000) {
+      renderProjetoEletrico._idxAt = Date.now();
+      Store.syncProjetosIndex()
+        .then((r) => {
+          if (r?.changed && currentView === "projeto" && !peEditingId) render();
+        })
+        .catch(() => {});
+    }
 
     document.getElementById("peNovo").onclick = () => {
       openModal(
