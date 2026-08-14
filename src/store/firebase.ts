@@ -42,11 +42,11 @@ function bindVisibility() {
     const database = getDb();
     if (!database) return;
     if (document.hidden) {
-      // Delay: troca rápida de aba não reconecta/resincroniza tudo
+    // Delay curto: desliga RTDB cedo e evita resync caro
       clearTimeout(hideTimer);
       hideTimer = setTimeout(() => {
         if (document.hidden) database.goOffline();
-      }, 20000);
+      }, 8000);
     } else {
       clearTimeout(hideTimer);
       database.goOnline();

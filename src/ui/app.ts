@@ -2789,6 +2789,7 @@ export function initApp() {
 
   function setSidebarOpen(open) {
     sidebar.classList.toggle("open", open);
+    document.body.classList.toggle("sidebar-open", open);
     const scrim = document.getElementById("sidebarScrim");
     if (scrim) scrim.hidden = !open;
   }
@@ -2804,7 +2805,11 @@ export function initApp() {
 
   // Events
   document.querySelectorAll(".nav-item").forEach((btn) => {
-    btn.addEventListener("click", () => navigate(btn.dataset.view));
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      navigate(btn.dataset.view);
+    });
   });
   document.getElementById("precoModoSeg").addEventListener("click", (e) => {
     const btn = e.target.closest("button[data-modo]");

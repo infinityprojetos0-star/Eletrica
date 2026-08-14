@@ -18,7 +18,8 @@ import { FirebaseApp } from "./firebase";
 
   const OLD_KEYS = ["voltes-data-v1"];
   const ROOT = "voltes";
-  const FLUSH_MS = 1500;
+  /** Agrupa writes — menos tráfego no plano gratuito */
+  const FLUSH_MS = 4500;
 
   const USER_LIST_KEYS = [
     "clientes",
@@ -30,6 +31,9 @@ import { FirebaseApp } from "./firebase";
     "emissoresNf",
     "projetos"
   ];
+  /** Projetos (planta) ficam só no aparelho — maior custo do Firebase */
+  const CLOUD_LIST_KEYS = USER_LIST_KEYS.filter((k) => k !== "projetos");
+  const LOCAL_ONLY_KEYS = new Set(["projetos"]);
   const CATALOG_KEYS = ["servicos", "produtos"];
   const CATALOG_FIELDS = [
     "nome",
@@ -193,11 +197,8 @@ import { FirebaseApp } from "./firebase";
       if (v == null) return;
       if (typeof v === "string" && v.startsWith("data:")) return;
       if (typeof v === "string" && v.length > 4000) return;
-      // Análise completa (caminhos, points duplicados) é recalculável — nuvem só guarda resumo
-      if (k === "lastAnalise") {
-        out[k] = slimAnalise(v);
-        return;
-      }
+      // Análise completa é recalculável — nunca sobe pra nuvem
+      if (k === "lastAnalise") return;
       if (typeof v === "object") {
         const nested = slimItem(v);
         if (nested && (Array.isArray(nested) || Object.keys(nested).length)) out[k] = nested;
@@ -387,6 +388,7 @@ import { FirebaseApp } from "./firebase";
     }
 
     USER_LIST_KEYS.forEach((key) => {
+      if (LOCAL_ONLY_KEYS.has(key)) return;
       const prevMap = listToMap(prev[key]);
       const nextMap = listToMap(next[key]);
       Object.keys(nextMap).forEach((id) => {
@@ -485,6 +487,7 @@ import { FirebaseApp } from "./firebase";
       (p) => p === "empresa" || !p.startsWith("meta/")
     );
     if (needsMetaBump) {
+      ignoreMetaPullUntil = Date.now() + 4000;
       updates["meta/updatedAt"] = new Date().toISOString();
     }
 
@@ -826,6 +829,75 @@ import { FirebaseApp } from "./firebase";
     listeners.push(() => ref.off("value", cb));
   }
 
+  let ignoreMetaPullUntil = 0;
+
+  function dropLocalOnlyPending() {
+    const pending = DataCache.getPending() || {};
+    const drop = Object.keys(pending).filter(
+      (p) => p.startsWith("projetos/") || p.includes("/lastAnalise")
+    );
+    if (drop.length) DataCache.clearPatches(drop);
+  }
+
+  async function pullNode(path) {
+    const r = FirebaseApp.ref(`${ROOT}/${path}`);
+    if (!r) return null;
+    const snap = await r.once("value");
+    return snap.val();
+  }
+
+  /** Baixa só nós leves — nunca a árvore raiz nem projetos */
+  async function pullAndMergeCloud() {
+    const keys = [...CLOUD_LIST_KEYS, "empresa", "meta", "servicosPatch", "produtosPatch"];
+    const remote = {};
+    await Promise.all(
+      keys.map(async (k) => {
+        try {
+          remote[k] = await pullNode(k);
+        } catch (err) {
+          console.warn("Firebase pull:", k, err);
+        }
+      })
+    );
+
+    const hasRemote =
+      CLOUD_LIST_KEYS.some((k) => remote[k] && Object.keys(remote[k] || {}).length) ||
+      (remote.empresa && Object.keys(remote.empresa).length) ||
+      (remote.servicosPatch && Object.keys(remote.servicosPatch).length) ||
+      (remote.produtosPatch && Object.keys(remote.produtosPatch).length);
+
+    if (!hasRemote) return { empty: true };
+
+    applyingRemote = true;
+    state = mergeInitialRemote(remote);
+    persistCache();
+    applyingRemote = false;
+    emit();
+
+    const updatedAt = remote.meta?.updatedAt || null;
+    if (updatedAt) DataCache.setMeta({ cloudUpdatedAt: updatedAt });
+    return { empty: false, updatedAt };
+  }
+
+  /** Só escuta meta/updatedAt — evita listeners pesados em cada lista */
+  function bindMetaUpdatedAt() {
+    const ref = FirebaseApp.ref(`${ROOT}/meta/updatedAt`);
+    if (!ref) return;
+    const cb = ref.on("value", (snap) => {
+      const v = snap.val();
+      if (!v) return;
+      if (Date.now() < ignoreMetaPullUntil) {
+        DataCache.setMeta({ cloudUpdatedAt: v });
+        return;
+      }
+      const prev = DataCache.getMeta().cloudUpdatedAt;
+      if (prev && prev === v) return;
+      DataCache.setMeta({ cloudUpdatedAt: v });
+      pullAndMergeCloud().catch((err) => console.warn("Firebase pull on meta:", err));
+    });
+    listeners.push(() => ref.off("value", cb));
+  }
+
   function set(next) {
     if (applyingRemote) {
       state = typeof next === "function" ? next(state) : next;
@@ -855,6 +927,7 @@ import { FirebaseApp } from "./firebase";
     enqueueFromDiff(prev, next);
     // força reenvio de listas (reset completo)
     USER_LIST_KEYS.forEach((key) => {
+      if (LOCAL_ONLY_KEYS.has(key)) return;
       listToMap(prev[key]).forEach((_, id) => {
         if (!listToMap(next[key])[id]) DataCache.queuePatch(`${key}/${id}`, null);
       });
@@ -1008,36 +1081,45 @@ import { FirebaseApp } from "./firebase";
     setStatus("syncing");
 
     try {
-      const snap = await root.once("value");
-      const remote = snap.val();
+      dropLocalOnlyPending();
 
-      if (!remote) {
-        // Primeira carga: envia estado local por paths (sem catálogo completo)
-        USER_LIST_KEYS.forEach((key) => {
-          (state[key] || []).forEach((item) => {
-            DataCache.queuePatch(`${key}/${item.id}`, slimItem(stamp(item)));
-          });
-        });
-        DataCache.queuePatch("empresa", slimItem(stamp(state.empresa || {})));
-        DataCache.queuePatch("meta/precoModo", state.precoModo || "medio");
-        DataCache.queuePatch("meta/precoModoTs", now());
-        DataCache.queuePatch("meta/precoModoDevice", DEVICE_ID || "unknown");
-        DataCache.queuePatch("meta/version", state.version ?? 2);
-        DataCache.queuePatch("meta/catalogVersion", state.catalogVersion ?? 3);
-      } else {
-        applyingRemote = true;
-        state = mergeInitialRemote(remote);
-        persistCache();
-        applyingRemote = false;
-        emit();
+      const cacheMeta = DataCache.getMeta();
+      let remoteUpdated = null;
+      try {
+        remoteUpdated = await pullNode("meta/updatedAt");
+      } catch {
+        remoteUpdated = null;
+      }
+
+      const hasLocalWork =
+        (state.clientes || []).some((c) => (c.updatedAt || 0) > 0) ||
+        (state.orcamentos || []).some((o) => (o.updatedAt || 0) > 0) ||
+        (state.contratos || []).length > 0 ||
+        (state.lancamentos || []).length > 0 ||
+        (state.empresa?.updatedAt || 0) > 0 ||
+        (state.projetos || []).length > 0;
+
+      // Local-first: se o cache já está alinhado com a nuvem, não baixa listas
+      const skipPull =
+        hasLocalWork &&
+        remoteUpdated &&
+        cacheMeta.cloudUpdatedAt &&
+        cacheMeta.cloudUpdatedAt === remoteUpdated;
+
+      if (!skipPull) {
+        const result = await pullAndMergeCloud();
+        // Nuvem vazia: NÃO faz upload em massa de seeds/demo (economia)
+        if (result.empty && remoteUpdated) {
+          DataCache.setMeta({ cloudUpdatedAt: remoteUpdated });
+        }
       }
 
       listeners.forEach((off) => off());
       listeners = [];
-      USER_LIST_KEYS.forEach(bindChildList);
-      CATALOG_KEYS.forEach(bindCatalogPatches);
+      // Sem child_* em listas (caro no reconnect) — só meta leve + empresa
       bindEmpresa();
       bindMeta();
+      bindMetaUpdatedAt();
 
       cloudReady = true;
       await flushPending();
