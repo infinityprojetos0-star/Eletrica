@@ -823,8 +823,72 @@ tr:hover td { background: rgba(61,180,255,0.03); }
   border-bottom: none;
   border-top: 1px solid var(--border);
   justify-content: flex-end;
+  flex-wrap: wrap;
 }
 .modal-header h2 { font-family: var(--display); font-size: 1.15rem; }
+
+.orc-form { display: flex; flex-direction: column; gap: 4px; }
+.orc-tabs { margin-bottom: 14px; }
+.orc-pane { animation: fadeSoft 0.2s ease; }
+.orc-price-bar {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(61,180,255,0.06);
+}
+.orc-price-bar-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 8px;
+}
+.orc-modal-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+.orc-total-sticky {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(61,180,255,0.16), rgba(46,240,176,0.08));
+  border: 1px solid rgba(61,180,255,0.28);
+}
+.orc-total-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.orc-total-value {
+  font-family: var(--display);
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.orc-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+.price-range-ro .hint { margin-top: 4px; }
+
+@keyframes fadeSoft {
+  from { opacity: 0.4; }
+  to { opacity: 1; }
+}
 
 .line-items { display: flex; flex-direction: column; gap: 10px; }
 .line-items > .empty { padding: 20px; }
@@ -1715,6 +1779,15 @@ tr:hover td { background: rgba(61,180,255,0.03); }
   .mobile-toggle { display: grid; min-width: 44px; min-height: 44px; }
   .search-box { display: none; }
   .price-mode-label { display: none; }
+  .price-mode { display: none; }
+  .orc-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  .orc-tabs .tab { justify-content: center; text-align: center; min-height: 40px; }
+  .orc-modal-actions .btn { flex: 1 1 auto; min-height: 44px; }
+  .orc-total-value { font-size: 1.2rem; }
   .topbar {
     flex-wrap: wrap;
     gap: 10px;

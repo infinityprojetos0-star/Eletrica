@@ -102,10 +102,7 @@ export function initApp() {
   }
 
   function syncPrecoModoUI() {
-    const modo = getPrecoModo();
-    document.querySelectorAll("#precoModoSeg button").forEach((btn) => {
-      btn.classList.toggle("active", btn.dataset.modo === modo);
-    });
+    /* Seletor global removido — preço só no modal de orçamento */
   }
 
   function tierPicksHtml(item, selectedModo, attrs = "") {
@@ -121,13 +118,12 @@ export function initApp() {
       </div>`;
   }
 
+  /** Catálogo: só exibe a faixa (sem mudar preço global) */
   function priceRangeHtml(item) {
-    const modo = getPrecoModo();
-    const ativo = getPrecoByModo(item, modo);
     return `
-      <div class="price-range">
-        <div class="main">${money(ativo)} <span style="font-size:.7rem;color:var(--text-dim);font-family:var(--font);font-weight:500">${precoModoLabel(modo)}</span></div>
-        ${tierPicksHtml(item, modo)}
+      <div class="price-range price-range-ro">
+        <div class="main">${money(getPrecoByModo(item, "medio"))}</div>
+        <div class="hint">mín ${money(getPrecoByModo(item, "minimo"))} · méd ${money(getPrecoByModo(item, "medio"))} · máx ${money(getPrecoByModo(item, "maximo"))}</div>
       </div>`;
   }
 
@@ -564,7 +560,7 @@ export function initApp() {
 
   function openOrcamentoForm(orcamento = null) {
     const s = getState();
-    let modoLocal = getPrecoModo();
+    let modoLocal = orcamento?.precoModo || getPrecoModo() || "medio";
     const o = orcamento || {
       clienteId: s.clientes[0]?.id || "",
       titulo: "",
@@ -599,15 +595,30 @@ export function initApp() {
       };
     };
 
-    const renderItens = () => {
-      const box = document.getElementById("itensBox");
-      if (!box) return;
+    const applyItemTier = (item, tier) => {
+      const oculto = Number(item.custoOculto || 0);
+      const fake = {
+        precoMin: item.precoMin ?? item.precoBase ?? item.preco,
+        preco: item.precoMed ?? item.precoBase ?? item.preco,
+        precoMax: item.precoMax ?? item.precoBase ?? item.preco
+      };
+      item.precoModo = tier;
+      const base = getPrecoByModo(fake, tier);
+      if (item.tipo === "servico") {
+        item.precoBase = base;
+        item.preco = base + oculto;
+      } else {
+        item.precoBase = base;
+        item.preco = base;
+      }
+    };
+
+    const calcTotais = () => {
       itens = itens.map((i) => sanitizarItemOculto(i, getState()));
       const subItens = itens.reduce((t, i) => t + i.qtd * i.preco, 0);
       const ocultoItens = itens.reduce((t, i) => t + i.qtd * Number(i.custoOculto || 0), 0);
       const temServ = itens.some((i) => i.tipo === "servico");
       const obraGlobal = temServ ? custoOcultoGlobal(getState()) : 0;
-      const ocultoTotal = ocultoItens + obraGlobal;
       const desconto = Number(document.getElementById("oDesc")?.value || o.desconto || 0);
       const base = Math.max(0, subItens + obraGlobal - desconto);
       const notaFiscal = document.getElementById("oNotaFiscal")?.value || o.notaFiscal || "a_definir";
@@ -636,6 +647,39 @@ export function initApp() {
         : Math.max(0, subServ + (temServ ? obraGlobal : 0) - desconto);
       const nfPdf = incluiMatPdf ? nfValor : basePdf * (nfPct / 100);
       const totalPdf = basePdf + nfPdf;
+      return {
+        subItens,
+        ocultoItens,
+        obraGlobal,
+        desconto,
+        base,
+        notaFiscal,
+        emissorId,
+        nfPct,
+        nfValor,
+        totalCliente,
+        incluiMatPdf,
+        totalPdf
+      };
+    };
+
+    const updateTotalBar = () => {
+      const t = calcTotais();
+      const val = document.getElementById("orcTotalValue");
+      const hint = document.getElementById("orcTotalHint");
+      if (val) val.textContent = money(t.totalPdf);
+      if (hint) {
+        hint.textContent = t.incluiMatPdf
+          ? "Total no PDF (cliente)"
+          : "Total no PDF · só mão de obra";
+      }
+      return t;
+    };
+
+    const renderItens = () => {
+      const box = document.getElementById("itensBox");
+      if (!box) return;
+      const t = updateTotalBar();
       box.innerHTML = `
         <div class="line-items">
           ${itens.map((item, idx) => {
@@ -662,28 +706,28 @@ export function initApp() {
           }).join("") || `<div class="empty"><strong>Sem itens</strong>Adicione serviços ou materiais.</div>`}
         </div>
         <div class="totals-box">
-          <div class="row"><span>Subtotal itens</span><span>${money(subItens)}</span></div>
+          <div class="row"><span>Subtotal itens</span><span>${money(t.subItens)}</span></div>
           ${
-            obraGlobal > 0
-              ? `<div class="row" style="color:var(--text-dim)"><span>Deslocamento/alimentação (1× obra)</span><span>${money(obraGlobal)}</span></div>`
+            t.obraGlobal > 0
+              ? `<div class="row" style="color:var(--text-dim)"><span>Deslocamento/alimentação (1× obra)</span><span>${money(t.obraGlobal)}</span></div>`
               : ""
           }
           ${
-            ocultoItens > 0
-              ? `<div class="row" style="color:var(--text-dim)"><span>Extras por serviço (só você)</span><span>${money(ocultoItens)}</span></div>`
+            t.ocultoItens > 0
+              ? `<div class="row" style="color:var(--text-dim)"><span>Extras por serviço (só você)</span><span>${money(t.ocultoItens)}</span></div>`
               : ""
           }
-          <div class="row"><span>Desconto</span><span>${money(desconto)}</span></div>
-          <div class="row"><span>Base (serviços/materiais)</span><span>${money(base)}</span></div>
+          <div class="row"><span>Desconto</span><span>${money(t.desconto)}</span></div>
+          <div class="row"><span>Base</span><span>${money(t.base)}</span></div>
           ${
-            notaFiscal === "sim"
-              ? `<div class="row" style="color:var(--warn)"><span>NF ${nfPct}% embutida — ${getEmissorNf(emissorId, getState())?.nome || "emissor"} (só você)</span><span>${money(nfValor)}</span></div>`
+            t.notaFiscal === "sim"
+              ? `<div class="row" style="color:var(--warn)"><span>NF ${t.nfPct}% embutida — ${getEmissorNf(t.emissorId, getState())?.nome || "emissor"}</span><span>${money(t.nfValor)}</span></div>`
               : ""
           }
-          <div class="row total"><span>Total no PDF (cliente)${!incluiMatPdf ? " · só mão de obra" : ""}</span><span>${money(totalPdf)}</span></div>
+          <div class="row total"><span>Total no PDF${!t.incluiMatPdf ? " · só mão de obra" : ""}</span><span>${money(t.totalPdf)}</span></div>
           ${
-            !incluiMatPdf && totalCliente !== totalPdf
-              ? `<div class="row" style="color:var(--text-dim)"><span>Materiais (lista no PDF, fora do total)</span><span>${money(totalCliente - totalPdf)}</span></div>`
+            !t.incluiMatPdf && t.totalCliente !== t.totalPdf
+              ? `<div class="row" style="color:var(--text-dim)"><span>Materiais (fora do total)</span><span>${money(t.totalCliente - t.totalPdf)}</span></div>`
               : ""
           }
         </div>
@@ -704,17 +748,7 @@ export function initApp() {
         const idx = Number(wrap.dataset.itemTiers);
         wrap.querySelectorAll("[data-tier]").forEach((btn) => {
           btn.onclick = () => {
-            const tier = btn.dataset.tier;
-            const item = itens[idx];
-            const oculto = Number(item.custoOculto || 0);
-            const fake = {
-              precoMin: item.precoMin ?? item.precoBase ?? item.preco,
-              preco: item.precoMed ?? item.precoBase ?? item.preco,
-              precoMax: item.precoMax ?? item.precoBase ?? item.preco
-            };
-            item.precoModo = tier;
-            item.precoBase = getPrecoByModo(fake, tier);
-            item.preco = item.precoBase + oculto;
+            applyItemTier(itens[idx], btn.dataset.tier);
             renderItens();
           };
         });
@@ -734,105 +768,158 @@ export function initApp() {
     ).join("");
 
     openModal(orcamento ? "Editar orçamento" : "Novo orçamento", `
-      <div class="form-grid">
-        <div class="field full"><label>Cliente</label>
-          <select id="oCliente">
-            ${s.clientes.map((c) => `<option value="${c.id}" ${c.id === o.clienteId ? "selected" : ""}>${c.nome}</option>`).join("") || `<option value="">Cadastre um cliente primeiro</option>`}
-          </select>
+      <div class="orc-form">
+        <div class="tabs orc-tabs" id="orcTabs">
+          <button type="button" class="tab active" data-orc-tab="dados">Dados</button>
+          <button type="button" class="tab" data-orc-tab="itens">Itens e preços</button>
+          <button type="button" class="tab" data-orc-tab="pagamento">Pagamento / NF</button>
+          <button type="button" class="tab" data-orc-tab="obs">Observações</button>
         </div>
-        <div class="field full"><label>Título</label><input id="oTitulo" value="${o.titulo || ""}" placeholder="Ex: Orçamento de quadro elétrico" /></div>
-        <div class="field"><label>Data</label><input id="oData" type="date" value="${o.data || todayISO()}" /></div>
-        <div class="field"><label>Validade (dias)</label><input id="oVal" type="number" value="${o.validade || 15}" /></div>
-        <div class="field"><label>Prazo de entrega</label><input id="oPrazo" value="${o.prazo || "7 dias"}" /></div>
-        <div class="field"><label>Desconto (R$)</label><input id="oDesc" type="number" step="0.01" value="${o.desconto || 0}" /></div>
-        <div class="field"><label>Garantia (meses)</label><input id="oGarantia" type="number" min="1" value="${o.garantiaMeses || 3}" /></div>
-        <div class="field"><label>Nota fiscal</label>
-          <select id="oNotaFiscal">
-            <option value="a_definir" ${(o.notaFiscal || "a_definir") === "a_definir" ? "selected" : ""}>A definir</option>
-            <option value="sim" ${o.notaFiscal === "sim" ? "selected" : ""}>Precisa de NF</option>
-            <option value="nao" ${o.notaFiscal === "nao" ? "selected" : ""}>Sem NF</option>
-          </select>
-        </div>
-        <div class="field" id="oNfEmissorWrap" ${(o.notaFiscal || "a_definir") === "sim" ? "" : "hidden"}>
-          <label>Emissor da NF</label>
-          <select id="oNfEmissor">
-            ${getEmissoresNf(s)
-              .filter((e) => e.ativo !== false)
-              .map(
-                (e) =>
-                  `<option value="${e.id}" ${
-                    (o.nfEmissorId || "nf-propria") === e.id ? "selected" : ""
-                  }>${e.nome}${e.contato ? ` (${e.contato})` : ""} — ${Number(e.aliquota) || 0}%</option>`
-              )
-              .join("")}
-          </select>
-        </div>
-        <div class="field full">
-          <label>Formas de pagamento (aparecem no PDF)</label>
-          <div style="display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:6px">
-            ${[
-              ["pix", "PIX"],
-              ["dinheiro", "Dinheiro"],
-              ["transferencia", "Transferência"],
-              ["boleto", "Boleto"],
-              ["cartao", "Cartão"]
-            ]
-              .map(
-                ([id, label]) =>
-                  `<label style="display:flex;align-items:center;gap:6px;font-size:.85rem;color:var(--text-muted)"><input type="checkbox" class="oPag" value="${id}" ${(o.formasPagamento || ["pix"]).includes(id) ? "checked" : ""} /> ${label}</label>`
-              )
-              .join("")}
+
+        <div class="orc-pane" data-orc-pane="dados">
+          <div class="form-grid">
+            <div class="field full"><label>Cliente</label>
+              <select id="oCliente">
+                ${s.clientes.map((c) => `<option value="${c.id}" ${c.id === o.clienteId ? "selected" : ""}>${c.nome}</option>`).join("") || `<option value="">Cadastre um cliente primeiro</option>`}
+              </select>
+            </div>
+            <div class="field full"><label>Título</label><input id="oTitulo" value="${o.titulo || ""}" placeholder="Ex: Orçamento de quadro elétrico" /></div>
+            <div class="field"><label>Data</label><input id="oData" type="date" value="${o.data || todayISO()}" /></div>
+            <div class="field"><label>Validade (dias)</label><input id="oVal" type="number" value="${o.validade || 15}" /></div>
+            <div class="field"><label>Prazo de entrega</label><input id="oPrazo" value="${o.prazo || "7 dias"}" /></div>
+            <div class="field"><label>Garantia (meses)</label><input id="oGarantia" type="number" min="1" value="${o.garantiaMeses || 3}" /></div>
           </div>
         </div>
-        <div class="field full"><label>Detalhe da forma de pagamento</label><input id="oPagObs" value="${o.formaPagamentoObs || ""}" placeholder="Ex: 50% entrada + 50% na conclusão" /></div>
-        <div class="field full">
-          <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:.9rem;color:var(--text)">
-            <input type="checkbox" id="oIncluiMat" style="margin-top:3px" ${o.incluirMateriaisNoPdf !== false ? "checked" : ""} />
-            <span><strong>Somar valor dos materiais no total do PDF</strong><br/><span class="hint">Marcado: total do sistema = total do PDF (mão de obra + materiais). Desmarcado: materiais só na pág. 2 como referência — o total da lista e do PDF ficam só com a mão de obra.</span></span>
-          </label>
-        </div>
-        <div class="field full"><label>Observações</label><textarea id="oObs">${o.observacoes || ""}</textarea></div>
-      </div>
 
-      <div style="margin:16px 0;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between">
-        <div>
-          <div style="font-size:.78rem;color:var(--text-muted);margin-bottom:6px">Preço ao adicionar itens</div>
-          <div class="segmented" id="orcModoSeg">
-            ${PRECO_MODOS.map((m) => `<button type="button" data-modo="${m.id}" class="${modoLocal === m.id ? "active" : ""}">${m.label}</button>`).join("")}
+        <div class="orc-pane" data-orc-pane="itens" hidden>
+          <div class="orc-price-bar">
+            <div>
+              <div class="orc-price-bar-label">Preço de todos os itens</div>
+              <div class="segmented" id="orcModoSeg">
+                ${PRECO_MODOS.map((m) => `<button type="button" data-modo="${m.id}" class="${modoLocal === m.id ? "active" : ""}">${m.label}</button>`).join("")}
+              </div>
+              <p class="hint" style="margin-top:8px">Muda todos de uma vez. Em cada item você ainda pode escolher mín/méd/máx individualmente.</p>
+            </div>
+          </div>
+          <div class="form-grid" style="margin-bottom:12px">
+            <div class="field"><label>Desconto (R$)</label><input id="oDesc" type="number" step="0.01" value="${o.desconto || 0}" /></div>
+            <div class="field full">
+              <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:.9rem;color:var(--text)">
+                <input type="checkbox" id="oIncluiMat" style="margin-top:3px" ${o.incluirMateriaisNoPdf !== false ? "checked" : ""} />
+                <span><strong>Somar materiais no total do PDF</strong><br/><span class="hint">Desmarcado: materiais só como referência na pág. 2.</span></span>
+              </label>
+            </div>
+          </div>
+          <div style="margin:0 0 12px;display:flex;gap:8px;flex-wrap:wrap">
+            <select id="addServico" style="flex:1;min-width:160px;background:var(--bg-elevated);border:1px solid var(--border-strong);border-radius:11px;padding:10px">
+              <option value="">+ Adicionar serviço...</option>
+              ${optionsServico()}
+            </select>
+            <select id="addProduto" style="flex:1;min-width:160px;background:var(--bg-elevated);border:1px solid var(--border-strong);border-radius:11px;padding:10px">
+              <option value="">+ Adicionar material...</option>
+              ${optionsProduto()}
+            </select>
+          </div>
+          <div id="itensBox"></div>
+        </div>
+
+        <div class="orc-pane" data-orc-pane="pagamento" hidden>
+          <div class="form-grid">
+            <div class="field"><label>Nota fiscal</label>
+              <select id="oNotaFiscal">
+                <option value="a_definir" ${(o.notaFiscal || "a_definir") === "a_definir" ? "selected" : ""}>A definir</option>
+                <option value="sim" ${o.notaFiscal === "sim" ? "selected" : ""}>Precisa de NF</option>
+                <option value="nao" ${o.notaFiscal === "nao" ? "selected" : ""}>Sem NF</option>
+              </select>
+            </div>
+            <div class="field" id="oNfEmissorWrap" ${(o.notaFiscal || "a_definir") === "sim" ? "" : "hidden"}>
+              <label>Emissor da NF</label>
+              <select id="oNfEmissor">
+                ${getEmissoresNf(s)
+                  .filter((e) => e.ativo !== false)
+                  .map(
+                    (e) =>
+                      `<option value="${e.id}" ${
+                        (o.nfEmissorId || "nf-propria") === e.id ? "selected" : ""
+                      }>${e.nome}${e.contato ? ` (${e.contato})` : ""} — ${Number(e.aliquota) || 0}%</option>`
+                  )
+                  .join("")}
+              </select>
+            </div>
+            <div class="field full">
+              <label>Formas de pagamento (aparecem no PDF)</label>
+              <div style="display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:6px">
+                ${[
+                  ["pix", "PIX"],
+                  ["dinheiro", "Dinheiro"],
+                  ["transferencia", "Transferência"],
+                  ["boleto", "Boleto"],
+                  ["cartao", "Cartão"]
+                ]
+                  .map(
+                    ([id, label]) =>
+                      `<label style="display:flex;align-items:center;gap:6px;font-size:.85rem;color:var(--text-muted)"><input type="checkbox" class="oPag" value="${id}" ${(o.formasPagamento || ["pix"]).includes(id) ? "checked" : ""} /> ${label}</label>`
+                  )
+                  .join("")}
+              </div>
+            </div>
+            <div class="field full"><label>Detalhe da forma de pagamento</label><input id="oPagObs" value="${o.formaPagamentoObs || ""}" placeholder="Ex: 50% entrada + 50% na conclusão" /></div>
           </div>
         </div>
-        <p style="color:var(--text-dim);font-size:.8rem;max-width:280px">Deslocamento/alimentação (1× visita) + extras do serviço entram no valor e <strong>não aparecem</strong> detalhados no PDF.</p>
-      </div>
 
-      <div style="margin:0 0 16px;display:flex;gap:8px;flex-wrap:wrap">
-        <select id="addServico" style="flex:1;min-width:180px;background:var(--bg-elevated);border:1px solid var(--border-strong);border-radius:11px;padding:10px">
-          <option value="">+ Adicionar serviço...</option>
-          ${optionsServico()}
-        </select>
-        <select id="addProduto" style="flex:1;min-width:180px;background:var(--bg-elevated);border:1px solid var(--border-strong);border-radius:11px;padding:10px">
-          <option value="">+ Adicionar material...</option>
-          ${optionsProduto()}
-        </select>
+        <div class="orc-pane" data-orc-pane="obs" hidden>
+          <div class="form-grid">
+            <div class="field full"><label>Observações</label><textarea id="oObs">${o.observacoes || ""}</textarea></div>
+            <p class="hint">Deslocamento/alimentação (1× visita) e extras do serviço entram no valor e não aparecem detalhados no PDF.</p>
+          </div>
+        </div>
       </div>
-      <div id="itensBox"></div>
     `, `
-      <button class="btn btn-ghost" id="cancelModal">Cancelar</button>
-      <button class="btn btn-primary" id="saveOrc">Salvar orçamento</button>
+      <div class="orc-modal-footer">
+        <div class="orc-total-sticky">
+          <div>
+            <div class="orc-total-label" id="orcTotalHint">Total no PDF (cliente)</div>
+            <div class="hint" style="margin-top:2px">Sempre visível · muda com os itens</div>
+          </div>
+          <div class="orc-total-value" id="orcTotalValue">${money(0)}</div>
+        </div>
+        <div class="orc-modal-actions">
+          <button class="btn btn-ghost" id="cancelModal">Cancelar</button>
+          <button class="btn btn-primary" id="saveOrc">Salvar orçamento</button>
+        </div>
+      </div>
     `, true);
 
     const refreshAddOptions = () => {
       const selS = document.getElementById("addServico");
       const selP = document.getElementById("addProduto");
-      selS.innerHTML = `<option value="">+ Adicionar serviço...</option>${optionsServico()}`;
-      selP.innerHTML = `<option value="">+ Adicionar material...</option>${optionsProduto()}`;
+      if (selS) selS.innerHTML = `<option value="">+ Adicionar serviço...</option>${optionsServico()}`;
+      if (selP) selP.innerHTML = `<option value="">+ Adicionar material...</option>${optionsProduto()}`;
     };
+
+    document.getElementById("orcTabs")?.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-orc-tab]");
+      if (!btn) return;
+      const tab = btn.dataset.orcTab;
+      document.querySelectorAll("#orcTabs .tab").forEach((t) => t.classList.toggle("active", t === btn));
+      document.querySelectorAll("[data-orc-pane]").forEach((pane) => {
+        pane.hidden = pane.dataset.orcPane !== tab;
+      });
+      if (tab === "itens") renderItens();
+      else updateTotalBar();
+    });
 
     document.getElementById("orcModoSeg").onclick = (e) => {
       const btn = e.target.closest("button[data-modo]");
       if (!btn) return;
       modoLocal = btn.dataset.modo;
-      document.querySelectorAll("#orcModoSeg button").forEach((b) => b.classList.toggle("active", b.dataset.modo === modoLocal));
+      document.querySelectorAll("#orcModoSeg button").forEach((b) =>
+        b.classList.toggle("active", b.dataset.modo === modoLocal)
+      );
+      itens.forEach((item) => applyItemTier(item, modoLocal));
       refreshAddOptions();
+      renderItens();
+      toast(`Itens em preço ${precoModoLabel(modoLocal)}`);
     };
 
     renderItens();
@@ -840,9 +927,13 @@ export function initApp() {
     document.getElementById("oIncluiMat")?.addEventListener("change", renderItens);
     document.getElementById("oNotaFiscal").onchange = () => {
       syncNfEmissorUI();
+      updateTotalBar();
       renderItens();
     };
-    document.getElementById("oNfEmissor").onchange = renderItens;
+    document.getElementById("oNfEmissor").onchange = () => {
+      updateTotalBar();
+      renderItens();
+    };
     syncNfEmissorUI();
     document.getElementById("addServico").onchange = (e) => {
       const sv = s.servicos.find((x) => x.id === e.target.value);
@@ -941,7 +1032,7 @@ export function initApp() {
       const list = [...getState().orcamentos];
       const idx = list.findIndex((x) => x.id === data.id);
       if (idx >= 0) list[idx] = data; else list.push(data);
-      Store.update({ orcamentos: list });
+      Store.update({ orcamentos: list, precoModo: modoLocal });
       closeModal();
       toast("Orçamento salvo");
       navigate("orcamentos");
@@ -961,8 +1052,8 @@ export function initApp() {
       <div class="hero-note">
         <div>
           <h3>Tabela de mão de obra — ES</h3>
-          <p>Clique em <strong>Mínimo</strong>, <strong>Médio</strong> ou <strong>Máximo</strong> em cada serviço (ou no topo da tela) para definir o valor usado nos orçamentos.</p>
-          <div class="source-pill">Modo ativo: ${precoModoLabel(getPrecoModo())}</div>
+          <p>Valores de referência do mercado. O preço mínimo/médio/máximo é escolhido <strong>dentro do orçamento</strong>.</p>
+          <div class="source-pill">Faixa mín · méd · máx por serviço</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
           <button class="btn btn-secondary" id="btnPdfPrecos">PDF tabela de preços</button>
@@ -1008,9 +1099,6 @@ export function initApp() {
 
     content.querySelectorAll(".tab").forEach((t) => {
       t.onclick = () => { servicoFiltro = t.dataset.f; render(); };
-    });
-    content.querySelectorAll(".price-range [data-tier]").forEach((btn) => {
-      btn.onclick = () => setPrecoModo(btn.dataset.tier);
     });
     document.getElementById("btnNovoServ").onclick = () => openServicoForm();
     document.getElementById("btnPdfPrecos").onclick = async () => {
@@ -1096,8 +1184,8 @@ export function initApp() {
       <div class="hero-note">
         <div>
           <h3>Materiais com preço de varejo</h3>
-          <p>Escolha Mínimo, Médio ou Máximo no topo (ou nos cards). Esse valor entra automaticamente no orçamento.</p>
-          <div class="source-pill">Modo ativo: ${precoModoLabel(getPrecoModo())}</div>
+          <p>Faixa de preços de referência. No orçamento você escolhe mínimo, médio ou máximo por item ou para todos.</p>
+          <div class="source-pill">Faixa mín · méd · máx por material</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
           <button class="btn btn-secondary" id="btnPdfPrecosMat">PDF tabela de preços</button>
@@ -1116,8 +1204,8 @@ export function initApp() {
               <h4>${p.nome}</h4>
               <div class="product-marca">${p.marca || "Linha popular"}</div>
               <p style="color:var(--text-muted);font-size:.8rem">${p.descricao || ""}</p>
-              <div class="product-price">${money(getPrecoByModo(p, getPrecoModo()))} <span class="product-faixa">/ ${p.unidade}</span></div>
-              ${tierPicksHtml(p, getPrecoModo())}
+              <div class="product-price">${money(getPrecoByModo(p, "medio"))} <span class="product-faixa">/ ${p.unidade}</span></div>
+              <div class="hint">mín ${money(getPrecoByModo(p, "minimo"))} · máx ${money(getPrecoByModo(p, "maximo"))}</div>
               <div class="product-actions">
                 <button class="btn btn-sm btn-secondary" data-edit="${p.id}">Editar</button>
                 <button class="btn btn-sm btn-danger" data-del="${p.id}">Excluir</button>
@@ -1131,9 +1219,6 @@ export function initApp() {
 
     content.querySelectorAll(".tab").forEach((t) => {
       t.onclick = () => { produtoCategoria = t.dataset.cat; render(); };
-    });
-    content.querySelectorAll(".product-card [data-tier]").forEach((btn) => {
-      btn.onclick = () => setPrecoModo(btn.dataset.tier);
     });
     document.getElementById("btnNovoProd").onclick = () => openProdutoForm();
     document.getElementById("btnPdfPrecosMat").onclick = async () => {
@@ -2914,11 +2999,6 @@ export function initApp() {
       e.stopPropagation();
       navigate(btn.dataset.view);
     });
-  });
-  document.getElementById("precoModoSeg").addEventListener("click", (e) => {
-    const btn = e.target.closest("button[data-modo]");
-    if (!btn) return;
-    setPrecoModo(btn.dataset.modo);
   });
   document.getElementById("modalClose").onclick = closeModal;
   modalBackdrop.addEventListener("click", (e) => {
