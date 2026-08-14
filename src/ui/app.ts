@@ -676,37 +676,88 @@ export function initApp() {
       return t;
     };
 
+    const renderLineItem = (item, idx) => {
+      const baseItem = Number(item.precoBase ?? (item.preco - (item.custoOculto || 0)));
+      const fake = {
+        precoMin: item.precoMin ?? baseItem,
+        preco: item.precoMed ?? baseItem,
+        precoMax: item.precoMax ?? baseItem
+      };
+      const oculto = Number(item.custoOculto || 0);
+      return `
+        <div class="line-item">
+          <div class="line-item-top">
+            <div class="line-item-info">
+              <strong>${item.nome}</strong>
+              <div class="meta"><span class="badge badge-${item.tipo === "servico" ? "servico" : "produto"}">${item.tipo === "servico" ? "serviço" : "material"}</span> · ${precoModoLabel(item.precoModo || modoLocal)} · ${item.unidade || "un"}${oculto > 0 ? ` · <span title="Extra do serviço — não aparece no PDF">embutido ${money(oculto)}/un</span>` : ""}</div>
+            </div>
+            <input class="line-item-qty" type="number" min="1" step="1" value="${item.qtd}" data-qtd="${idx}" aria-label="Quantidade" />
+            <div class="line-item-total">${money(item.qtd * item.preco)}</div>
+            <button class="icon-btn" data-rm="${idx}" title="Remover">✕</button>
+          </div>
+          ${tierPicksHtml(fake, item.precoModo || modoLocal, `data-item-tiers="${idx}"`)}
+        </div>`;
+    };
+
     const renderItens = () => {
       const box = document.getElementById("itensBox");
       if (!box) return;
       const t = updateTotalBar();
+      const forneceMat = document.getElementById("oIncluiMat")?.checked !== false;
+      const matWrap = document.getElementById("orcMatSection");
+      if (matWrap) matWrap.hidden = !forneceMat;
+
+      const servicos = [];
+      const materiais = [];
+      itens.forEach((item, idx) => {
+        if (item.tipo === "servico") servicos.push({ item, idx });
+        else materiais.push({ item, idx });
+      });
+
       box.innerHTML = `
-        <div class="line-items">
-          ${itens.map((item, idx) => {
-            const baseItem = Number(item.precoBase ?? (item.preco - (item.custoOculto || 0)));
-            const fake = {
-              precoMin: item.precoMin ?? baseItem,
-              preco: item.precoMed ?? baseItem,
-              precoMax: item.precoMax ?? baseItem
-            };
-            const oculto = Number(item.custoOculto || 0);
-            return `
-            <div class="line-item">
-              <div class="line-item-top">
-                <div class="line-item-info">
-                  <strong>${item.nome}</strong>
-                  <div class="meta"><span class="badge badge-${item.tipo === "servico" ? "servico" : "produto"}">${item.tipo}</span> · ${precoModoLabel(item.precoModo || modoLocal)} · ${item.unidade || "un"}${oculto > 0 ? ` · <span title="Extra do serviço — não aparece no PDF">embutido ${money(oculto)}/un</span>` : ""}</div>
-                </div>
-                <input class="line-item-qty" type="number" min="1" step="1" value="${item.qtd}" data-qtd="${idx}" aria-label="Quantidade" />
-                <div class="line-item-total">${money(item.qtd * item.preco)}</div>
-                <button class="icon-btn" data-rm="${idx}" title="Remover">✕</button>
-              </div>
-              ${tierPicksHtml(fake, item.precoModo || modoLocal, `data-item-tiers="${idx}"`)}
-            </div>`;
-          }).join("") || `<div class="empty"><strong>Sem itens</strong>Adicione serviços ou materiais.</div>`}
+        <div class="orc-item-section">
+          <div class="orc-item-section-head">
+            <h4>Serviços (mão de obra)</h4>
+            <span class="hint">${servicos.length} item(ns)</span>
+          </div>
+          <div class="line-items">
+            ${
+              servicos.length
+                ? servicos.map(({ item, idx }) => renderLineItem(item, idx)).join("")
+                : `<div class="empty"><strong>Sem serviços</strong>Adicione mão de obra acima.</div>`
+            }
+          </div>
         </div>
+        ${
+          forneceMat
+            ? `<div class="orc-item-section orc-item-section-mat">
+                <div class="orc-item-section-head">
+                  <h4>Materiais (fornecimento)</h4>
+                  <span class="hint">${materiais.length} item(ns) · somam no total</span>
+                </div>
+                <div class="line-items">
+                  ${
+                    materiais.length
+                      ? materiais.map(({ item, idx }) => renderLineItem(item, idx)).join("")
+                      : `<div class="empty"><strong>Sem materiais</strong>Adicione o que você vai fornecer.</div>`
+                  }
+                </div>
+              </div>`
+            : materiais.length
+              ? `<p class="hint orc-mat-hidden-note">Há ${materiais.length} material(is) só para o PDF (referência). Marque “Vou fornecer os materiais” para editar e somar no total.</p>`
+              : ""
+        }
         <div class="totals-box">
-          <div class="row"><span>Subtotal itens</span><span>${money(t.subItens)}</span></div>
+          <div class="row"><span>Subtotal serviços</span><span>${money(
+            servicos.reduce((s, { item }) => s + item.qtd * item.preco, 0)
+          )}</span></div>
+          ${
+            forneceMat
+              ? `<div class="row"><span>Subtotal materiais</span><span>${money(
+                  materiais.reduce((s, { item }) => s + item.qtd * item.preco, 0)
+                )}</span></div>`
+              : ""
+          }
           ${
             t.obraGlobal > 0
               ? `<div class="row" style="color:var(--text-dim)"><span>Deslocamento/alimentação (1× obra)</span><span>${money(t.obraGlobal)}</span></div>`
@@ -727,7 +778,7 @@ export function initApp() {
           <div class="row total"><span>Total no PDF${!t.incluiMatPdf ? " · só mão de obra" : ""}</span><span>${money(t.totalPdf)}</span></div>
           ${
             !t.incluiMatPdf && t.totalCliente !== t.totalPdf
-              ? `<div class="row" style="color:var(--text-dim)"><span>Materiais (fora do total)</span><span>${money(t.totalCliente - t.totalPdf)}</span></div>`
+              ? `<div class="row" style="color:var(--text-dim)"><span>Materiais no PDF (fora do total)</span><span>${money(t.totalCliente - t.totalPdf)}</span></div>`
               : ""
           }
         </div>
@@ -806,7 +857,7 @@ export function initApp() {
             <div class="field full">
               <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:.9rem;color:var(--text)">
                 <input type="checkbox" id="oIncluiMat" style="margin-top:3px" ${o.incluirMateriaisNoPdf !== false ? "checked" : ""} />
-                <span><strong>Somar materiais no total do PDF</strong><br/><span class="hint">Desmarcado: materiais só como referência na pág. 2.</span></span>
+                <span><strong>Vou fornecer / vender os materiais</strong><br/><span class="hint">Marcado: lista de materiais separada no modal e valores no total do PDF. Desmarcado: no modal só serviços; materiais (se houver) ficam só como referência no PDF.</span></span>
               </label>
             </div>
           </div>
@@ -815,8 +866,10 @@ export function initApp() {
               <option value="">+ Adicionar serviço...</option>
               ${optionsServico()}
             </select>
-            <select id="addProduto" style="flex:1;min-width:160px;background:var(--bg-elevated);border:1px solid var(--border-strong);border-radius:11px;padding:10px">
-              <option value="">+ Adicionar material...</option>
+          </div>
+          <div id="orcMatSection" ${o.incluirMateriaisNoPdf === false ? "hidden" : ""} style="margin:0 0 12px">
+            <select id="addProduto" style="width:100%;background:var(--bg-elevated);border:1px solid var(--border-strong);border-radius:11px;padding:10px">
+              <option value="">+ Adicionar material que vou fornecer...</option>
               ${optionsProduto()}
             </select>
           </div>

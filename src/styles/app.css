@@ -827,7 +827,36 @@ tr:hover td { background: rgba(61,180,255,0.03); }
 }
 .modal-header h2 { font-family: var(--display); font-size: 1.15rem; }
 
-.orc-form { display: flex; flex-direction: column; gap: 4px; }
+.orc-item-section {
+  margin-bottom: 16px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.015);
+}
+.orc-item-section-mat {
+  border-color: rgba(46,240,176,0.22);
+  background: rgba(46,240,176,0.04);
+}
+.orc-item-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.orc-item-section-head h4 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 0.95rem;
+}
+.orc-mat-hidden-note {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255,193,77,0.08);
+  border: 1px solid rgba(255,193,77,0.2);
+}
 .orc-tabs { margin-bottom: 14px; }
 .orc-pane { animation: fadeSoft 0.2s ease; }
 .orc-price-bar {
