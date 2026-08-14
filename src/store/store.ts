@@ -31,9 +31,8 @@ import { FirebaseApp } from "./firebase";
     "emissoresNf",
     "projetos"
   ];
-  /** Projetos (planta) ficam só no aparelho — maior custo do Firebase */
+  /** Listas leves (sem projetos) — sync frequente barato */
   const CLOUD_LIST_KEYS = USER_LIST_KEYS.filter((k) => k !== "projetos");
-  const LOCAL_ONLY_KEYS = new Set(["projetos"]);
   const CATALOG_KEYS = ["servicos", "produtos"];
   const CATALOG_FIELDS = [
     "nome",
@@ -388,7 +387,6 @@ import { FirebaseApp } from "./firebase";
     }
 
     USER_LIST_KEYS.forEach((key) => {
-      if (LOCAL_ONLY_KEYS.has(key)) return;
       const prevMap = listToMap(prev[key]);
       const nextMap = listToMap(next[key]);
       Object.keys(nextMap).forEach((id) => {
@@ -482,13 +480,20 @@ import { FirebaseApp } from "./firebase";
       return;
     }
 
-    // Evita write extra de meta a cada flush (só quando há mudança “de negócio”)
+    // Meta geral (listas leves) — projetos usam meta/projetosRev à parte
+    const hasProjetosWrite = validPaths.some((p) => p.startsWith("projetos/"));
     const needsMetaBump = validPaths.some(
-      (p) => p === "empresa" || !p.startsWith("meta/")
+      (p) => p === "empresa" || (!p.startsWith("meta/") && !p.startsWith("projetos/"))
     );
     if (needsMetaBump) {
       ignoreMetaPullUntil = Date.now() + 4000;
       updates["meta/updatedAt"] = new Date().toISOString();
+    }
+    if (hasProjetosWrite) {
+      ignoreProjetosPullUntil = Date.now() + 5000;
+      const rev = new Date().toISOString();
+      updates["meta/projetosRev"] = rev;
+      DataCache.setMeta({ projetosRev: rev });
     }
 
     // Garante meta/precoModo válido se estiver no pacote
@@ -830,12 +835,11 @@ import { FirebaseApp } from "./firebase";
   }
 
   let ignoreMetaPullUntil = 0;
+  let ignoreProjetosPullUntil = 0;
 
-  function dropLocalOnlyPending() {
+  function dropHeavyPending() {
     const pending = DataCache.getPending() || {};
-    const drop = Object.keys(pending).filter(
-      (p) => p.startsWith("projetos/") || p.includes("/lastAnalise")
-    );
+    const drop = Object.keys(pending).filter((p) => p.includes("/lastAnalise"));
     if (drop.length) DataCache.clearPatches(drop);
   }
 
@@ -846,7 +850,7 @@ import { FirebaseApp } from "./firebase";
     return snap.val();
   }
 
-  /** Baixa só nós leves — nunca a árvore raiz nem projetos */
+  /** Listas leves + empresa/catálogo — sem projetos */
   async function pullAndMergeCloud() {
     const keys = [...CLOUD_LIST_KEYS, "empresa", "meta", "servicosPatch", "produtosPatch"];
     const remote = {};
@@ -869,6 +873,7 @@ import { FirebaseApp } from "./firebase";
     if (!hasRemote) return { empty: true };
 
     applyingRemote = true;
+    // Preserva projetos locais — mergeInitialRemote sem data.projetos mantém a lista
     state = mergeInitialRemote(remote);
     persistCache();
     applyingRemote = false;
@@ -876,10 +881,83 @@ import { FirebaseApp } from "./firebase";
 
     const updatedAt = remote.meta?.updatedAt || null;
     if (updatedAt) DataCache.setMeta({ cloudUpdatedAt: updatedAt });
+    if (remote.meta?.projetosRev) {
+      DataCache.setMeta({ projetosRev: remote.meta.projetosRev });
+    }
     return { empty: false, updatedAt };
   }
 
-  /** Só escuta meta/updatedAt — evita listeners pesados em cada lista */
+  /** Baixa projetos só quando a revisão mudou (outro aparelho salvou) */
+  async function pullProjetosCloud() {
+    let remote = null;
+    try {
+      remote = await pullNode("projetos");
+    } catch (err) {
+      console.warn("Firebase pull projetos:", err);
+      return { empty: true, error: true };
+    }
+
+    if (!remote || !Object.keys(remote).length) {
+      return { empty: true };
+    }
+
+    applyingRemote = true;
+    const bag = { projetos: mergeLists(state.projetos || [], mapToList(remote)) };
+    Object.entries(DataCache.getPending()).forEach(([path, op]) => {
+      if (path.startsWith("projetos/")) applyPendingOnto(bag, path, op.value);
+    });
+    state = { ...state, projetos: bag.projetos };
+    persistCache();
+    applyingRemote = false;
+    emit();
+    return { empty: false };
+  }
+
+  /**
+   * Cache-first: só baixa projetos se meta/projetosRev for diferente do cache.
+   * Na 1ª vez (sem rev), baixa uma vez e grava a rev.
+   */
+  async function syncProjetosIfNeeded() {
+    let remoteRev = null;
+    try {
+      remoteRev = await pullNode("meta/projetosRev");
+    } catch {
+      remoteRev = null;
+    }
+    const localRev = DataCache.getMeta().projetosRev;
+
+    // Cache hit — não gasta download dos projetos
+    if (remoteRev && localRev && remoteRev === localRev) {
+      return { skipped: true };
+    }
+
+    const result = await pullProjetosCloud();
+
+    if (result.empty) {
+      // Nuvem sem projetos: sobe só os que o usuário já editou neste aparelho
+      (state.projetos || []).forEach((p) => {
+        if (p?.id && (p.updatedAt || 0) > 0) {
+          DataCache.queuePatch(`projetos/${p.id}`, slimItem(p));
+        }
+      });
+      if (remoteRev) {
+        DataCache.setMeta({ projetosRev: remoteRev });
+      } else if (!localRev) {
+        DataCache.setMeta({ projetosRev: "local-seed" });
+      }
+      return { skipped: false, empty: true };
+    }
+
+    const rev = remoteRev || new Date().toISOString();
+    DataCache.setMeta({ projetosRev: rev });
+    if (!remoteRev) {
+      ignoreProjetosPullUntil = Date.now() + 5000;
+      DataCache.queuePatch("meta/projetosRev", rev);
+    }
+    return { skipped: false, empty: false };
+  }
+
+  /** Só escuta meta/updatedAt — listas leves */
   function bindMetaUpdatedAt() {
     const ref = FirebaseApp.ref(`${ROOT}/meta/updatedAt`);
     if (!ref) return;
@@ -894,6 +972,25 @@ import { FirebaseApp } from "./firebase";
       if (prev && prev === v) return;
       DataCache.setMeta({ cloudUpdatedAt: v });
       pullAndMergeCloud().catch((err) => console.warn("Firebase pull on meta:", err));
+    });
+    listeners.push(() => ref.off("value", cb));
+  }
+
+  /** Outro aparelho salvou projeto → baixa só projetos */
+  function bindProjetosRev() {
+    const ref = FirebaseApp.ref(`${ROOT}/meta/projetosRev`);
+    if (!ref) return;
+    const cb = ref.on("value", (snap) => {
+      const v = snap.val();
+      if (!v) return;
+      if (Date.now() < ignoreProjetosPullUntil) {
+        DataCache.setMeta({ projetosRev: v });
+        return;
+      }
+      const prev = DataCache.getMeta().projetosRev;
+      if (prev && prev === v) return;
+      DataCache.setMeta({ projetosRev: v });
+      pullProjetosCloud().catch((err) => console.warn("Firebase pull projetos on rev:", err));
     });
     listeners.push(() => ref.off("value", cb));
   }
@@ -927,7 +1024,6 @@ import { FirebaseApp } from "./firebase";
     enqueueFromDiff(prev, next);
     // força reenvio de listas (reset completo)
     USER_LIST_KEYS.forEach((key) => {
-      if (LOCAL_ONLY_KEYS.has(key)) return;
       listToMap(prev[key]).forEach((_, id) => {
         if (!listToMap(next[key])[id]) DataCache.queuePatch(`${key}/${id}`, null);
       });
@@ -1081,7 +1177,7 @@ import { FirebaseApp } from "./firebase";
     setStatus("syncing");
 
     try {
-      dropLocalOnlyPending();
+      dropHeavyPending();
 
       const cacheMeta = DataCache.getMeta();
       let remoteUpdated = null;
@@ -1099,7 +1195,7 @@ import { FirebaseApp } from "./firebase";
         (state.empresa?.updatedAt || 0) > 0 ||
         (state.projetos || []).length > 0;
 
-      // Local-first: se o cache já está alinhado com a nuvem, não baixa listas
+      // Local-first (listas leves)
       const skipPull =
         hasLocalWork &&
         remoteUpdated &&
@@ -1108,18 +1204,20 @@ import { FirebaseApp } from "./firebase";
 
       if (!skipPull) {
         const result = await pullAndMergeCloud();
-        // Nuvem vazia: NÃO faz upload em massa de seeds/demo (economia)
         if (result.empty && remoteUpdated) {
           DataCache.setMeta({ cloudUpdatedAt: remoteUpdated });
         }
       }
 
+      // Projetos: só baixa se a revisão mudou (senão usa cache local)
+      await syncProjetosIfNeeded();
+
       listeners.forEach((off) => off());
       listeners = [];
-      // Sem child_* em listas (caro no reconnect) — só meta leve + empresa
       bindEmpresa();
       bindMeta();
       bindMetaUpdatedAt();
+      bindProjetosRev();
 
       cloudReady = true;
       await flushPending();
