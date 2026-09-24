@@ -637,6 +637,53 @@ tr:hover td { background: rgba(61,180,255,0.03); }
 .badge-servico { background: rgba(61,180,255,0.12); color: var(--accent); }
 .badge-produto { background: rgba(46,240,176,0.12); color: var(--success); }
 
+.nbr-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.nbr-check {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(8, 14, 22, 0.45);
+  border: 1px solid var(--border);
+  font-size: 0.86rem;
+}
+.nbr-check > span:first-child {
+  flex: 0 0 auto;
+  width: 1.4rem;
+  height: 1.4rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-weight: 700;
+  font-size: 0.75rem;
+}
+.nbr-check-ok > span:first-child { background: rgba(46,240,176,0.15); color: var(--success); }
+.nbr-check-warn > span:first-child { background: rgba(255,193,77,0.15); color: var(--warn); }
+.nbr-check-fail > span:first-child,
+.nbr-check-error > span:first-child { background: rgba(255,98,116,0.15); color: var(--danger); }
+.pe-nbr-checklist li,
+.nbr-checklist > li {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 0.84rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+.pe-nbr-checklist li.ok .nbr-check-ico,
+.nbr-checklist > li.ok .nbr-check-ico { color: var(--success); }
+.pe-nbr-checklist li.fail .nbr-check-ico,
+.nbr-checklist > li.fail .nbr-check-ico { color: var(--danger); }
+.nbr-check-ico { font-weight: 700; min-width: 1rem; }
+
 .segmented {
   display: inline-flex;
   background: rgba(8,14,22,0.6);

@@ -32,6 +32,7 @@ import {
   custoOcultoGlobal
 } from "../data/catalog";
 import { Store } from "../store/store";
+import { memorialTexto } from "../domain/nbr5410";
 
 
   const C = {
@@ -967,6 +968,37 @@ ${fontFaceCss()}
     doc.save("tabela-precos-voltes.pdf");
   }
 
+  /** Memorial técnico do dimensionamento (texto + checklist) */
+  async function memorial(dim, empresa) {
+    const doc = new jsPDF({ unit: "mm", format: "a4" });
+    const texto = memorialTexto(dim) || JSON.stringify(dim, null, 2);
+    const escEmpresa = empresa?.nome || "VoltES";
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text("Memorial de dimensionamento", 14, 18);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(100);
+    doc.text(`${escEmpresa} · assistente NBR 5410 · ${new Date().toLocaleString("pt-BR")}`, 14, 24);
+    doc.setTextColor(20);
+    doc.setFont("courier", "normal");
+    doc.setFontSize(8);
+    const lines = doc.splitTextToSize(texto, 182);
+    let y = 32;
+    lines.forEach((line) => {
+      if (y > 280) {
+        doc.addPage();
+        y = 16;
+      }
+      doc.text(line, 14, y);
+      y += 4;
+    });
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(7);
+    doc.setTextColor(120);
+    doc.text("Documento auxiliar — não substitui projeto elétrico assinado.", 14, 290);
+    doc.save(`memorial-${dim?.tipo?.id || "circuito"}-${dim?.cabo?.secao || "x"}mm.pdf`);
+  }
 
-export { orcamento, contrato, financeiro, tabelaPrecos, preloadBrand };
-export const PDF = { orcamento, contrato, financeiro, tabelaPrecos, preloadBrand };
+export { orcamento, contrato, financeiro, tabelaPrecos, memorial, preloadBrand };
+export const PDF = { orcamento, contrato, financeiro, tabelaPrecos, memorial, preloadBrand };

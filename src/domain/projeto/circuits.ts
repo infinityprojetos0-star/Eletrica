@@ -899,10 +899,29 @@ function polylineLength(verts) {
         comprimentoM: circ.comprimentoM,
         nPontos: nPontosCarga,
         agrupamentoId,
-        tempId: "30",
+        tempId: projeto.tempAmbienteId || "30",
+        metodoId: projeto.metodoInstalacao || "B1",
+        nCircuitosEletroduto: nAgr,
+        iccKA: projeto.iccKA != null ? Number(projeto.iccKA) : 6,
         dr: circ.tipoId === "tug" || circ.tipoId === "chuveiro" || circ.tipoId === "tue",
         // TUE: máx. 4 mm² no borne; chuveiro/ar sem teto
-        secaoMax: circ.tipoId === "tue" ? 4 : null
+        secaoMax: circ.tipoId === "tue" ? 4 : null,
+        // Queda acumulada: ramal principal + margem de descida (~10% do comprimento)
+        trechosQueda:
+          circ.comprimentoM > 0
+            ? [
+                {
+                  comprimentoM: circ.comprimentoM * 0.85,
+                  correnteA: null,
+                  label: "QDC → caixa"
+                },
+                {
+                  comprimentoM: circ.comprimentoM * 0.15,
+                  correnteA: null,
+                  label: "descida / trecho final"
+                }
+              ]
+            : undefined
       };
 
       const dim =
@@ -912,6 +931,11 @@ function polylineLength(verts) {
       circ.dimensionamento = dim;
       circ.agrupamentoId = agrupamentoId;
       circ.nAgrupados = nAgr;
+      circ.checklist = dim?.checklist || null;
+      circ.divisaoSugerida = dim?.divisao || null;
+      circ.statusDim =
+        dim?.checklist?.nivel ||
+        (dim?.precisaDividirCircuito ? "fail" : dim?.queda?.okTerminal === false ? "warn" : "ok");
 
       // Metragem 3D por papel (a partir dos caminhos reais)
       const pd = Math.max(2.2, Number(projeto.peDireitoM) || 2.8);
@@ -1082,12 +1106,49 @@ function polylineLength(verts) {
       wago
     }, servicos, modoPreco || "medio");
 
+    // Checklist agregado + validação da planta
+    const validacao =
+      typeof NBR5410 !== "undefined" && NBR5410.validarProjeto
+        ? NBR5410.validarProjeto({ ...projeto, points: pointsOut, conduits })
+        : { ok: true, issues: [] };
+    (validacao.issues || []).forEach((iss) => avisos.push(iss.msg));
+
+    const quedas = circuits
+      .map((c) => Number(c.dimensionamento?.quedaAcumulada?.pct ?? c.dimensionamento?.queda?.pct ?? 0))
+      .filter((n) => Number.isFinite(n));
+    const quedaMax = quedas.length ? Math.max(...quedas) : 0;
+    const eletIds = circuits
+      .map((c) => c.dimensionamento?.eletrodutoCalc?.eletroduto || c.dimensionamento?.eletroduto)
+      .filter(Boolean);
+    const dimResumo = {
+      ok: circuits.filter((c) => c.statusDim === "ok").length,
+      warn: circuits.filter((c) => c.statusDim === "warn").length,
+      fail: circuits.filter((c) => c.statusDim === "fail").length,
+      total: circuits.length,
+      metodoId: projeto.metodoInstalacao || "B1",
+      quedaAcumuladaPct: quedaMax,
+      quedaLimite: "4% / 7%",
+      quedaOk: circuits.every(
+        (c) => c.dimensionamento?.queda?.okTerminal !== false && c.dimensionamento?.quedaAcumulada?.ok !== false
+      ),
+      eletrodutoMm: eletIds.length ? eletIds[eletIds.length - 1] : null,
+      avisosCriticos: avisos.filter((a) => /crítico|dividir|falha|estoura/i.test(String(a)))
+    };
+    if (dimResumo.fail) {
+      avisos.push(
+        `${dimResumo.fail} circuito(s) com status crítico (dividir / Iz / queda).`
+      );
+    } else if (dimResumo.warn) {
+      avisos.push(`${dimResumo.warn} circuito(s) com atenção (queda, DR ou ocupação).`);
+    }
+
     return {
       uso,
       sistema,
       sistemaLabel: labelSistema(sistema),
       peDireitoM: Math.max(2.2, Number(projeto.peDireitoM) || 2.8),
       aterramento: projeto.aterramento !== false,
+      metodoInstalacao: projeto.metodoInstalacao || "B1",
       circuits,
       conduits,
       points: pointsOut,
@@ -1097,9 +1158,11 @@ function polylineLength(verts) {
       protecao,
       balanceamento,
       wago,
+      validacao,
+      dimResumo,
       avisos: [...new Set(avisos)],
       disclaimer:
-        "Cálculos auxiliares com base em critérios simplificados da NBR 5410. Não substitui projeto elétrico oficial.",
+        "Cálculos auxiliares com base em critérios simplificados da NBR 5410 (método, agrupamento, queda acumulada, ocupação). Não substitui projeto elétrico oficial.",
       geradoEm: new Date().toISOString()
     };
   }

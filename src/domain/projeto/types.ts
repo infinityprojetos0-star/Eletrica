@@ -633,6 +633,10 @@ import { todayISO, uid } from "../../data/catalog";
        * true = já possui aterramento · false = precisa passar cabo de aterramento (PE)
        */
       aterramento: true,
+      /** Método de instalação NBR — A1 | B1 | B2 | C */
+      metodoInstalacao: "B1",
+      tempAmbienteId: "30",
+      iccKA: 6,
       rooms: [],
       arch: [],
       points: [],

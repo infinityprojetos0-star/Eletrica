@@ -69,6 +69,69 @@ export function initApp() {
   let peEditingId = null;
   let peOpening = false;
 
+  /** Pacotes rápidos de orçamento (só serviços do catálogo). */
+  const ORC_TEMPLATES = [
+    {
+      id: "residencia-basica",
+      label: "Residência básica",
+      titulo: "Instalação elétrica residencial",
+      itens: [
+        { refId: "srv-16", qtd: 1 },
+        { refId: "srv-15", qtd: 1 },
+        { refId: "srv-26", qtd: 1 },
+        { refId: "srv-2", qtd: 8 },
+        { refId: "srv-5", qtd: 6 },
+        { refId: "srv-8", qtd: 6 },
+        { refId: "srv-12", qtd: 1 },
+        { refId: "srv-19", qtd: 10 }
+      ]
+    },
+    {
+      id: "residencia-completa",
+      label: "Residência completa",
+      titulo: "Instalação elétrica residencial completa",
+      itens: [
+        { refId: "srv-17", qtd: 1 },
+        { refId: "srv-15", qtd: 2 },
+        { refId: "srv-26", qtd: 2 },
+        { refId: "srv-2", qtd: 14 },
+        { refId: "srv-3", qtd: 2 },
+        { refId: "srv-5", qtd: 10 },
+        { refId: "srv-8", qtd: 10 },
+        { refId: "srv-12", qtd: 2 },
+        { refId: "srv-13", qtd: 1 },
+        { refId: "srv-18", qtd: 1 },
+        { refId: "srv-19", qtd: 18 }
+      ]
+    },
+    {
+      id: "comercio",
+      label: "Comércio / loja",
+      titulo: "Instalação elétrica comercial",
+      itens: [
+        { refId: "srv-23", qtd: 1 },
+        { refId: "srv-15", qtd: 2 },
+        { refId: "srv-26", qtd: 2 },
+        { refId: "srv-22", qtd: 12 },
+        { refId: "srv-8", qtd: 8 },
+        { refId: "srv-19", qtd: 16 },
+        { refId: "srv-20", qtd: 1 }
+      ]
+    },
+    {
+      id: "manutencao",
+      label: "Manutenção / troca",
+      titulo: "Manutenção elétrica",
+      itens: [
+        { refId: "srv-20", qtd: 1 },
+        { refId: "srv-1", qtd: 4 },
+        { refId: "srv-4", qtd: 3 },
+        { refId: "srv-14", qtd: 2 },
+        { refId: "srv-7", qtd: 2 }
+      ]
+    }
+  ];
+
   const icons = {
     tomada: (c = "#3db4ff") => `<svg viewBox="0 0 80 80" fill="none"><rect x="18" y="10" width="44" height="60" rx="10" fill="${c}" opacity=".15" stroke="${c}" stroke-width="2.5"/><circle cx="32" cy="34" r="5" fill="${c}"/><circle cx="48" cy="34" r="5" fill="${c}"/><path d="M40 46v14" stroke="${c}" stroke-width="3" stroke-linecap="round"/><path d="M34 60h12" stroke="${c}" stroke-width="3" stroke-linecap="round"/></svg>`,
     interruptor: (c = "#7eb6ff") => `<svg viewBox="0 0 80 80" fill="none"><rect x="26" y="8" width="28" height="64" rx="8" fill="${c}" opacity=".15" stroke="${c}" stroke-width="2.5"/><rect x="33" y="26" width="14" height="28" rx="4" fill="${c}"/></svg>`,
@@ -835,6 +898,20 @@ export function initApp() {
               </select>
             </div>
             <div class="field full"><label>Título</label><input id="oTitulo" value="${o.titulo || ""}" placeholder="Ex: Orçamento de quadro elétrico" /></div>
+            ${
+              !orcamento
+                ? `<div class="field full">
+              <label>Template rápido</label>
+              <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px">
+                ${ORC_TEMPLATES.map(
+                  (t) =>
+                    `<button type="button" class="btn btn-ghost btn-sm" data-orc-tpl="${t.id}">${t.label}</button>`
+                ).join("")}
+              </div>
+              <p class="hint" style="margin-top:6px">Preenche título + serviços típicos. Você ajusta quantidades depois.</p>
+            </div>`
+                : ""
+            }
             <div class="field"><label>Data</label><input id="oData" type="date" value="${o.data || todayISO()}" /></div>
             <div class="field"><label>Validade (dias)</label><input id="oVal" type="number" value="${o.validade || 15}" /></div>
             <div class="field"><label>Prazo de entrega</label><input id="oPrazo" value="${o.prazo || "7 dias"}" /></div>
@@ -960,6 +1037,59 @@ export function initApp() {
       });
       if (tab === "itens") renderItens();
       else updateTotalBar();
+    });
+
+    document.querySelectorAll("[data-orc-tpl]").forEach((btn) => {
+      btn.onclick = () => {
+        const tpl = ORC_TEMPLATES.find((t) => t.id === btn.dataset.orcTpl);
+        if (!tpl) return;
+        const tit = document.getElementById("oTitulo");
+        if (tit && !String(tit.value || "").trim()) tit.value = tpl.titulo;
+        else if (tit) tit.value = tpl.titulo;
+        const built = [];
+        tpl.itens.forEach((row) => {
+          const sv = s.servicos.find((x) => x.id === row.refId);
+          if (!sv) return;
+          const meta = enrichFromCatalog(sv);
+          const base = getPrecoByModo(sv, modoLocal);
+          const ocultas = despesasDoServico(sv.id, s).map((d) => ({
+            id: d.id,
+            nome: d.nome,
+            valor: Number(d.valor) || 0,
+            global: !!d.global
+          }));
+          const custoOculto = ocultas.reduce((t, d) => t + d.valor, 0);
+          built.push({
+            id: uid("item"),
+            refId: sv.id,
+            tipo: "servico",
+            nome: sv.nome,
+            precoBase: base,
+            custoOculto,
+            despesasOcultas: ocultas,
+            preco: base + custoOculto,
+            precoMin: meta.precoMin,
+            precoMed: meta.precoMed,
+            precoMax: meta.precoMax,
+            precoModo: modoLocal,
+            qtd: Number(row.qtd) || 1,
+            unidade: sv.unidade
+          });
+        });
+        if (!built.length) {
+          toast("Template sem serviços no catálogo");
+          return;
+        }
+        itens = built;
+        document.querySelectorAll("#orcTabs .tab").forEach((t) =>
+          t.classList.toggle("active", t.dataset.orcTab === "itens")
+        );
+        document.querySelectorAll("[data-orc-pane]").forEach((pane) => {
+          pane.hidden = pane.dataset.orcPane !== "itens";
+        });
+        renderItens();
+        toast(`Template «${tpl.label}» aplicado`);
+      };
     });
 
     document.getElementById("orcModoSeg").onclick = (e) => {
@@ -2442,12 +2572,13 @@ export function initApp() {
 
   function renderDimNBR(box) {
     const tipo0 = NBR5410.tipoById("chuveiro");
+    const metodos = NBR5410.metodos ? NBR5410.metodos() : [{ id: "B1", label: "B1" }];
     box.innerHTML = `
       <div class="hero-note" style="margin-bottom:16px">
         <div>
           <h3>Dimensionamento NBR 5410</h3>
-          <p>Sugere cabo, disjuntor, DR e materiais com critérios brasileiros simplificados. Use como assistência — não substitui projeto assinado.</p>
-          <div class="source-pill">NBR 5410 · cobre PVC 70 °C · método B1 (ref.)</div>
+          <p>Cabo, disjuntor, queda, agrupamento, método de instalação, ocupação de eletroduto e partida aproximada. Assistente — não substitui projeto assinado.</p>
+          <div class="source-pill">NBR 5410 · Cu PVC 70 °C · A1/B1/B2/C</div>
         </div>
       </div>
       <div class="grid grid-2" style="align-items:start;gap:16px">
@@ -2463,8 +2594,13 @@ export function initApp() {
             <div class="field"><label>Tensão (V)</label><input id="nbrV" type="number" value="${tipo0.tensaoPadrao || 220}" /></div>
             <div class="field"><label>Comprimento ida (m)</label><input id="nbrL" type="number" value="18" step="0.5" /></div>
             <div class="field"><label>Fator de potência</label><input id="nbrFp" type="number" value="${tipo0.fp}" min="0.5" max="1" step="0.05" /></div>
+            <div class="field full"><label>Método de instalação</label>
+              <select id="nbrMetodo">
+                ${metodos.map((m) => `<option value="${m.id}" ${m.id === "B1" ? "selected" : ""}>${m.label}</option>`).join("")}
+              </select>
+            </div>
             <div class="field"><label>Agrupamento</label>
-              <select id="nbrAgr">${NBR5410.FATOR_AGRUPAMENTO.map((a) => `<option value="${a.id}">${a.label}</option>`).join("")}</select>
+              <select id="nbrAgr">${NBR5410.FATOR_AGRUPAMENTO.filter((a) => !String(a.id).includes("-") && a.id !== "8+").map((a) => `<option value="${a.id}">${a.label}</option>`).join("")}</select>
             </div>
             <div class="field"><label>Temp. ambiente</label>
               <select id="nbrTemp">${NBR5410.FATOR_TEMP.map((a) => `<option value="${a.id}">${a.label}</option>`).join("")}</select>
@@ -2483,9 +2619,11 @@ export function initApp() {
                 <option value="nao">Não incluir</option>
               </select>
             </div>
+            <div class="field"><label>Icc no QDC (kA)</label><input id="nbrIcc" type="number" value="6" min="1" max="50" step="0.5" /></div>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
             <button class="btn btn-primary" id="nbrCalc">Dimensionar</button>
+            <button class="btn btn-secondary" id="nbrMemorial" ${lastDimensionamento ? "" : "disabled"}>Memorial PDF</button>
             <button class="btn btn-secondary" id="nbrOrc" ${lastDimensionamento ? "" : "disabled"}>Enviar ao orçamento</button>
           </div>
         </div>
@@ -2508,23 +2646,49 @@ export function initApp() {
     const paintResult = (r) => {
       lastDimensionamento = r;
       const btnOrc = document.getElementById("nbrOrc");
+      const btnMem = document.getElementById("nbrMemorial");
       if (btnOrc) btnOrc.disabled = false;
+      if (btnMem) btnMem.disabled = false;
       const quedaOk = r.queda.okTerminal;
+      const cl = r.checklist?.items || [];
+      const nivel = r.checklist?.nivel || "ok";
+      const badge =
+        nivel === "ok"
+          ? `<span class="badge badge-aprovado">Aprovado</span>`
+          : nivel === "warn"
+            ? `<span class="badge badge-pendente">Atenção</span>`
+            : `<span class="badge badge-rejeitado">Revisar</span>`;
       document.getElementById("nbrOut").innerHTML = `
-        <h3 style="font-family:var(--display);margin-bottom:8px">${r.tipo.label}</h3>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+          <h3 style="font-family:var(--display);margin:0">${r.tipo.label}</h3>
+          ${badge}
+        </div>
         <p style="color:var(--text-muted);font-size:.85rem;margin-bottom:14px">${r.disclaimer}</p>
         <div class="grid grid-2" style="gap:10px;margin-bottom:14px">
           <div class="calc-result" style="margin:0"><div class="label">Corrente de projeto (Ib)</div><div class="value" style="font-size:1.4rem">${r.ib.toFixed(2)} A</div></div>
-          <div class="calc-result" style="margin:0"><div class="label">Cabo sugerido</div><div class="value" style="font-size:1.4rem">${r.cabo.secao} mm²</div></div>
+          <div class="calc-result" style="margin:0"><div class="label">Cabo · ${r.entrada.metodoId || "B1"}</div><div class="value" style="font-size:1.4rem">${r.cabo.secao} mm²</div></div>
           <div class="calc-result" style="margin:0"><div class="label">Disjuntor</div><div class="value" style="font-size:1.4rem">${r.disjuntor.In} A · ${r.disjuntor.polos}P · ${r.disjuntor.curva}</div></div>
           <div class="calc-result" style="margin:0"><div class="label">Queda de tensão</div><div class="value" style="font-size:1.4rem">${r.queda.pct.toFixed(2)}% ${quedaOk ? "✓" : "!"}</div></div>
         </div>
         <div style="font-size:.86rem;color:var(--text-muted);line-height:1.55;margin-bottom:12px">
-          Iz cabo: ${r.cabo.iz.toFixed(1)} A · Iz corrigida (k=${r.entrada.k.toFixed(2)}): ${r.cabo.izCorrigida.toFixed(1)} A<br/>
-          Cabo estimado: ~${r.metrosCabo.toFixed(0)} m (${r.nCondutores} condutores) · Eletroduto: ${r.eletroduto}<br/>
-          DR: ${r.dr ? "recomendado / incluído na lista" : "não obrigatório neste tipo"}
+          Iz cabo: ${r.cabo.iz.toFixed(1)} A · Iz·k (k=${r.entrada.k.toFixed(2)}): ${r.cabo.izCorrigida.toFixed(1)} A<br/>
+          Cabo ≈ ${r.metrosCabo.toFixed(0)} m (${r.nCondutores} cond.) · Neutro ≈ ${(r.metrosNeutro || 0).toFixed(0)} m · PE ≈ ${(r.metrosPe || 0).toFixed(0)} m<br/>
+          Eletroduto: ${r.eletroduto} · ocupação ${r.eletrodutoCalc?.ocupacaoPct ?? "—"}% (lim. ${r.eletrodutoCalc?.limitePct ?? "—"}%)<br/>
+          ${r.partida?.fator > 1 ? `Partida ≈ ${r.partida.correnteA.toFixed(0)} A (${r.partida.fator}×Ib) · ` : ""}
+          DR: ${r.dr ? "sim" : "não"} · Icc ref. ${r.icc?.iccKA ?? "—"} kA
+          ${r.quedaAcumulada ? `<br/>Queda acumulada: ${r.quedaAcumulada.pct.toFixed(2)}%` : ""}
         </div>
-        ${r.avisos.length ? `<div style="background:rgba(255,193,77,.08);border:1px solid rgba(255,193,77,.25);border-radius:12px;padding:10px 12px;font-size:.82rem;color:var(--warn);margin-bottom:12px">${r.avisos.map((a) => `• ${a}`).join("<br/>")}</div>` : ""}
+        ${
+          cl.length
+            ? `<div class="nbr-checklist">${cl
+                .map(
+                  (i) =>
+                    `<div class="nbr-check nbr-check-${i.status}"><span>${i.status === "ok" ? "✓" : i.status === "warn" ? "!" : "✕"}</span><div><strong>${i.label}</strong><div class="hint">${i.detail}</div></div></div>`
+                )
+                .join("")}</div>`
+            : ""
+        }
+        ${r.avisos.length ? `<div style="background:rgba(255,193,77,.08);border:1px solid rgba(255,193,77,.25);border-radius:12px;padding:10px 12px;font-size:.82rem;color:var(--warn);margin:12px 0">${r.avisos.map((a) => `• ${a}`).join("<br/>")}</div>` : ""}
         <div id="nbrMats"></div>
       `;
       const s = getState();
@@ -2562,20 +2726,46 @@ export function initApp() {
 
     document.getElementById("nbrCalc").onclick = () => {
       const drSel = document.getElementById("nbrDr").value;
+      const L = Number(document.getElementById("nbrL").value);
       const r = NBR5410.dimensionar({
         tipoId: document.getElementById("nbrTipo").value,
         potenciaW: Number(document.getElementById("nbrP").value),
         tensaoV: Number(document.getElementById("nbrV").value),
-        comprimentoM: Number(document.getElementById("nbrL").value),
+        comprimentoM: L,
         fp: Number(document.getElementById("nbrFp").value),
+        metodoId: document.getElementById("nbrMetodo").value,
         agrupamentoId: document.getElementById("nbrAgr").value,
         tempId: document.getElementById("nbrTemp").value,
         polos: Number(document.getElementById("nbrPolos").value),
         fases: Number(document.getElementById("nbrPolos").value) === 3 ? 3 : 1,
-        dr: drSel === "auto" ? undefined : drSel === "sim"
+        iccKA: Number(document.getElementById("nbrIcc").value) || 6,
+        nCircuitosEletroduto: (() => {
+          const id = document.getElementById("nbrAgr").value;
+          if (id === "7+") return 7;
+          const n = Number(id);
+          return Number.isFinite(n) && n > 0 ? n : 1;
+        })(),
+        dr: drSel === "auto" ? undefined : drSel === "sim",
+        trechosQueda: L > 0
+          ? [
+              { comprimentoM: L * 0.85, label: "ida" },
+              { comprimentoM: L * 0.15, label: "trecho final" }
+            ]
+          : undefined
       });
       paintResult(r);
       toast("Dimensionamento calculado");
+    };
+
+    document.getElementById("nbrMemorial").onclick = async () => {
+      if (!lastDimensionamento) return toast("Calcule antes");
+      try {
+        await PDF.preloadBrand();
+        await PDF.memorial(lastDimensionamento, getState().empresa);
+        toast("Memorial PDF gerado");
+      } catch (e) {
+        toast(e.message || "Falha ao gerar memorial");
+      }
     };
 
     document.getElementById("nbrOrc").onclick = () => {

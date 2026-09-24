@@ -513,6 +513,18 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
               <option value="sim" ${projeto.aterramento !== false ? "selected" : ""}>Aterramento: sim</option>
               <option value="nao" ${projeto.aterramento === false ? "selected" : ""}>Aterramento: passar PE</option>
             </select>
+            <select id="peMetodo" class="pe-select" title="Método de instalação NBR 5410">
+              <option value="A1" ${projeto.metodoInstalacao === "A1" ? "selected" : ""}>Método A1</option>
+              <option value="B1" ${!projeto.metodoInstalacao || projeto.metodoInstalacao === "B1" ? "selected" : ""}>Método B1</option>
+              <option value="B2" ${projeto.metodoInstalacao === "B2" ? "selected" : ""}>Método B2</option>
+              <option value="C" ${projeto.metodoInstalacao === "C" ? "selected" : ""}>Método C</option>
+            </select>
+            <label class="pe-field-inline" title="Icc aproximado no QDC (kA)">
+              Icc
+              <input type="number" id="peIcc" class="pe-select pe-input-sm" min="1" max="50" step="0.5" value="${Number(projeto.iccKA) || 6}" />
+              <span class="hint">kA</span>
+            </label>
+            <button type="button" class="btn btn-ghost btn-sm" id="peExportJson" title="Backup JSON do projeto">Exportar</button>
             <div class="pe-tools" id="peTools">
               <button type="button" data-tool="select" class="pe-tool active" title="Selecionar / arrastar">Mover</button>
               <button type="button" data-tool="room" class="pe-tool" title="Desenhar cômodo">Cômodo</button>
@@ -727,6 +739,31 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
         save();
         ctx.toast?.("Aterramento atualizado — rode a análise de novo");
       };
+      root.querySelector("#peMetodo")?.addEventListener("change", (e) => {
+        projeto.metodoInstalacao = e.target.value || "B1";
+        save();
+        ctx.toast?.("Método atualizado — rode Analisar NBR 5410 de novo");
+      });
+      root.querySelector("#peIcc")?.addEventListener("change", (e) => {
+        const v = Math.max(1, Math.min(50, Number(e.target.value) || 6));
+        projeto.iccKA = v;
+        e.target.value = String(v);
+        save();
+        ctx.toast?.("Icc atualizado — rode a análise de novo");
+      });
+      root.querySelector("#peExportJson")?.addEventListener("click", () => {
+        try {
+          const blob = new Blob([JSON.stringify(projeto, null, 2)], { type: "application/json" });
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = `${(projeto.nome || "projeto").replace(/[^\w\-]+/g, "_")}.json`;
+          a.click();
+          URL.revokeObjectURL(a.href);
+          ctx.toast?.("Projeto exportado (JSON)");
+        } catch (err) {
+          ctx.toast?.(String(err?.message || err));
+        }
+      });
       root.querySelector("#peTools").onclick = (e) => {
         const btn = e.target.closest("[data-tool]");
         if (!btn) return;
@@ -3517,6 +3554,40 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
         .map((x) => `<li>${escapeHtml(x)}</li>`)
         .join("");
 
+      const dimR = a?.dimResumo;
+      const dimHtml = dimR
+        ? `<ul class="hint" style="margin:0;padding-left:16px;line-height:1.45">
+            <li>Método: <strong>${escapeHtml(dimR.metodoId || "B1")}</strong></li>
+            <li>Queda acumulada: <strong>${Number(dimR.quedaAcumuladaPct || 0).toFixed(2)}%</strong> (${escapeHtml(dimR.quedaLimite || "4%")}) ${dimR.quedaOk ? "✓" : "⚠"}</li>
+            <li>Eletroduto (ocup.): <strong>${escapeHtml(String(dimR.eletrodutoMm || "—"))}</strong></li>
+            ${dimR.avisosCriticos?.length ? `<li class="warn">${dimR.avisosCriticos.length} aviso(s) crítico(s)</li>` : ""}
+          </ul>`
+        : `<p class="hint">Rode a análise para ver resumo de dimensionamento.</p>`;
+
+      const val = a?.validacao;
+      const valItens =
+        val?.itens ||
+        (val?.issues || []).map((iss) => ({
+          ok: iss.nivel !== "fail",
+          texto: iss.msg,
+          id: iss.nivel
+        }));
+      const valHtml = val
+        ? `<ul class="nbr-checklist pe-nbr-checklist">
+            ${valItens
+              .map(
+                (it) =>
+                  `<li class="${it.ok ? "ok" : "fail"}"><span class="nbr-check-ico">${it.ok ? "✓" : "✗"}</span> ${escapeHtml(it.texto || it.id || "")}</li>`
+              )
+              .join("")}
+            ${
+              (val.faltando || []).length
+                ? `<li class="fail"><span class="nbr-check-ico">!</span> ${escapeHtml(val.faltando.join(" · "))}</li>`
+                : ""
+            }
+          </ul>`
+        : "";
+
       const sistLabel =
         a?.sistemaLabel ||
         (projeto.sistema === "mono"
@@ -3530,9 +3601,22 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
           <h3>Análise NBR 5410</h3>
           <p class="hint">${projeto.rooms.length} cômodo(s) · ${(projeto.arch || []).length} porta/janela · ${projeto.points.length} ponto(s) · ${projeto.conduits.length} conduíte(s)
             · Sistema: ${escapeHtml(sistLabel)} · PD ${Number(projeto.peDireitoM || 2.8).toFixed(2)} m
+            · Método: ${escapeHtml(projeto.metodoInstalacao || "B1")}
             · Aterramento: ${projeto.aterramento === false ? "passar PE" : "sim"}</p>
         </div>
         <div class="pe-analysis-grid">
+          <div class="pe-side-block">
+            <h3>Dimensionamento</h3>
+            ${dimHtml}
+          </div>
+          ${
+            valHtml
+              ? `<div class="pe-side-block">
+            <h3>Validação planta</h3>
+            ${valHtml}
+          </div>`
+              : ""
+          }
           <div class="pe-side-block">
             <h3>Proteção</h3>
             ${protHtml}
