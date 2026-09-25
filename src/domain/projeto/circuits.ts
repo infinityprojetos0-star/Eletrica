@@ -1083,6 +1083,56 @@ function polylineLength(verts) {
     avisos.push(...(balanceamento.avisos || []));
 
     const protecao = dimensionarProtecao(circuits, sistema, balanceamento);
+
+    // Alimentador padrão → QDC
+    const potenciaInstaladaW = circuits.reduce(
+      (s, c) => s + (Number(c.potenciaVA) || Number(c.potenciaW) || 0),
+      0
+    );
+    const quedaInternaMaxPct = Math.max(
+      0,
+      ...circuits.map((c) =>
+        Number(c.dimensionamento?.quedaAcumulada?.pct ?? c.dimensionamento?.queda?.pct ?? 0)
+      )
+    );
+    const fasesAlim = sistema === "tri" ? 3 : sistema === "mono" ? 1 : 2;
+    const tensaoAlim =
+      sistema === "mono"
+        ? 127
+        : sistema === "tri"
+          ? 220
+          : 220;
+    const distPadrao = Math.max(0, Number(projeto.distanciaPadraoQdcM) || 0);
+    const alimentador =
+      typeof NBR5410 !== "undefined" && NBR5410.dimensionarAlimentadorEntrada
+        ? NBR5410.dimensionarAlimentadorEntrada({
+            comprimentoM: distPadrao,
+            tensaoV: tensaoAlim,
+            fases: fasesAlim,
+            potenciaInstaladaW,
+            correnteFaseMaxA: balanceamento?.correnteMaxA || 0,
+            uso,
+            fatorDemanda: projeto.fatorDemanda,
+            metodoId: projeto.metodoEntrada || projeto.metodoInstalacao || "B1",
+            tempId: projeto.tempAmbienteId || "30",
+            quedaInternaMaxPct
+          })
+        : null;
+    if (alimentador) {
+      (alimentador.avisos || []).forEach((a) => avisos.push(`[Padrão→QDC] ${a}`));
+      if (protecao) {
+        protecao.disjuntorEntrada = {
+          tipo: "DJ_ENTRADA",
+          nome: `Disjuntor de entrada ${alimentador.disjuntor.polos}P ${alimentador.disjuntor.In}A`,
+          In: alimentador.disjuntor.In,
+          polos: alimentador.disjuntor.polos,
+          ibRefA: alimentador.ib,
+          secaoMm2: alimentador.cabo.secao,
+          nota: `Padrão → QDC · ${distPadrao} m · FD ${alimentador.entrada.fatorDemanda}`
+        };
+      }
+    }
+
     const wago = contarWagos({ ...projeto, points: pointsOut }, graph, circuits, nodeEdgeEnds);
 
     const projetoMat = { ...projeto, points: pointsOut, conduits, arch: projeto.arch || [], sistema };
@@ -1097,13 +1147,15 @@ function polylineLength(verts) {
     const materiais = montarMateriais(projetoMat, circuits, produtos, modoPreco || "medio", {
       protecao,
       wago,
-      balanceamento
+      balanceamento,
+      alimentador
     });
 
     const maoObra = sugerirServicosProjeto(projetoMat, {
       circuits,
       protecao,
-      wago
+      wago,
+      alimentador
     }, servicos, modoPreco || "medio");
 
     // Checklist agregado + validação da planta
@@ -1132,6 +1184,16 @@ function polylineLength(verts) {
         (c) => c.dimensionamento?.queda?.okTerminal !== false && c.dimensionamento?.quedaAcumulada?.ok !== false
       ),
       eletrodutoMm: eletIds.length ? eletIds[eletIds.length - 1] : null,
+      alimentador: alimentador
+        ? {
+            secao: alimentador.cabo.secao,
+            In: alimentador.disjuntor.In,
+            ib: alimentador.ib,
+            quedaPct: alimentador.queda.pct,
+            quedaTotalPct: alimentador.quedaTotalPct,
+            ok: alimentador.okInstalacao4
+          }
+        : null,
       avisosCriticos: avisos.filter((a) => /crítico|dividir|falha|estoura/i.test(String(a)))
     };
     if (dimResumo.fail) {
@@ -1149,6 +1211,8 @@ function polylineLength(verts) {
       peDireitoM: Math.max(2.2, Number(projeto.peDireitoM) || 2.8),
       aterramento: projeto.aterramento !== false,
       metodoInstalacao: projeto.metodoInstalacao || "B1",
+      distanciaPadraoQdcM: distPadrao,
+      fatorDemanda: alimentador?.entrada?.fatorDemanda ?? projeto.fatorDemanda,
       circuits,
       conduits,
       points: pointsOut,
@@ -1158,11 +1222,12 @@ function polylineLength(verts) {
       protecao,
       balanceamento,
       wago,
+      alimentador,
       validacao,
       dimResumo,
       avisos: [...new Set(avisos)],
       disclaimer:
-        "Cálculos auxiliares com base em critérios simplificados da NBR 5410 (método, agrupamento, queda acumulada, ocupação). Não substitui projeto elétrico oficial.",
+        "Cálculos auxiliares com base em critérios simplificados da NBR 5410 (método, agrupamento, queda acumulada, ocupação, alimentador padrão→QDC). Não substitui projeto elétrico oficial.",
       geradoEm: new Date().toISOString()
     };
   }
@@ -1375,6 +1440,63 @@ function polylineLength(verts) {
         nota: `${d.circs.join(", ")} · ${d.bitolas.join("; ")}`
       });
     });
+
+    // Alimentador padrão → QDC (cabo + DJ de entrada + eletroduto)
+    const alimentador = extras.alimentador || null;
+    if (alimentador?.cabo?.secao && alimentador.metrosPorCondutor > 0) {
+      const secaoA = alimentador.cabo.secao;
+      const mA = alimentador.metrosPorCondutor;
+      const nCond = alimentador.nCondutores || 3;
+      const idCabo = caboMap[Number(secaoA)];
+      const prodCabo = idCabo ? find((p) => p.id === idCabo) : null;
+      itens.push({
+        tipo: "produto",
+        refId: prodCabo?.id || null,
+        nome: `Cabo ${secaoA} mm² — alimentador padrão→QDC`,
+        unidade: "m",
+        qtd: Math.ceil(mA * nCond),
+        preco: prodCabo ? preco(prodCabo) / 100 : 0,
+        bitola: secaoA,
+        nota: `${nCond} cond. · ${alimentador.entrada?.comprimentoM || "—"} m (+10%) · Ib ${alimentador.ib} A`
+      });
+      if (alimentador.eletroduto) {
+        const tubo =
+          find((p) => p.id === "prd-15") ||
+          find((p) => /eletroduto/i.test(p.nome || ""));
+        const barras = Math.max(1, Math.ceil((alimentador.entrada?.comprimentoM || 0) / 3));
+        itens.push({
+          tipo: "produto",
+          refId: tubo?.id || null,
+          nome: `Eletroduto ${alimentador.eletroduto} — padrão→QDC`,
+          unidade: tubo?.unidade || "un",
+          qtd: barras,
+          preco: tubo ? preco(tubo) : 0,
+          nota: `Ocupação ~${alimentador.eletrodutoCalc?.ocupacaoPct ?? "—"}%`
+        });
+      }
+    }
+    if (protecao?.disjuntorEntrada || alimentador?.disjuntor) {
+      const g = protecao?.disjuntorEntrada || {
+        nome: `Disjuntor de entrada ${alimentador.disjuntor.polos}P ${alimentador.disjuntor.In}A`,
+        polos: alimentador.disjuntor.polos,
+        nota: "Padrão / medidor"
+      };
+      const djE =
+        g.polos >= 3
+          ? find((p) => /tripolar|geral/i.test(p.nome || ""))
+          : g.polos >= 2
+            ? find((p) => p.id === "prd-7") || find((p) => /bipolar/i.test(p.nome || ""))
+            : find((p) => p.id === "prd-6");
+      itens.push({
+        tipo: "produto",
+        refId: djE?.id || null,
+        nome: g.nome,
+        unidade: "un",
+        qtd: 1,
+        preco: djE ? preco(djE) : 0,
+        nota: g.nota || "Disjuntor no padrão de entrada"
+      });
+    }
 
     // Proteção: IDR por circuito + DPS no QDC + disjuntor geral
     if (protecao?.disjuntorGeral) {

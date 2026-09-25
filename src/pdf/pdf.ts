@@ -32,7 +32,7 @@ import {
   custoOcultoGlobal
 } from "../data/catalog";
 import { Store } from "../store/store";
-import { memorialTexto } from "../domain/nbr5410";
+import { memorialTexto, memorialAlimentadorTexto } from "../domain/nbr5410";
 
 
   const C = {
@@ -971,11 +971,14 @@ ${fontFaceCss()}
   /** Memorial técnico do dimensionamento (texto + checklist) */
   async function memorial(dim, empresa) {
     const doc = new jsPDF({ unit: "mm", format: "a4" });
-    const texto = memorialTexto(dim) || JSON.stringify(dim, null, 2);
+    const isAlim = dim?.tipo?.id === "alimentador" || dim?._kind === "alimentador";
+    const texto =
+      (isAlim ? memorialAlimentadorTexto(dim) : memorialTexto(dim)) ||
+      JSON.stringify(dim, null, 2);
     const escEmpresa = empresa?.nome || "VoltES";
     doc.setFont("helvetica", "bold");
     doc.setFontSize(14);
-    doc.text("Memorial de dimensionamento", 14, 18);
+    doc.text(isAlim ? "Memorial — alimentador padrão→QDC" : "Memorial de dimensionamento", 14, 18);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     doc.setTextColor(100);

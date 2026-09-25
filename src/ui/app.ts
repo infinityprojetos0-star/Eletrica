@@ -2631,6 +2631,40 @@ export function initApp() {
           <div class="empty"><strong>Resultado</strong>Preencha os dados e clique em Dimensionar.</div>
         </div>
       </div>
+      <div class="card" style="margin-top:16px">
+        <h3 style="font-family:var(--display);margin:0 0 8px">Alimentador padrão → QDC</h3>
+        <p class="hint" style="margin-bottom:12px">Demanda, cabo, DJ de entrada e queda do medidor até o quadro. Soma com a queda do circuito (campo abaixo) para checar 4%/7%.</p>
+        <div class="form-grid">
+          <div class="field"><label>Potência instalada (W)</label><input id="alimP" type="number" value="12000" /></div>
+          <div class="field"><label>Distância padrão→QDC (m)</label><input id="alimL" type="number" value="15" step="0.5" /></div>
+          <div class="field"><label>Tensão (V)</label><input id="alimV" type="number" value="220" /></div>
+          <div class="field"><label>Sistema</label>
+            <select id="alimFases">
+              <option value="1">Monofásico</option>
+              <option value="2" selected>Bifásico</option>
+              <option value="3">Trifásico</option>
+            </select>
+          </div>
+          <div class="field"><label>Uso</label>
+            <select id="alimUso">
+              <option value="residencial">Residencial</option>
+              <option value="comercial">Comercial</option>
+            </select>
+          </div>
+          <div class="field"><label>Fator de demanda</label><input id="alimFD" type="number" min="0.3" max="1" step="0.05" placeholder="auto" /></div>
+          <div class="field"><label>Queda máx. nos circuitos (%)</label><input id="alimQi" type="number" value="2" step="0.1" min="0" /></div>
+          <div class="field"><label>Método</label>
+            <select id="alimMetodo">
+              ${metodos.map((m) => `<option value="${m.id}" ${m.id === "B1" ? "selected" : ""}>${m.label}</option>`).join("")}
+            </select>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+          <button class="btn btn-primary" id="alimCalc">Dimensionar alimentador</button>
+          <button class="btn btn-secondary" id="alimMemorial" disabled>Memorial PDF</button>
+        </div>
+        <div id="alimOut" style="margin-top:14px"></div>
+      </div>
     `;
 
     const applyTipoDefaults = () => {
@@ -2771,6 +2805,73 @@ export function initApp() {
     document.getElementById("nbrOrc").onclick = () => {
       if (!lastDimensionamento) return toast("Calcule antes de enviar");
       enviarDimAoOrcamento(lastDimensionamento);
+    };
+
+    let lastAlimentador = null;
+    document.getElementById("alimCalc").onclick = () => {
+      const fdRaw = String(document.getElementById("alimFD").value || "").trim();
+      const alim = NBR5410.dimensionarAlimentadorEntrada({
+        potenciaInstaladaW: Number(document.getElementById("alimP").value) || 0,
+        comprimentoM: Number(document.getElementById("alimL").value) || 0,
+        tensaoV: Number(document.getElementById("alimV").value) || 220,
+        fases: Number(document.getElementById("alimFases").value) || 2,
+        uso: document.getElementById("alimUso").value,
+        fatorDemanda: fdRaw ? Number(fdRaw) : null,
+        metodoId: document.getElementById("alimMetodo").value || "B1",
+        quedaInternaMaxPct: Number(document.getElementById("alimQi").value) || 0
+      });
+      lastAlimentador = { ...alim, _kind: "alimentador" };
+      const btn = document.getElementById("alimMemorial");
+      if (btn) btn.disabled = false;
+      const nivel = alim.checklist?.nivel || "ok";
+      const badge =
+        nivel === "ok"
+          ? `<span class="badge badge-aprovado">Aprovado</span>`
+          : nivel === "warn"
+            ? `<span class="badge badge-pendente">Atenção</span>`
+            : `<span class="badge badge-rejeitado">Revisar</span>`;
+      document.getElementById("alimOut").innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+          <strong>Resultado do alimentador</strong>${badge}
+        </div>
+        <div class="grid grid-2" style="gap:10px;margin-bottom:10px">
+          <div class="calc-result" style="margin:0"><div class="label">Ib (demanda)</div><div class="value" style="font-size:1.3rem">${alim.ib.toFixed(2)} A</div></div>
+          <div class="calc-result" style="margin:0"><div class="label">Cabo</div><div class="value" style="font-size:1.3rem">${alim.cabo.secao} mm²</div></div>
+          <div class="calc-result" style="margin:0"><div class="label">DJ entrada</div><div class="value" style="font-size:1.3rem">${alim.disjuntor.In} A · ${alim.disjuntor.polos}P</div></div>
+          <div class="calc-result" style="margin:0"><div class="label">Queda total</div><div class="value" style="font-size:1.3rem">${alim.quedaTotalPct.toFixed(2)}% ${alim.okInstalacao4 ? "✓" : "!"}</div></div>
+        </div>
+        <div class="hint" style="line-height:1.5">
+          FD ${alim.entrada.fatorDemanda} · demanda ${alim.entrada.potenciaDemandaW} W<br/>
+          Queda no trecho: ${alim.queda.pct.toFixed(2)}% (meta ${alim.entrada.limiteQuedaPct}%) · + circuitos ${alim.quedaInternaMaxPct.toFixed(2)}%<br/>
+          Eletroduto ${alim.eletroduto} · ocupação ${alim.eletrodutoCalc?.ocupacaoPct ?? "—"}%
+        </div>
+        ${
+          (alim.checklist?.items || []).length
+            ? `<div class="nbr-checklist" style="margin-top:10px">${alim.checklist.items
+                .map(
+                  (i) =>
+                    `<div class="nbr-check nbr-check-${i.status}"><span>${i.status === "ok" ? "✓" : i.status === "warn" ? "!" : "✕"}</span><div><strong>${i.label}</strong><div class="hint">${i.detail}</div></div></div>`
+                )
+                .join("")}</div>`
+            : ""
+        }
+        ${
+          alim.avisos?.length
+            ? `<div style="margin-top:10px;font-size:.82rem;color:var(--warn)">${alim.avisos.map((a) => `• ${a}`).join("<br/>")}</div>`
+            : ""
+        }
+      `;
+      toast("Alimentador calculado");
+    };
+    document.getElementById("alimMemorial").onclick = async () => {
+      if (!lastAlimentador) return toast("Calcule o alimentador antes");
+      try {
+        await PDF.preloadBrand();
+        await PDF.memorial(lastAlimentador, getState().empresa);
+        toast("Memorial do alimentador gerado");
+      } catch (e) {
+        toast(e.message || "Falha ao gerar memorial");
+      }
     };
 
     if (lastDimensionamento) paintResult(lastDimensionamento);

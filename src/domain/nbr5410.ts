@@ -1,7 +1,7 @@
 /** Dimensionamento NBR 5410 — domínio puro (assistente de obra). */
 import { getPrecoByModo } from "../data/catalog";
 
-  const DISJUNTORES = [6, 10, 16, 20, 25, 32, 40, 50, 63, 70, 80, 100, 125, 160];
+  const DISJUNTORES = [6, 10, 16, 20, 25, 32, 40, 50, 63, 70, 80, 100, 125, 160, 200];
 
   /**
    * Iz (A) — Cu PVC 70 °C, 2 condutores carregados.
@@ -17,7 +17,9 @@ import { getPrecoByModo } from "../data/catalog";
       { secao: 16, iz: 66 },
       { secao: 25, iz: 84 },
       { secao: 35, iz: 104 },
-      { secao: 50, iz: 125 }
+      { secao: 50, iz: 125 },
+      { secao: 70, iz: 160 },
+      { secao: 95, iz: 194 }
     ],
     B1: [
       { secao: 1.5, iz: 17.5 },
@@ -28,7 +30,9 @@ import { getPrecoByModo } from "../data/catalog";
       { secao: 16, iz: 76 },
       { secao: 25, iz: 101 },
       { secao: 35, iz: 125 },
-      { secao: 50, iz: 151 }
+      { secao: 50, iz: 151 },
+      { secao: 70, iz: 192 },
+      { secao: 95, iz: 232 }
     ],
     B2: [
       { secao: 1.5, iz: 18.5 },
@@ -39,7 +43,9 @@ import { getPrecoByModo } from "../data/catalog";
       { secao: 16, iz: 80 },
       { secao: 25, iz: 107 },
       { secao: 35, iz: 132 },
-      { secao: 50, iz: 160 }
+      { secao: 50, iz: 160 },
+      { secao: 70, iz: 206 },
+      { secao: 95, iz: 251 }
     ],
     C: [
       { secao: 1.5, iz: 19.5 },
@@ -50,7 +56,9 @@ import { getPrecoByModo } from "../data/catalog";
       { secao: 16, iz: 85 },
       { secao: 25, iz: 112 },
       { secao: 35, iz: 138 },
-      { secao: 50, iz: 168 }
+      { secao: 50, iz: 168 },
+      { secao: 70, iz: 213 },
+      { secao: 95, iz: 258 }
     ]
   };
 
@@ -77,7 +85,9 @@ import { getPrecoByModo } from "../data/catalog";
     16: 7.5,
     25: 9.5,
     35: 11.0,
-    50: 13.0
+    50: 13.0,
+    70: 15.5,
+    95: 17.5
   };
 
   /** Área útil interna aproximada do eletroduto (mm²) */
@@ -285,6 +295,251 @@ import { getPrecoByModo } from "../data/catalog";
       if (In >= ib - 1e-9 && In <= izCorrigida + 1e-9) return In;
     }
     return null;
+  }
+
+  /**
+   * Fator de demanda simplificado (residencial/comercial).
+   * Não substitui a tabela completa da NBR 5410 — referência prática de obra.
+   */
+  function fatorDemandaPadrao(uso, potenciaW) {
+    const kW = Math.max(0, Number(potenciaW) || 0) / 1000;
+    if (String(uso || "").toLowerCase() === "comercial") {
+      if (kW <= 20) return 0.9;
+      if (kW <= 50) return 0.8;
+      return 0.7;
+    }
+    // Residencial — degraus aproximados
+    if (kW <= 15) return 0.8;
+    if (kW <= 20) return 0.75;
+    if (kW <= 25) return 0.7;
+    if (kW <= 30) return 0.65;
+    if (kW <= 40) return 0.6;
+    if (kW <= 50) return 0.55;
+    return 0.5;
+  }
+
+  /**
+   * Alimentador padrão (medidor) → QDC.
+   * Dimensiona demanda, cabo, DJ de entrada e queda neste trecho;
+   * soma com a maior queda interna para checar 4% / 7%.
+   */
+  function dimensionarAlimentadorEntrada(input = {}) {
+    const avisos = [];
+    const comprimentoM = Math.max(0, Number(input.comprimentoM) || 0);
+    const tensaoV = Number(input.tensaoV) || 220;
+    const fasesRaw = Number(input.fases);
+    const fases = fasesRaw === 3 ? 3 : fasesRaw === 2 ? 2 : 1;
+    const fp = Math.max(0.5, Math.min(1, Number(input.fp) || 0.92));
+    const potenciaInstaladaW = Math.max(0, Number(input.potenciaInstaladaW) || 0);
+    const correnteFaseMaxA = Math.max(0, Number(input.correnteFaseMaxA) || 0);
+    const uso = input.uso || "residencial";
+    const fdManual = Number(input.fatorDemanda);
+    const fatorDemanda =
+      fdManual > 0 && fdManual <= 1
+        ? fdManual
+        : fatorDemandaPadrao(uso, potenciaInstaladaW);
+    const potenciaDemandaW = potenciaInstaladaW * fatorDemanda;
+    const metodoId = input.metodoId || "B1";
+    const tempId = input.tempId || "30";
+    const { ka, kt, k } = fatorK(input.agrupamentoId || "1", tempId);
+
+    // Ib do alimentador: prioriza corrente da fase mais carregada × FD; senão potência de demanda
+    let ib;
+    if (correnteFaseMaxA > 0) {
+      ib = correnteFaseMaxA * fatorDemanda;
+    } else {
+      ib = correnteProjeto({
+        potenciaW: potenciaDemandaW,
+        tensaoV,
+        fases: fases === 3 ? 3 : 1,
+        fp
+      });
+    }
+    ib = Math.round(ib * 100) / 100;
+
+    // Seção mínima prática do ramal de entrada
+    const secaoMin = Number(input.secaoMin) || (ib > 50 ? 16 : ib > 32 ? 10 : 6);
+    // Reserva típica no alimentador (~1,5–2%) para sobrar margem aos circuitos (≤4% total)
+    const limiteQuedaPct = Number(input.limiteQuedaPct) > 0 ? Number(input.limiteQuedaPct) : 2;
+
+    let cabo = escolherCabo(ib, secaoMin, k, null, metodoId);
+    let secao = cabo.secao;
+    let izCorrigida = cabo.izCorrigida;
+    const tabela = cabosDoMetodo(metodoId);
+    const fasesQueda = fases === 3 ? 3 : 1;
+
+    let queda = quedaTensao({
+      comprimentoM,
+      correnteA: ib,
+      secaoMm2: secao,
+      tensaoV,
+      fases: fasesQueda
+    });
+
+    // Aumenta seção até a queda do trecho ≤ limite (ou acaba a tabela)
+    for (const c of tabela) {
+      if (c.secao + 1e-9 < secao) continue;
+      const izC = c.iz * k;
+      if (izC + 1e-9 < ib) continue;
+      const q = quedaTensao({
+        comprimentoM,
+        correnteA: ib,
+        secaoMm2: c.secao,
+        tensaoV,
+        fases: fasesQueda
+      });
+      cabo = { ...c, izCorrigida: izC, metodoId };
+      secao = c.secao;
+      izCorrigida = izC;
+      queda = q;
+      if (q.pct <= limiteQuedaPct + 1e-9) break;
+    }
+    if (queda.pct > limiteQuedaPct) {
+      avisos.push(
+        `Queda no alimentador ${queda.pct.toFixed(2)}% acima da meta ${limiteQuedaPct}% — aumente seção ou reduza distância.`
+      );
+    }
+    if (cabo.alerta) avisos.push(cabo.alerta);
+
+    let disjuntorIn = escolherDisjuntor(ib, izCorrigida);
+    if (disjuntorIn == null) {
+      disjuntorIn =
+        DISJUNTORES.find((In) => In >= ib - 1e-9) || DISJUNTORES[DISJUNTORES.length - 1];
+      if (disjuntorIn > izCorrigida + 1e-9) {
+        avisos.push(
+          `DJ ${disjuntorIn} A acima de Iz·k (${izCorrigida.toFixed(1)} A) — revise cabo ou corrente.`
+        );
+      }
+    }
+    const polos = fases === 3 ? 3 : fases === 2 ? 2 : 1;
+    const nCondutores = polos >= 3 ? 5 : polos >= 2 ? 3 : 3; // 3F+N+PE · F+F+PE · F+N+PE
+
+    const eletrodutoCalc = eletrodutoPorOcupacao({
+      secaoMm2: secao,
+      nCondutores,
+      nCircuitos: 1
+    });
+
+    const quedaInternaMaxPct = Math.max(0, Number(input.quedaInternaMaxPct) || 0);
+    const quedaTotalPct = Math.round((queda.pct + quedaInternaMaxPct) * 100) / 100;
+    const okInstalacao4 = quedaTotalPct <= 4 + 1e-9;
+    const okOrigem7 = quedaTotalPct <= 7 + 1e-9;
+    if (quedaInternaMaxPct > 0 && !okInstalacao4) {
+      avisos.push(
+        `Queda total estimada ${quedaTotalPct.toFixed(2)}% (alimentador ${queda.pct.toFixed(2)}% + circuitos ${quedaInternaMaxPct.toFixed(2)}%) > 4%.`
+      );
+    } else if (quedaInternaMaxPct > 0 && !okOrigem7) {
+      avisos.push(
+        `Queda total ${quedaTotalPct.toFixed(2)}% acima do teto de 7% da origem.`
+      );
+    }
+    if (comprimentoM <= 0) {
+      avisos.push("Informe a distância padrão → QDC para dimensionar o alimentador.");
+    }
+
+    const result = {
+      tipo: { id: "alimentador", label: "Alimentador padrão → QDC" },
+      uso,
+      entrada: {
+        potenciaInstaladaW,
+        potenciaDemandaW: Math.round(potenciaDemandaW),
+        fatorDemanda,
+        tensaoV,
+        fases,
+        fp,
+        comprimentoM,
+        metodoId,
+        tempId,
+        ka,
+        kt,
+        k,
+        limiteQuedaPct,
+        correnteFaseMaxA
+      },
+      ib,
+      cabo: {
+        secao,
+        iz: tabela.find((c) => c.secao === secao)?.iz || cabo.iz,
+        izCorrigida,
+        metodoId
+      },
+      disjuntor: {
+        In: disjuntorIn,
+        polos,
+        curva: "C",
+        local: "padrão / medidor"
+      },
+      queda,
+      quedaInternaMaxPct,
+      quedaTotalPct,
+      okInstalacao4,
+      okOrigem7,
+      nCondutores,
+      metrosPorCondutor: comprimentoM > 0 ? Math.ceil(comprimentoM * 1.1) : 0,
+      metrosCabo: comprimentoM > 0 ? Math.ceil(comprimentoM * 1.1) * nCondutores : 0,
+      eletroduto: eletrodutoCalc.eletroduto,
+      eletrodutoCalc,
+      avisos,
+      disclaimer:
+        "Alimentador auxiliar (demanda simplificada + NBR 5410). Confirme tipo de fornecimento e normas da concessionária local.",
+      geradoEm: new Date().toISOString()
+    };
+    result.checklist = {
+      nivel: !okOrigem7 || (comprimentoM <= 0 && potenciaInstaladaW > 0) ? "fail" : !okInstalacao4 || queda.pct > limiteQuedaPct ? "warn" : "ok",
+      items: [
+        {
+          status: ib > 0 ? "ok" : "warn",
+          label: "Corrente de demanda (Ib)",
+          detail: `${ib.toFixed(2)} A · FD ${fatorDemanda}`
+        },
+        {
+          status: izCorrigida + 1e-9 >= ib ? "ok" : "fail",
+          label: "Cabo do alimentador",
+          detail: `${secao} mm² · Iz·k ${izCorrigida.toFixed(1)} A`
+        },
+        {
+          status: disjuntorIn >= ib - 1e-9 && disjuntorIn <= izCorrigida + 1e-9 ? "ok" : "warn",
+          label: "DJ de entrada",
+          detail: `${disjuntorIn} A · ${polos}P · curva C`
+        },
+        {
+          status: queda.pct <= limiteQuedaPct + 1e-9 ? "ok" : "warn",
+          label: `Queda no trecho (meta ${limiteQuedaPct}%)`,
+          detail: `${queda.pct.toFixed(2)}% · ${comprimentoM} m`
+        },
+        {
+          status: okInstalacao4 ? "ok" : "fail",
+          label: "Queda total ≤ 4%",
+          detail: `${quedaTotalPct.toFixed(2)}% (alim. + maior circuito)`
+        },
+        {
+          status: okOrigem7 ? "ok" : "fail",
+          label: "Queda total ≤ 7%",
+          detail: `${quedaTotalPct.toFixed(2)}%`
+        }
+      ]
+    };
+    return result;
+  }
+
+  function memorialAlimentadorTexto(alim) {
+    if (!alim) return "";
+    const e = alim.entrada || {};
+    return [
+      "MEMORIAL — ALIMENTADOR PADRÃO → QDC",
+      `Uso: ${alim.uso || "—"} · Sistema: ${e.fases === 3 ? "trifásico" : e.fases === 2 ? "bifásico" : "monofásico"} · ${e.tensaoV} V`,
+      `Potência instalada: ${e.potenciaInstaladaW} W · FD ${e.fatorDemanda} · Demanda: ${e.potenciaDemandaW} W`,
+      `Distância: ${e.comprimentoM} m · Método: ${e.metodoId}`,
+      `Ib = ${alim.ib?.toFixed(2)} A`,
+      `Cabo: ${alim.cabo?.secao} mm² · Iz·k ${alim.cabo?.izCorrigida?.toFixed(1)} A`,
+      `DJ entrada: ${alim.disjuntor?.In} A · ${alim.disjuntor?.polos}P`,
+      `Queda alimentador: ${alim.queda?.pct?.toFixed(2)}% · interna máx.: ${alim.quedaInternaMaxPct?.toFixed(2)}% · total: ${alim.quedaTotalPct?.toFixed(2)}%`,
+      `Eletroduto: ${alim.eletroduto}`,
+      "",
+      ...(alim.avisos || []).map((a) => `• ${a}`),
+      "",
+      alim.disclaimer || ""
+    ].join("\n");
   }
 
   function escolherDisjuntorComPiso(ib, izCorrigida, inMin = 0) {
@@ -985,8 +1240,11 @@ export {
   checarCurtoCircuito,
   checklistDimensionamento,
   memorialTexto,
+  memorialAlimentadorTexto,
   validarProjeto,
-  cabosDoMetodo
+  cabosDoMetodo,
+  fatorDemandaPadrao,
+  dimensionarAlimentadorEntrada
 };
 export const NBR5410 = {
   TIPOS,
@@ -1015,6 +1273,9 @@ export const NBR5410 = {
   checarCurtoCircuito,
   checklistDimensionamento,
   memorialTexto,
+  memorialAlimentadorTexto,
   validarProjeto,
-  cabosDoMetodo
+  cabosDoMetodo,
+  fatorDemandaPadrao,
+  dimensionarAlimentadorEntrada
 };

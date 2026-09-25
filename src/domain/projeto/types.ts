@@ -637,6 +637,10 @@ import { todayISO, uid } from "../../data/catalog";
       metodoInstalacao: "B1",
       tempAmbienteId: "30",
       iccKA: 6,
+      /** Distância do padrão (medidor) até o QDC, em metros */
+      distanciaPadraoQdcM: 15,
+      /** Fator de demanda (0–1). Vazio/auto = tabela simplificada */
+      fatorDemanda: null,
       rooms: [],
       arch: [],
       points: [],

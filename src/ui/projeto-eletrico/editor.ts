@@ -524,6 +524,15 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
               <input type="number" id="peIcc" class="pe-select pe-input-sm" min="1" max="50" step="0.5" value="${Number(projeto.iccKA) || 6}" />
               <span class="hint">kA</span>
             </label>
+            <label class="pe-field-inline" title="Distância do padrão (medidor) até o QDC">
+              Padrão→QDC
+              <input type="number" id="peDistPadrao" class="pe-select pe-input-sm" min="0" max="200" step="0.5" value="${Number(projeto.distanciaPadraoQdcM) || 15}" />
+              <span class="hint">m</span>
+            </label>
+            <label class="pe-field-inline" title="Fator de demanda (vazio = automático)">
+              FD
+              <input type="number" id="peFD" class="pe-select pe-input-sm" min="0.3" max="1" step="0.05" placeholder="auto" value="${projeto.fatorDemanda != null && projeto.fatorDemanda !== "" ? Number(projeto.fatorDemanda) : ""}" />
+            </label>
             <button type="button" class="btn btn-ghost btn-sm" id="peExportJson" title="Backup JSON do projeto">Exportar</button>
             <div class="pe-tools" id="peTools">
               <button type="button" data-tool="select" class="pe-tool active" title="Selecionar / arrastar">Mover</button>
@@ -750,6 +759,26 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
         e.target.value = String(v);
         save();
         ctx.toast?.("Icc atualizado — rode a análise de novo");
+      });
+      root.querySelector("#peDistPadrao")?.addEventListener("change", (e) => {
+        const v = Math.max(0, Math.min(200, Number(e.target.value) || 0));
+        projeto.distanciaPadraoQdcM = Math.round(v * 10) / 10;
+        e.target.value = String(projeto.distanciaPadraoQdcM);
+        save();
+        ctx.toast?.("Distância padrão→QDC atualizada — rode a análise");
+      });
+      root.querySelector("#peFD")?.addEventListener("change", (e) => {
+        const raw = String(e.target.value || "").trim();
+        if (!raw) {
+          projeto.fatorDemanda = null;
+          e.target.value = "";
+        } else {
+          const v = Math.max(0.3, Math.min(1, Number(raw) || 0.8));
+          projeto.fatorDemanda = Math.round(v * 100) / 100;
+          e.target.value = String(projeto.fatorDemanda);
+        }
+        save();
+        ctx.toast?.("Fator de demanda atualizado — rode a análise");
       });
       root.querySelector("#peExportJson")?.addEventListener("click", () => {
         try {
@@ -3386,8 +3415,15 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
 
       const prot = a?.protecao;
       const idrItem = prot?.idr || prot?.drs?.[0];
+      const alim = a?.alimentador;
       const protHtml = prot
         ? `<ul class="pe-prot-list">
+            ${
+              prot.disjuntorEntrada
+                ? `<li><strong>${escapeHtml(prot.disjuntorEntrada.nome)}</strong>
+              <div class="hint">${escapeHtml(prot.disjuntorEntrada.nota || "")}</div></li>`
+                : ""
+            }
             <li><strong>${escapeHtml(prot.disjuntorGeral?.nome || "Disjuntor geral")}</strong>
               <div class="hint">${escapeHtml(prot.disjuntorGeral?.nota || "")}</div></li>
             <li><strong>${escapeHtml(prot.dps?.nome || "DPS")}</strong>
@@ -3401,6 +3437,16 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
           </ul>
           <p class="hint">1 IDR/quadro · ${prot.resumo?.qtdDpsModulos || 0} módulo(s) DPS · ${escapeHtml(prot.label || "")}</p>`
         : `<p class="hint">Rode a análise para dimensionar DJ geral, IDR e DPS.</p>`;
+
+      const alimHtml = alim
+        ? `<ul class="hint" style="margin:0;padding-left:16px;line-height:1.45">
+            <li>Distância: <strong>${Number(alim.entrada?.comprimentoM || 0).toFixed(1)} m</strong> · FD <strong>${alim.entrada?.fatorDemanda}</strong></li>
+            <li>Demanda: <strong>${alim.entrada?.potenciaDemandaW || 0} W</strong> · Ib <strong>${Number(alim.ib || 0).toFixed(1)} A</strong></li>
+            <li>Cabo: <strong>${alim.cabo?.secao} mm²</strong> · DJ entrada <strong>${alim.disjuntor?.In} A ${alim.disjuntor?.polos}P</strong></li>
+            <li>Queda alim.: <strong>${Number(alim.queda?.pct || 0).toFixed(2)}%</strong> · total (alim.+circuitos): <strong>${Number(alim.quedaTotalPct || 0).toFixed(2)}%</strong> ${alim.okInstalacao4 ? "✓" : "⚠ >4%"}</li>
+            <li>Eletroduto: <strong>${escapeHtml(String(alim.eletroduto || "—"))}</strong></li>
+          </ul>`
+        : `<p class="hint">Informe a distância padrão→QDC e rode a análise.</p>`;
 
       const bal = a?.balanceamento;
       const balHtml = bal
@@ -3608,6 +3654,10 @@ function drawTrianguloTomada(ctx, cx, cy, sizePx, fillMode, stroke, lw) {
           <div class="pe-side-block">
             <h3>Dimensionamento</h3>
             ${dimHtml}
+          </div>
+          <div class="pe-side-block">
+            <h3>Padrão → QDC</h3>
+            ${alimHtml}
           </div>
           ${
             valHtml
