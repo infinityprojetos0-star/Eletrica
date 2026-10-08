@@ -1,16 +1,14 @@
 /**
- * Galeria Thumb na nuvem (Firebase Storage + RTDB).
- * Plano Spark (gratuito): Storage 5 GB · download 1 GB/dia.
- * Imagens são redimensionadas no cliente antes do upload.
+ * Galeria Thumb só no Realtime Database (Spark gratuito — sem Storage).
+ * Imagens entram como data URL JPEG comprimido (economia de quota).
  */
 // @ts-nocheck
-import firebase from "firebase/compat/app";
-import "firebase/compat/storage";
 import { FirebaseApp, ROOT, getDb, init as initFirebase } from "./firebase";
 
-const MAX_EDGE = 1600;
-const JPEG_QUALITY = 0.82;
-const MAX_BYTES = 2.5 * 1024 * 1024;
+const MAX_EDGE = 1000;
+const JPEG_QUALITY = 0.7;
+/** Limite do blob antes do base64 (~240 KB na RTDB). */
+const MAX_BLOB = 180 * 1024;
 
 function thumbsRef() {
   initFirebase();
@@ -19,29 +17,49 @@ function thumbsRef() {
   return db.ref(`${ROOT}/thumbs`);
 }
 
-function storage() {
-  initFirebase();
-  if (!firebase.apps.length) return null;
-  return firebase.storage();
-}
-
 function uid() {
   return `th-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** Reduz resolução/tamanho p/ caber no Spark. GIF/SVG passam direto (com limite). */
-export function compressImage(file) {
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Falha ao ler imagem"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
+ * Reduz bem a imagem (só RTDB — sem Storage).
+ * SVG pequeno pode ir como data URL; GIF grande é rejeitado.
+ */
+export function compressImage(file, quality = JPEG_QUALITY, maxEdge = MAX_EDGE) {
   return new Promise((resolve, reject) => {
     if (!file || !file.type?.startsWith("image/")) {
       reject(new Error("Arquivo não é imagem"));
       return;
     }
-    if (file.type === "image/gif" || file.type === "image/svg+xml") {
-      if (file.size > MAX_BYTES) {
-        reject(new Error("GIF/SVG acima de 2,5 MB — reduza o arquivo"));
+
+    if (file.type === "image/svg+xml") {
+      if (file.size > 80 * 1024) {
+        reject(new Error("SVG grande demais para a RTDB (máx. ~80 KB)"));
         return;
       }
-      resolve({ blob: file, contentType: file.type, name: file.name });
+      blobToDataUrl(file).then((dataUrl) =>
+        resolve({ dataUrl, contentType: file.type, name: file.name, size: file.size })
+      );
+      return;
+    }
+
+    if (file.type === "image/gif") {
+      if (file.size > MAX_BLOB) {
+        reject(new Error("GIF grande demais — use JPG/PNG (máx. ~180 KB)"));
+        return;
+      }
+      blobToDataUrl(file).then((dataUrl) =>
+        resolve({ dataUrl, contentType: file.type, name: file.name, size: file.size })
+      );
       return;
     }
 
@@ -50,9 +68,9 @@ export function compressImage(file) {
     img.onload = () => {
       URL.revokeObjectURL(url);
       let { width, height } = img;
-      const scale = Math.min(1, MAX_EDGE / Math.max(width, height));
-      width = Math.round(width * scale);
-      height = Math.round(height * scale);
+      const scale = Math.min(1, maxEdge / Math.max(width, height || 1));
+      width = Math.max(1, Math.round(width * scale));
+      height = Math.max(1, Math.round(height * scale));
       const canvas = document.createElement("canvas");
       canvas.width = width;
       canvas.height = height;
@@ -63,24 +81,36 @@ export function compressImage(file) {
       }
       ctx.drawImage(img, 0, 0, width, height);
       canvas.toBlob(
-        (blob) => {
+        async (blob) => {
           if (!blob) {
             reject(new Error("Falha ao comprimir"));
             return;
           }
-          if (blob.size > MAX_BYTES) {
-            reject(new Error("Imagem ainda grande demais após compressão"));
+          if (blob.size > MAX_BLOB && quality > 0.4) {
+            try {
+              const again = await compressImage(file, Math.max(0.4, quality - 0.15), Math.min(maxEdge, 800));
+              resolve(again);
+              return;
+            } catch (e) {
+              reject(e);
+              return;
+            }
+          }
+          if (blob.size > MAX_BLOB) {
+            reject(new Error("Imagem ainda grande para a RTDB — escolha outra menor"));
             return;
           }
+          const dataUrl = await blobToDataUrl(blob);
           const base = String(file.name || "imagem").replace(/\.[^.]+$/, "");
           resolve({
-            blob,
+            dataUrl,
             contentType: "image/jpeg",
-            name: `${base}.jpg`
+            name: `${base}.jpg`,
+            size: blob.size
           });
         },
         "image/jpeg",
-        JPEG_QUALITY
+        quality
       );
     };
     img.onerror = () => {
@@ -92,37 +122,23 @@ export function compressImage(file) {
 }
 
 export async function uploadThumb(file) {
-  const st = storage();
   const listRef = thumbsRef();
-  if (!st || !listRef) throw new Error("Firebase indisponível");
+  if (!listRef) throw new Error("Firebase RTDB indisponível");
 
-  const { blob, contentType, name } = await compressImage(file);
+  const { dataUrl, contentType, name, size } = await compressImage(file);
+  if (!dataUrl || dataUrl.length > 350000) {
+    throw new Error("Imagem excede o limite da RTDB gratuita — use arquivo menor");
+  }
+
   const id = uid();
-  const ext =
-    contentType === "image/png"
-      ? "png"
-      : contentType === "image/webp"
-        ? "webp"
-        : contentType === "image/gif"
-          ? "gif"
-          : contentType === "image/svg+xml"
-            ? "svg"
-            : "jpg";
-  const storagePath = `thumbs/${id}.${ext}`;
-  const obj = st.ref(storagePath);
-  await obj.put(blob, {
-    contentType,
-    cacheControl: "public,max-age=31536000"
-  });
-  const url = await obj.getDownloadURL();
   const meta = {
     id,
     name: name || file.name || id,
-    url,
-    storagePath,
-    size: blob.size,
+    url: dataUrl,
+    size: size || dataUrl.length,
     contentType,
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    via: "rtdb"
   };
   await listRef.child(id).set(meta);
   return meta;
@@ -130,16 +146,7 @@ export async function uploadThumb(file) {
 
 export async function deleteThumb(item) {
   if (!item?.id) return;
-  const st = storage();
   const listRef = thumbsRef();
-  if (item.storagePath && st) {
-    try {
-      await st.ref(item.storagePath).delete();
-    } catch (err) {
-      // arquivo já sumiu — segue apagando o índice
-      console.warn("Storage delete:", err);
-    }
-  }
   if (listRef) await listRef.child(item.id).remove();
 }
 
@@ -147,7 +154,7 @@ export async function deleteThumb(item) {
 export function subscribeThumbs(onChange, onError) {
   const listRef = thumbsRef();
   if (!listRef) {
-    onError?.(new Error("Firebase indisponível"));
+    onError?.(new Error("Firebase RTDB indisponível"));
     onChange?.([]);
     return () => {};
   }

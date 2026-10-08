@@ -64,16 +64,16 @@ export function mountThumbGallery(root, opts = {}) {
         <div class="hero-note">
           <div>
             <h3>Thumb ${standalone ? "" : `<span class="badge badge-pendente">temporária</span>`}</h3>
-            <p>Imagens sincronizadas na nuvem (Firebase Storage · plano gratuito). Qualquer pessoa com o link vê a mesma galeria.</p>
+            <p>Imagens na <strong>Realtime Database</strong> (plano gratuito · sem Storage). Qualquer pessoa com o link vê a mesma galeria.</p>
           </div>
         </div>
         <div class="thumb-status ${cloudError ? "err" : cloudOk ? "ok" : ""}">
           ${
             cloudError
-              ? `<span>⚠ Nuvem: ${esc(cloudError)} — confira as regras do Storage/RTDB (leitura/escrita pública em <code>thumbs</code>).</span>`
+              ? `<span>⚠ RTDB: ${esc(cloudError)} — libere leitura/escrita em <code>voltes/thumbs</code>.</span>`
               : cloudOk
-                ? `<span>✓ Nuvem conectada · ${remote.length} na galeria compartilhada</span>`
-                : `<span>Conectando à nuvem…</span>`
+                ? `<span>✓ RTDB conectada · ${remote.length} na galeria compartilhada</span>`
+                : `<span>Conectando à Realtime Database…</span>`
           }
         </div>
         <div class="card thumb-drop ${uploading ? "busy" : ""}" id="thumbDrop">
@@ -83,7 +83,7 @@ export function mountThumbGallery(root, opts = {}) {
               ? ""
               : ` ou <button type="button" class="btn btn-secondary btn-sm" id="thumbPick">Selecionar arquivos</button>`
           }</p>
-          <p class="hint">PNG, JPG, WEBP, GIF · comprimidas no aparelho · máx. ~2,5 MB cada · ficam no Firebase</p>
+          <p class="hint">JPG/PNG/WEBP · comprimidas no aparelho (~180 KB) · só Realtime Database</p>
         </div>
         <div class="thumb-toolbar">
           <span class="hint">${all.length} imagem(ns)${uploading ? " · enviando…" : ""}</span>
@@ -147,8 +147,7 @@ export function mountThumbGallery(root, opts = {}) {
         console.error(err);
         const msg = String(err?.code || err?.message || err);
         if (/permission|unauthorized/i.test(msg)) {
-          cloudError =
-            "sem permissão de escrita — libere regras públicas em Storage path thumbs/ e RTDB voltes/thumbs";
+          cloudError = "sem permissão — regras RTDB em voltes/thumbs (.read/.write true)";
         }
         toast(msg.slice(0, 120));
       }
