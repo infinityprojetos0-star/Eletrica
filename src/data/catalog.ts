@@ -781,8 +781,7 @@ export const PAGE_META = {
   },
   contratos: { title: "Contratos", subtitle: "Manutenção e contratos recorrentes" },
   notas: { title: "Notas fiscais", subtitle: "Emissores e percentual embutido no orçamento" },
-  empresa: { title: "Empresa", subtitle: "Dados que aparecem nos PDFs" },
-  thumb: { title: "Thumb", subtitle: "Aba temporária — galeria de imagens" }
+  empresa: { title: "Empresa", subtitle: "Dados que aparecem nos PDFs" }
 };
 
 export function uid(prefix = "id") {

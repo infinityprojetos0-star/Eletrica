@@ -35,7 +35,6 @@ import {
 } from "../data/catalog";
 import { APP_VERSION, CACHE_VERSION } from "../version";
 import { getTheme, cycleTheme } from "./themes";
-import { mountThumbGallery } from "./thumb-gallery";
 
 // Chart / lucide para código legado
 (window as any).Chart = Chart;
@@ -69,7 +68,6 @@ export function initApp() {
   };
   let peEditingId = null;
   let peOpening = false;
-  /** Aba Thumb — sessão local não é mais usada (nuvem Firebase) */
 
   /** Pacotes rápidos de orçamento (só serviços do catálogo). */
   const ORC_TEMPLATES = [
@@ -3288,13 +3286,6 @@ export function initApp() {
     };
   }
 
-  function renderThumb() {
-    mountThumbGallery(content, {
-      toast,
-      standalone: false
-    });
-  }
-
   function render() {
     const meta = PAGE_META[currentView] || { title: currentView, subtitle: "" };
     pageTitle.textContent = meta.title;
@@ -3315,8 +3306,7 @@ export function initApp() {
       projeto: renderProjetoEletrico,
       contratos: renderContratos,
       notas: renderNotasFiscais,
-      empresa: renderEmpresa,
-      thumb: renderThumb
+      empresa: renderEmpresa
     };
     try {
       map[currentView]();
@@ -3349,11 +3339,6 @@ export function initApp() {
   // Events
   document.querySelectorAll(".nav-item").forEach((btn) => {
     btn.addEventListener("click", (e) => {
-      // Links externos (ex.: /thumb/) navegam de verdade
-      if (btn.tagName === "A" && btn.getAttribute("href")) {
-        setSidebarOpen(false);
-        return;
-      }
       e.preventDefault();
       e.stopPropagation();
       navigate(btn.dataset.view);
