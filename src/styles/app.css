@@ -125,6 +125,12 @@ img { max-width: 100%; display: block; }
   text-align: left;
   width: 100%;
   position: relative;
+  text-decoration: none;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  box-sizing: border-box;
 }
 .nav-item i, .nav-item svg { width: 18px; height: 18px; flex-shrink: 0; }
 .nav-item:hover { background: rgba(255,255,255,0.04); color: var(--text); transform: translateX(2px); }
@@ -2097,4 +2103,46 @@ tr:hover td { background: rgba(61,180,255,0.03); }
   color: #fff;
   font-size: 1.5rem;
   cursor: pointer;
+}
+
+/* Página isolada /Eletrica/thumb/ */
+body.thumb-standalone {
+  margin: 0;
+  min-height: 100%;
+}
+.thumb-shell {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+.thumb-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+.thumb-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.thumb-brand strong {
+  font-family: var(--display);
+  font-size: 1.15rem;
+}
+.thumb-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.thumb-standalone-content {
+  flex: 1;
+  padding: 16px 18px 32px;
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+  box-sizing: border-box;
 }
