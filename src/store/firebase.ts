@@ -1,6 +1,7 @@
-/** Firebase Realtime Database (compat API — mesma superfície do app legado). */
+/** Firebase Realtime Database + Storage (compat — plano Spark gratuito). */
 import firebase from "firebase/compat/app";
 import "firebase/compat/database";
+import "firebase/compat/storage";
 
 export const FIREBASE_CONFIG = {
   apiKey: "AIzaSyDzi2PKBnGiiHmoL32_lw8HCgS5WcUc5GI",

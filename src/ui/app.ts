@@ -69,8 +69,7 @@ export function initApp() {
   };
   let peEditingId = null;
   let peOpening = false;
-  /** Aba Thumb (temporária): imagens carregadas na sessão */
-  let thumbSession = [];
+  /** Aba Thumb — sessão local não é mais usada (nuvem Firebase) */
 
   /** Pacotes rápidos de orçamento (só serviços do catálogo). */
   const ORC_TEMPLATES = [
@@ -3292,11 +3291,7 @@ export function initApp() {
   function renderThumb() {
     mountThumbGallery(content, {
       toast,
-      session: thumbSession,
-      standalone: false,
-      onSessionChange: (next) => {
-        thumbSession = next;
-      }
+      standalone: false
     });
   }
 

@@ -1,5 +1,11 @@
-/** Galeria Thumb — reutilizada no app e na URL /thumb/ */
+/** Galeria Thumb — local + nuvem Firebase (Storage/RTDB, Spark gratuito). */
 // @ts-nocheck
+import {
+  subscribeThumbs,
+  uploadThumb,
+  deleteThumb,
+  firebaseReady
+} from "../store/thumbs-cloud";
 
 function loadBundledThumbs() {
   try {
@@ -19,54 +25,68 @@ function loadBundledThumbs() {
   }
 }
 
-function uid(prefix = "thumb") {
-  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+function esc(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;");
 }
 
 /**
  * Monta a galeria Thumb em `root`.
- * @returns {{ getSession: () => any[], destroy: () => void }}
+ * Imagens enviadas vão para o Firebase e aparecem em qualquer dispositivo.
  */
 export function mountThumbGallery(root, opts = {}) {
-  let session = Array.isArray(opts.session) ? [...opts.session] : [];
+  let remote = [];
+  let uploading = false;
+  let cloudError = null;
+  let cloudOk = false;
   const toast = typeof opts.toast === "function" ? opts.toast : () => {};
   const standalone = !!opts.standalone;
-  const onSessionChange =
-    typeof opts.onSessionChange === "function" ? opts.onSessionChange : null;
-
-  const setSession = (next) => {
-    session = next;
-    onSessionChange?.(session);
-  };
+  let unsub = null;
 
   const paint = () => {
     const bundled = loadBundledThumbs();
-    const all = [...bundled, ...session];
+    const all = [
+      ...bundled,
+      ...remote.map((r) => ({
+        id: r.id,
+        name: r.name,
+        src: r.url,
+        remote: true,
+        size: r.size,
+        createdAt: r.createdAt
+      }))
+    ];
 
     root.innerHTML = `
       <div class="view-enter thumb-page">
         <div class="hero-note">
           <div>
             <h3>Thumb ${standalone ? "" : `<span class="badge badge-pendente">temporária</span>`}</h3>
-            <p>${
-              standalone
-                ? "Arraste ou selecione imagens para visualizar nesta página."
-                : `Coloque arquivos em <code>src/thumbs/</code> (e rode o build) ou arraste / selecione imagens aqui.`
-            }</p>
+            <p>Imagens sincronizadas na nuvem (Firebase Storage · plano gratuito). Qualquer pessoa com o link vê a mesma galeria.</p>
           </div>
         </div>
-        <div class="card thumb-drop" id="thumbDrop">
-          <input type="file" id="thumbFiles" accept="image/*" multiple hidden />
-          <p><strong>Arraste imagens aqui</strong> ou <button type="button" class="btn btn-secondary btn-sm" id="thumbPick">Selecionar arquivos</button></p>
-          <p class="hint">PNG, JPG, WEBP, GIF, SVG · ficam só nesta sessão do navegador</p>
+        <div class="thumb-status ${cloudError ? "err" : cloudOk ? "ok" : ""}">
+          ${
+            cloudError
+              ? `<span>⚠ Nuvem: ${esc(cloudError)} — confira as regras do Storage/RTDB (leitura/escrita pública em <code>thumbs</code>).</span>`
+              : cloudOk
+                ? `<span>✓ Nuvem conectada · ${remote.length} na galeria compartilhada</span>`
+                : `<span>Conectando à nuvem…</span>`
+          }
+        </div>
+        <div class="card thumb-drop ${uploading ? "busy" : ""}" id="thumbDrop">
+          <input type="file" id="thumbFiles" accept="image/*" multiple hidden ${uploading ? "disabled" : ""} />
+          <p><strong>${uploading ? "Enviando…" : "Arraste imagens aqui"}</strong>${
+            uploading
+              ? ""
+              : ` ou <button type="button" class="btn btn-secondary btn-sm" id="thumbPick">Selecionar arquivos</button>`
+          }</p>
+          <p class="hint">PNG, JPG, WEBP, GIF · comprimidas no aparelho · máx. ~2,5 MB cada · ficam no Firebase</p>
         </div>
         <div class="thumb-toolbar">
-          <span class="hint">${all.length} imagem(ns)</span>
-          ${
-            session.length
-              ? `<button type="button" class="btn btn-ghost btn-sm" id="thumbClear">Limpar sessão</button>`
-              : ""
-          }
+          <span class="hint">${all.length} imagem(ns)${uploading ? " · enviando…" : ""}</span>
         </div>
         ${
           all.length
@@ -75,24 +95,25 @@ export function mountThumbGallery(root, opts = {}) {
                   .map(
                     (img) => `
                   <figure class="thumb-card">
-                    <button type="button" class="thumb-open" data-src="${String(img.src).replace(/"/g, "&quot;")}" title="Ampliar">
-                      <img src="${img.src}" alt="${String(img.name || "imagem").replace(/"/g, "&quot;")}" loading="lazy" />
+                    <button type="button" class="thumb-open" data-src="${esc(img.src)}" title="Ampliar">
+                      <img src="${esc(img.src)}" alt="${esc(img.name || "imagem")}" loading="lazy" />
                     </button>
                     <figcaption>
-                      <span class="thumb-name" title="${String(img.name || "").replace(/"/g, "&quot;")}">${img.name || "imagem"}</span>
+                      <span class="thumb-name" title="${esc(img.name || "")}">${esc(img.name || "imagem")}</span>
                       ${
                         img.bundled
                           ? `<span class="hint">pasta</span>`
-                          : `<button type="button" class="btn btn-ghost btn-sm" data-thumb-rm="${img.id}">Remover</button>`
+                          : img.remote
+                            ? `<button type="button" class="btn btn-ghost btn-sm" data-thumb-rm="${esc(img.id)}">Apagar</button>`
+                            : ""
                       }
                     </figcaption>
                   </figure>`
                   )
                   .join("")}
               </div>`
-            : `<div class="empty"><strong>Nenhuma imagem</strong>Solte arquivos acima${standalone ? "." : ` ou copie para <code>src/thumbs/</code>.`}</div>`
+            : `<div class="empty"><strong>Nenhuma imagem na nuvem</strong>Envie arquivos acima — outros dispositivos verão em <code>/thumb/</code>.</div>`
         }
-        <div class="toast-stack" id="thumbToastStack"></div>
         <div class="thumb-lightbox" id="thumbLightbox" hidden>
           <button type="button" class="thumb-lightbox-close" id="thumbLbClose" aria-label="Fechar">×</button>
           <img id="thumbLbImg" alt="" />
@@ -100,95 +121,126 @@ export function mountThumbGallery(root, opts = {}) {
       </div>
     `;
 
-    const addFiles = (fileList) => {
-      const files = [...(fileList || [])].filter((f) => f.type.startsWith("image/"));
-      if (!files.length) {
-        toast("Selecione arquivos de imagem");
-        return;
-      }
-      const next = [...session];
-      files.forEach((f) => {
-        next.push({
-          id: uid("thumb"),
-          name: f.name,
-          src: URL.createObjectURL(f),
-          bundled: false
-        });
-      });
-      setSession(next);
-      toast(`${files.length} imagem(ns) adicionada(s)`);
-      paint();
-    };
+    bindUi();
+  };
 
-    root.querySelector("#thumbPick").onclick = () => root.querySelector("#thumbFiles").click();
-    root.querySelector("#thumbFiles").onchange = (e) => {
+  const addFiles = async (fileList) => {
+    const files = [...(fileList || [])].filter((f) => f.type.startsWith("image/"));
+    if (!files.length) {
+      toast("Selecione arquivos de imagem");
+      return;
+    }
+    if (!firebaseReady()) {
+      toast("Firebase indisponível");
+      return;
+    }
+    uploading = true;
+    paint();
+    let ok = 0;
+    let fail = 0;
+    for (const f of files) {
+      try {
+        await uploadThumb(f);
+        ok += 1;
+      } catch (err) {
+        fail += 1;
+        console.error(err);
+        const msg = String(err?.code || err?.message || err);
+        if (/permission|unauthorized/i.test(msg)) {
+          cloudError =
+            "sem permissão de escrita — libere regras públicas em Storage path thumbs/ e RTDB voltes/thumbs";
+        }
+        toast(msg.slice(0, 120));
+      }
+    }
+    uploading = false;
+    paint();
+    if (ok) toast(`${ok} enviada(s) para a nuvem`);
+    if (fail && !ok) toast("Falha no envio — veja o aviso da nuvem");
+  };
+
+  function bindUi() {
+    root.querySelector("#thumbPick")?.addEventListener("click", () =>
+      root.querySelector("#thumbFiles")?.click()
+    );
+    root.querySelector("#thumbFiles")?.addEventListener("change", (e) => {
       addFiles(e.target.files);
       e.target.value = "";
-    };
+    });
 
     const drop = root.querySelector("#thumbDrop");
-    drop.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      drop.classList.add("dragover");
-    });
-    drop.addEventListener("dragleave", () => drop.classList.remove("dragover"));
-    drop.addEventListener("drop", (e) => {
-      e.preventDefault();
-      drop.classList.remove("dragover");
-      addFiles(e.dataTransfer?.files);
-    });
-
-    root.querySelector("#thumbClear")?.addEventListener("click", () => {
-      session.forEach((t) => {
-        try {
-          URL.revokeObjectURL(t.src);
-        } catch {
-          /* ignore */
-        }
+    if (drop) {
+      drop.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        drop.classList.add("dragover");
       });
-      setSession([]);
-      paint();
-    });
+      drop.addEventListener("dragleave", () => drop.classList.remove("dragover"));
+      drop.addEventListener("drop", (e) => {
+        e.preventDefault();
+        drop.classList.remove("dragover");
+        addFiles(e.dataTransfer?.files);
+      });
+    }
 
     root.querySelectorAll("[data-thumb-rm]").forEach((btn) => {
-      btn.onclick = () => {
+      btn.onclick = async () => {
         const id = btn.dataset.thumbRm;
-        const item = session.find((t) => t.id === id);
-        if (item) {
-          try {
-            URL.revokeObjectURL(item.src);
-          } catch {
-            /* ignore */
-          }
+        const item = remote.find((t) => t.id === id);
+        if (!item) return;
+        if (!confirm("Apagar esta imagem da nuvem (todos os dispositivos)?")) return;
+        try {
+          await deleteThumb(item);
+          toast("Imagem apagada");
+        } catch (err) {
+          toast(String(err?.message || err));
         }
-        setSession(session.filter((t) => t.id !== id));
-        paint();
       };
     });
 
     const lb = root.querySelector("#thumbLightbox");
     const lbImg = root.querySelector("#thumbLbImg");
     const closeLb = () => {
+      if (!lb || !lbImg) return;
       lb.hidden = true;
       lbImg.src = "";
     };
-    root.querySelector("#thumbLbClose").onclick = closeLb;
-    lb.onclick = (e) => {
+    root.querySelector("#thumbLbClose")?.addEventListener("click", closeLb);
+    lb?.addEventListener("click", (e) => {
       if (e.target === lb) closeLb();
-    };
+    });
     root.querySelectorAll(".thumb-open").forEach((btn) => {
       btn.onclick = () => {
+        if (!lb || !lbImg) return;
         lbImg.src = btn.dataset.src;
         lb.hidden = false;
       };
     });
-  };
+  }
 
   paint();
 
+  unsub = subscribeThumbs(
+    (list) => {
+      remote = list;
+      cloudOk = true;
+      cloudError = null;
+      if (!uploading) paint();
+    },
+    (err) => {
+      cloudOk = false;
+      const msg = String(err?.message || err || "erro");
+      cloudError = /permission/i.test(msg)
+        ? "leitura bloqueada — regras RTDB em voltes/thumbs"
+        : msg.slice(0, 140);
+      paint();
+    }
+  );
+
   return {
-    getSession: () => session,
+    getSession: () => remote,
     destroy: () => {
+      unsub?.();
+      unsub = null;
       root.innerHTML = "";
     }
   };

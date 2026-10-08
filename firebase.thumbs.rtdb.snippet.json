@@ -1,0 +1,9 @@
+{
+  "voltes": {
+    "thumbs": {
+      ".read": true,
+      ".write": true,
+      ".indexOn": ["createdAt"]
+    }
+  }
+}
