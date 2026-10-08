@@ -27,11 +27,17 @@ export default defineConfig({
     VitePWA({
       strategies: "generateSW",
       registerType: "autoUpdate",
-      includeAssets: ["assets/**/*", "manifest.webmanifest"],
+      // Só o que NÃO entra no globPatterns (evita duplicate revision no Workbox)
+      includeAssets: ["manifest.webmanifest", "assets/brand/orcamento-modelo.pdf"],
       manifest: false,
       workbox: {
-        globPatterns: ["**/*.{js,css,html,ico,png,svg,jpg,jpeg,webp,woff,woff2,webmanifest}"],
-        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024
+        globPatterns: [
+          "**/*.{js,css,html,ico,png,svg,jpg,jpeg,webp,woff,woff2,webmanifest,ttf}"
+        ],
+        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
+        // /thumb/ tem HTML próprio — não redirecionar para o index do app
+        navigateFallback: "index.html",
+        navigateFallbackDenylist: [/^\/Eletrica\/thumb/, /\/thumb\//]
       }
     })
   ]
