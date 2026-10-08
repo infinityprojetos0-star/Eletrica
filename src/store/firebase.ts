@@ -18,14 +18,15 @@ let ready = false;
 let error: string | null = null;
 let visibilityBound = false;
 
-export function init() {
+export function init(opts: { skipVisibility?: boolean } = {}) {
   try {
     if (!firebase.apps.length) {
       firebase.initializeApp(FIREBASE_CONFIG);
     }
     db = firebase.database();
     ready = true;
-    bindVisibility();
+    // Thumb standalone não deve dar goOffline (senão a galeria “some”)
+    if (!opts.skipVisibility) bindVisibility();
     return db;
   } catch (err: any) {
     error = err?.message || String(err);

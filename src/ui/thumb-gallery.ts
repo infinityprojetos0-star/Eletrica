@@ -1,10 +1,11 @@
-/** Galeria Thumb — local + nuvem Firebase (Storage/RTDB, Spark gratuito). */
+/** Galeria Thumb — RTDB (path thumbGallery) · src das imgs setado em JS (não no HTML). */
 // @ts-nocheck
 import {
   subscribeThumbs,
   uploadThumb,
   deleteThumb,
-  firebaseReady
+  firebaseReady,
+  THUMBS_ROOT
 } from "../store/thumbs-cloud";
 
 function loadBundledThumbs() {
@@ -32,47 +33,70 @@ function esc(s) {
     .replace(/</g, "&lt;");
 }
 
-/**
- * Monta a galeria Thumb em `root`.
- * Imagens enviadas vão para o Firebase e aparecem em qualquer dispositivo.
- */
+function listFingerprint(list) {
+  return (list || []).map((x) => `${x.id}:${x.size || 0}:${x.createdAt || 0}`).join("|");
+}
+
 export function mountThumbGallery(root, opts = {}) {
   let remote = [];
   let uploading = false;
   let cloudError = null;
   let cloudOk = false;
+  let lastFp = "";
   const toast = typeof opts.toast === "function" ? opts.toast : () => {};
   const standalone = !!opts.standalone;
   let unsub = null;
 
-  const paint = () => {
+  const applyImageSrcs = () => {
+    const bundled = loadBundledThumbs();
+    const byId = Object.fromEntries(
+      [...bundled.map((b) => [b.id, b.src]), ...remote.map((r) => [r.id, r.url])]
+    );
+    root.querySelectorAll("img[data-thumb-id]").forEach((img) => {
+      const id = img.getAttribute("data-thumb-id");
+      const src = byId[id];
+      if (src && img.getAttribute("src") !== src) img.setAttribute("src", src);
+    });
+    root.querySelectorAll("button.thumb-open[data-thumb-id]").forEach((btn) => {
+      const id = btn.getAttribute("data-thumb-id");
+      const src = byId[id];
+      if (src) btn.dataset.preview = src;
+    });
+  };
+
+  const paint = (force = false) => {
     const bundled = loadBundledThumbs();
     const all = [
-      ...bundled,
+      ...bundled.map((b) => ({ ...b, remote: false })),
       ...remote.map((r) => ({
         id: r.id,
         name: r.name,
-        src: r.url,
         remote: true,
         size: r.size,
         createdAt: r.createdAt
       }))
     ];
+    const fp = `${cloudOk}|${cloudError || ""}|${uploading}|${listFingerprint(all)}`;
+    if (!force && fp === lastFp && root.querySelector(".thumb-page")) {
+      applyImageSrcs();
+      return;
+    }
+    lastFp = fp;
 
     root.innerHTML = `
       <div class="view-enter thumb-page">
         <div class="hero-note">
           <div>
             <h3>Thumb ${standalone ? "" : `<span class="badge badge-pendente">temporária</span>`}</h3>
-            <p>Imagens na <strong>Realtime Database</strong> (plano gratuito · sem Storage). Qualquer pessoa com o link vê a mesma galeria.</p>
+            <p>Imagens na <strong>Realtime Database</strong> (<code>${THUMBS_ROOT}</code> · plano gratuito). Mesmo link = mesma galeria.</p>
           </div>
         </div>
         <div class="thumb-status ${cloudError ? "err" : cloudOk ? "ok" : ""}">
           ${
             cloudError
-              ? `<span>⚠ RTDB: ${esc(cloudError)} — libere leitura/escrita em <code>voltes/thumbs</code>.</span>`
+              ? `<span>⚠ RTDB: ${esc(cloudError)} — regras em <code>${THUMBS_ROOT}</code> com .read/.write true.</span>`
               : cloudOk
-                ? `<span>✓ RTDB conectada · ${remote.length} na galeria compartilhada</span>`
+                ? `<span>✓ RTDB conectada · ${remote.length} na galeria</span>`
                 : `<span>Conectando à Realtime Database…</span>`
           }
         </div>
@@ -83,7 +107,7 @@ export function mountThumbGallery(root, opts = {}) {
               ? ""
               : ` ou <button type="button" class="btn btn-secondary btn-sm" id="thumbPick">Selecionar arquivos</button>`
           }</p>
-          <p class="hint">JPG/PNG/WEBP · comprimidas no aparelho (~180 KB) · só Realtime Database</p>
+          <p class="hint">JPG/PNG/WEBP · comprimidas (~100 KB) · só Realtime Database</p>
         </div>
         <div class="thumb-toolbar">
           <span class="hint">${all.length} imagem(ns)${uploading ? " · enviando…" : ""}</span>
@@ -95,8 +119,8 @@ export function mountThumbGallery(root, opts = {}) {
                   .map(
                     (img) => `
                   <figure class="thumb-card">
-                    <button type="button" class="thumb-open" data-src="${esc(img.src)}" title="Ampliar">
-                      <img src="${esc(img.src)}" alt="${esc(img.name || "imagem")}" loading="lazy" />
+                    <button type="button" class="thumb-open" data-thumb-id="${esc(img.id)}" title="Ampliar">
+                      <img data-thumb-id="${esc(img.id)}" alt="${esc(img.name || "imagem")}" loading="lazy" />
                     </button>
                     <figcaption>
                       <span class="thumb-name" title="${esc(img.name || "")}">${esc(img.name || "imagem")}</span>
@@ -121,6 +145,7 @@ export function mountThumbGallery(root, opts = {}) {
       </div>
     `;
 
+    applyImageSrcs();
     bindUi();
   };
 
@@ -135,7 +160,7 @@ export function mountThumbGallery(root, opts = {}) {
       return;
     }
     uploading = true;
-    paint();
+    paint(true);
     let ok = 0;
     let fail = 0;
     for (const f of files) {
@@ -147,13 +172,13 @@ export function mountThumbGallery(root, opts = {}) {
         console.error(err);
         const msg = String(err?.code || err?.message || err);
         if (/permission|unauthorized/i.test(msg)) {
-          cloudError = "sem permissão — regras RTDB em voltes/thumbs (.read/.write true)";
+          cloudError = `sem permissão — regras em ${THUMBS_ROOT}`;
         }
         toast(msg.slice(0, 120));
       }
     }
     uploading = false;
-    paint();
+    paint(true);
     if (ok) toast(`${ok} enviada(s) para a nuvem`);
     if (fail && !ok) toast("Falha no envio — veja o aviso da nuvem");
   };
@@ -210,13 +235,13 @@ export function mountThumbGallery(root, opts = {}) {
     root.querySelectorAll(".thumb-open").forEach((btn) => {
       btn.onclick = () => {
         if (!lb || !lbImg) return;
-        lbImg.src = btn.dataset.src;
+        lbImg.src = btn.dataset.preview || "";
         lb.hidden = false;
       };
     });
   }
 
-  paint();
+  paint(true);
 
   unsub = subscribeThumbs(
     (list) => {
@@ -229,9 +254,9 @@ export function mountThumbGallery(root, opts = {}) {
       cloudOk = false;
       const msg = String(err?.message || err || "erro");
       cloudError = /permission/i.test(msg)
-        ? "leitura bloqueada — regras RTDB em voltes/thumbs"
+        ? `leitura bloqueada — regras em ${THUMBS_ROOT}`
         : msg.slice(0, 140);
-      paint();
+      paint(true);
     }
   );
 

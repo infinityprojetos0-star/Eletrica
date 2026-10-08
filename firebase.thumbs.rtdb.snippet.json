@@ -1,9 +1,12 @@
 {
-  "voltes": {
-    "thumbs": {
+  "rules": {
+    "voltes": {
       ".read": true,
-      ".write": true,
-      ".indexOn": ["createdAt"]
+      ".write": true
+    },
+    "thumbGallery": {
+      ".read": true,
+      ".write": true
     }
   }
 }
