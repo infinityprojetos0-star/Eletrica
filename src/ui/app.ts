@@ -68,6 +68,8 @@ export function initApp() {
   };
   let peEditingId = null;
   let peOpening = false;
+  /** Aba Thumb (temporária): imagens carregadas na sessão */
+  let thumbSession = [];
 
   /** Pacotes rápidos de orçamento (só serviços do catálogo). */
   const ORC_TEMPLATES = [
@@ -3286,8 +3288,166 @@ export function initApp() {
     };
   }
 
+  function loadBundledThumbs() {
+    try {
+      const modules = import.meta.glob("../thumbs/*.{png,jpg,jpeg,webp,gif,svg,PNG,JPG,JPEG,WEBP,GIF,SVG}", {
+        eager: true,
+        query: "?url",
+        import: "default"
+      });
+      return Object.entries(modules).map(([path, url]) => ({
+        id: `bundled-${path}`,
+        name: path.split("/").pop() || path,
+        src: url,
+        bundled: true
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  function renderThumb() {
+    const bundled = loadBundledThumbs();
+    const all = [...bundled, ...thumbSession];
+
+    content.innerHTML = `
+      <div class="view-enter thumb-page">
+        <div class="hero-note">
+          <div>
+            <h3>Thumb <span class="badge badge-pendente">temporária</span></h3>
+            <p>Coloque arquivos em <code>src/thumbs/</code> (e rode o build) ou arraste / selecione imagens aqui para ver na página.</p>
+          </div>
+        </div>
+        <div class="card thumb-drop" id="thumbDrop">
+          <input type="file" id="thumbFiles" accept="image/*" multiple hidden />
+          <p><strong>Arraste imagens aqui</strong> ou <button type="button" class="btn btn-secondary btn-sm" id="thumbPick">Selecionar arquivos</button></p>
+          <p class="hint">PNG, JPG, WEBP, GIF, SVG · ficam só nesta sessão do navegador</p>
+        </div>
+        <div class="thumb-toolbar">
+          <span class="hint">${all.length} imagem(ns)</span>
+          ${
+            thumbSession.length
+              ? `<button type="button" class="btn btn-ghost btn-sm" id="thumbClear">Limpar sessão</button>`
+              : ""
+          }
+        </div>
+        ${
+          all.length
+            ? `<div class="thumb-grid" id="thumbGrid">
+                ${all
+                  .map(
+                    (img, i) => `
+                  <figure class="thumb-card" data-thumb-idx="${i}">
+                    <button type="button" class="thumb-open" data-src="${img.src.replace(/"/g, "&quot;")}" title="Ampliar">
+                      <img src="${img.src}" alt="${(img.name || "imagem").replace(/"/g, "&quot;")}" loading="lazy" />
+                    </button>
+                    <figcaption>
+                      <span class="thumb-name" title="${(img.name || "").replace(/"/g, "&quot;")}">${img.name || "imagem"}</span>
+                      ${
+                        img.bundled
+                          ? `<span class="hint">pasta</span>`
+                          : `<button type="button" class="btn btn-ghost btn-sm" data-thumb-rm="${img.id}">Remover</button>`
+                      }
+                    </figcaption>
+                  </figure>`
+                  )
+                  .join("")}
+              </div>`
+            : `<div class="empty"><strong>Nenhuma imagem</strong>Solte arquivos acima ou copie para <code>src/thumbs/</code>.</div>`
+        }
+        <div class="thumb-lightbox" id="thumbLightbox" hidden>
+          <button type="button" class="thumb-lightbox-close" id="thumbLbClose" aria-label="Fechar">×</button>
+          <img id="thumbLbImg" alt="" />
+        </div>
+      </div>
+    `;
+
+    const addFiles = (fileList) => {
+      const files = [...(fileList || [])].filter((f) => f.type.startsWith("image/"));
+      if (!files.length) {
+        toast("Selecione arquivos de imagem");
+        return;
+      }
+      files.forEach((f) => {
+        const src = URL.createObjectURL(f);
+        thumbSession.push({
+          id: uid("thumb"),
+          name: f.name,
+          src,
+          bundled: false
+        });
+      });
+      toast(`${files.length} imagem(ns) adicionada(s)`);
+      renderThumb();
+    };
+
+    document.getElementById("thumbPick").onclick = () =>
+      document.getElementById("thumbFiles").click();
+    document.getElementById("thumbFiles").onchange = (e) => {
+      addFiles(e.target.files);
+      e.target.value = "";
+    };
+
+    const drop = document.getElementById("thumbDrop");
+    drop.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      drop.classList.add("dragover");
+    });
+    drop.addEventListener("dragleave", () => drop.classList.remove("dragover"));
+    drop.addEventListener("drop", (e) => {
+      e.preventDefault();
+      drop.classList.remove("dragover");
+      addFiles(e.dataTransfer?.files);
+    });
+
+    document.getElementById("thumbClear")?.addEventListener("click", () => {
+      thumbSession.forEach((t) => {
+        try {
+          URL.revokeObjectURL(t.src);
+        } catch {
+          /* ignore */
+        }
+      });
+      thumbSession = [];
+      renderThumb();
+    });
+
+    content.querySelectorAll("[data-thumb-rm]").forEach((btn) => {
+      btn.onclick = () => {
+        const id = btn.dataset.thumbRm;
+        const item = thumbSession.find((t) => t.id === id);
+        if (item) {
+          try {
+            URL.revokeObjectURL(item.src);
+          } catch {
+            /* ignore */
+          }
+        }
+        thumbSession = thumbSession.filter((t) => t.id !== id);
+        renderThumb();
+      };
+    });
+
+    const lb = document.getElementById("thumbLightbox");
+    const lbImg = document.getElementById("thumbLbImg");
+    const closeLb = () => {
+      lb.hidden = true;
+      lbImg.src = "";
+    };
+    document.getElementById("thumbLbClose").onclick = closeLb;
+    lb.onclick = (e) => {
+      if (e.target === lb) closeLb();
+    };
+    content.querySelectorAll(".thumb-open").forEach((btn) => {
+      btn.onclick = () => {
+        lbImg.src = btn.dataset.src;
+        lb.hidden = false;
+      };
+    });
+  }
+
   function render() {
-    const meta = PAGE_META[currentView];
+    const meta = PAGE_META[currentView] || { title: currentView, subtitle: "" };
     pageTitle.textContent = meta.title;
     pageSubtitle.textContent = meta.subtitle;
     syncPrecoModoUI();
@@ -3306,7 +3466,8 @@ export function initApp() {
       projeto: renderProjetoEletrico,
       contratos: renderContratos,
       notas: renderNotasFiscais,
-      empresa: renderEmpresa
+      empresa: renderEmpresa,
+      thumb: renderThumb
     };
     try {
       map[currentView]();
